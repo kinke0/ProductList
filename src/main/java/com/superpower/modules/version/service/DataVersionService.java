@@ -2,6 +2,7 @@ package com.superpower.modules.version.service;
 
 import com.superpower.common.BusinessException;
 import com.superpower.modules.data.entity.DataEntry;
+import com.superpower.modules.category.service.CategoryService;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
@@ -18,11 +19,14 @@ public class DataVersionService {
 
     private final DataVersionRepository versionRepository;
     private final DataEntryRepository entryRepository;
+    private final CategoryService categoryService;
 
     public DataVersionService(DataVersionRepository versionRepository,
-                              DataEntryRepository entryRepository) {
+                              DataEntryRepository entryRepository,
+                              CategoryService categoryService) {
         this.versionRepository = versionRepository;
         this.entryRepository = entryRepository;
+        this.categoryService = categoryService;
     }
 
     public List<DataVersion> findAllReleased() {
@@ -88,6 +92,10 @@ public class DataVersionService {
                     }
                 }
             }
+        }
+
+        if (latest != null && "released".equals(latest.getStatus())) {
+            categoryService.copyFromVersion(latest.getId(), version.getId());
         }
 
         return version;
