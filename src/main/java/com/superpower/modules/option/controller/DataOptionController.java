@@ -18,14 +18,15 @@ public class DataOptionController {
         this.service = service;
     }
 
-    @GetMapping("/{type}")
-    public Result<List<DataOption>> getByType(@PathVariable String type) {
-        return Result.success(service.getByType(type));
+    @GetMapping("/{versionId}/{type}")
+    public Result<List<DataOption>> getByType(@PathVariable Long versionId, @PathVariable String type) {
+        return Result.success(service.getByType(versionId, type));
     }
 
-    @PostMapping("/{type}")
-    public Result<DataOption> create(@PathVariable String type, @RequestBody Map<String, String> body) {
-        return Result.success(service.create(type, body.get("value")));
+    @PostMapping("/{versionId}/{type}")
+    public Result<DataOption> create(@PathVariable Long versionId, @PathVariable String type,
+                                     @RequestBody Map<String, String> body) {
+        return Result.success(service.create(versionId, type, body.get("value")));
     }
 
     @PutMapping("/{id}")

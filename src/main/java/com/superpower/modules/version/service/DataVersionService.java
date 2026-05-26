@@ -4,6 +4,7 @@ import com.superpower.common.BusinessException;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.category.service.CategoryService;
 import com.superpower.modules.data.repository.DataEntryRepository;
+import com.superpower.modules.option.service.DataOptionService;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
 import org.springframework.stereotype.Service;
@@ -20,13 +21,16 @@ public class DataVersionService {
     private final DataVersionRepository versionRepository;
     private final DataEntryRepository entryRepository;
     private final CategoryService categoryService;
+    private final DataOptionService optionService;
 
     public DataVersionService(DataVersionRepository versionRepository,
                               DataEntryRepository entryRepository,
-                              CategoryService categoryService) {
+                              CategoryService categoryService,
+                              DataOptionService optionService) {
         this.versionRepository = versionRepository;
         this.entryRepository = entryRepository;
         this.categoryService = categoryService;
+        this.optionService = optionService;
     }
 
     public List<DataVersion> findAllReleased() {
@@ -96,6 +100,10 @@ public class DataVersionService {
 
         if (latest != null && "released".equals(latest.getStatus())) {
             categoryService.copyFromVersion(latest.getId(), version.getId());
+        }
+
+        if (latest != null && "released".equals(latest.getStatus())) {
+            optionService.copyOptions(latest.getId(), version.getId());
         }
 
         return version;

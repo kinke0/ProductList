@@ -21,6 +21,9 @@ public class DataOption {
     @Column(name = "sort_order")
     private Integer sortOrder = 0;
 
+    @Column(name = "version_id")
+    private Long versionId;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 }
