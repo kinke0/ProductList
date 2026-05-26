@@ -1,7 +1,7 @@
 import request from '../utils/request'
 
 export function getTree(versionId) {
-  return request.get(`/data/tree/${versionId}`)
+  return request.get('/tree', { params: { versionId } })
 }
 
 export function getChildren(versionId, parentId) {
