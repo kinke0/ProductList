@@ -1,11 +1,11 @@
 import request from '../utils/request'
 
-export function getOptions(type) {
-  return request.get(`/options/${type}`)
+export function getOptions(versionId, type) {
+  return request.get(`/options/${versionId}/${type}`)
 }
 
-export function createOption(type, value) {
-  return request.post(`/options/${type}`, { value })
+export function createOption(versionId, type, value) {
+  return request.post(`/options/${versionId}/${type}`, { value })
 }
 
 export function updateOption(id, value) {

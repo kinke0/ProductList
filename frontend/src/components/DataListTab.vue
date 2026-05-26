@@ -35,10 +35,20 @@
         <span class="toolbar-title">查询结果</span>
       </div>
       <div class="toolbar-right">
-        <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog">新建</el-button>
-        <el-button type="success" size="small" @click="emit('insertToList', selectedIds)">
-          插入待生成清单
-        </el-button>
+        <template v-if="props.customTabId">
+          <el-button type="danger" size="small" :disabled="!props.isEditing || selectedIds.length === 0" @click="onRemoveClick">
+            移除
+          </el-button>
+          <el-button type="success" size="small" @click="emit('generateDoc', selectedIds)">
+            生成文档
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog">新建</el-button>
+          <el-button type="success" size="small" @click="onInsertClick">
+            插入待生成清单
+          </el-button>
+        </template>
       </div>
     </div>
 
@@ -54,6 +64,7 @@
       :tree-props="{ children: 'children' }"
       :row-class-name="({ row }) => 'row-id-' + row.id + ' row-level-' + (row.level || 0) + ' row-parent-' + (row.parentId || 0)"
       @selection-change="onSelectionChange"
+      @expand-change="onExpandChange"
     >
       <el-table-column type="index" width="40" label="#" class-name="drag-col">
         <template #default="{ $index, row }">
@@ -68,6 +79,9 @@
               {{ levelLabel(row.level) }}
             </el-tag>
             <span class="product-name">{{ row.colProductSystem || '(无名称)' }}</span>
+            <span v-if="row.children && row.children.length > 0 && !expandedIds.has(row.id)" class="record-count">
+              {{ getDescendantCount(row) }}条记录
+            </span>
           </span>
         </template>
       </el-table-column>
@@ -90,7 +104,8 @@
         <template #default="{ row }">
           <span v-if="props.isEditing" class="op-btn op-edit" @click="editRow(row)">编辑</span>
           <span v-if="props.isEditing" class="op-btn op-add" @click="addChildRow(row)">添加</span>
-          <span v-if="props.isEditing" class="op-btn op-del" @click="deleteRow(row)">删除</span>
+          <span v-if="props.isEditing && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', [row.id])">移除</span>
+          <span v-else-if="props.isEditing" class="op-btn op-del" @click="deleteRow(row)">删除</span>
         </template>
       </el-table-column>
     </el-table>
@@ -205,10 +220,11 @@ const props = defineProps({
   versionId: [Number, String],
   selectedNode: Object,
   isEditing: Boolean,
-  customTabId: { type: Number, default: null }
+  customTabId: { type: Number, default: null },
+  refreshTrigger: { type: Number, default: 0 }
 })
 
-const emit = defineEmits(['insertToList'])
+const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc'])
 
 const authStore = useAuthStore()
 const tableData = ref([])
@@ -261,7 +277,7 @@ function levelLabel(level) {
 }
 
 function levelTagType(level) {
-  if (level === 3) return ''
+  if (level === 3) return 'primary'
   if (level === 4) return 'success'
   if (level === 5) return 'warning'
   return 'info'
@@ -354,11 +370,12 @@ function syncVersionFromForm() {
 }
 
 async function loadOptions() {
+  if (!props.versionId) return
   try {
     const [ar, sol, st] = await Promise.all([
-      getOptions('app_role'),
-      getOptions('solution'),
-      getOptions('status')
+      getOptions(props.versionId, 'appRole'),
+      getOptions(props.versionId, 'solution'),
+      getOptions(props.versionId, 'status')
     ])
     appRoles.value = (ar.data || []).map(o => o.value)
     solutions.value = (sol.data || []).map(o => o.value)
@@ -429,7 +446,106 @@ function initEditForm() {
 }
 
 function onSelectionChange(rows) {
-  selectedIds.value = rows.filter(r => r.level === 3).map(r => r.id)
+  selectedIds.value = rows.map(r => r.id)
+}
+
+const expandedIds = ref(new Set())
+
+function onExpandChange(row, expandedRows) {
+  if (expandedRows.some(r => r.id === row.id)) {
+    expandedIds.value.add(row.id)
+  } else {
+    expandedIds.value.delete(row.id)
+  }
+}
+
+function getDescendantCount(node) {
+  let count = 0
+  function walk(children) {
+    for (const c of children) {
+      count++
+      if (c.children) walk(c.children)
+    }
+  }
+  if (node.children) walk(node.children)
+  return count
+}
+
+function onInsertClick() {
+  const ids = collectFullBranch()
+  emit('insertToList', ids)
+}
+
+function onRemoveClick() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先勾选条目')
+    return
+  }
+  const ids = collectSelectedWithDescendants()
+  emit('removeFromList', ids)
+}
+
+function collectFullBranch() {
+  const result = new Set()
+  const idIndex = {}
+  const parentMap = {}
+  function walk(nodes) {
+    for (const n of nodes) {
+      idIndex[n.id] = n
+      if (n.children) {
+        n.children.forEach(c => { parentMap[c.id] = n })
+        walk(n.children)
+      }
+    }
+  }
+  walk(tableData.value)
+  for (const id of selectedIds.value) {
+    const chain = [id]
+    let node = idIndex[id]
+    while (node && parentMap[node.id]) {
+      node = parentMap[node.id]
+      chain.push(node.id)
+    }
+    for (const cid of chain) {
+      result.add(cid)
+      const n = idIndex[cid]
+      if (n && n.children) {
+        function collect(children) {
+          for (const c of children) {
+            result.add(c.id)
+            if (c.children) collect(c.children)
+          }
+        }
+        collect(n.children)
+      }
+    }
+  }
+  return [...result]
+}
+
+function collectSelectedWithDescendants() {
+  const result = new Set(selectedIds.value)
+  const idIndex = {}
+  function walk(nodes) {
+    for (const n of nodes) {
+      idIndex[n.id] = n
+      if (n.children) walk(n.children)
+    }
+  }
+  walk(tableData.value)
+  for (const id of selectedIds.value) {
+    const node = idIndex[id]
+    if (node && node.children) {
+      function collect(children) {
+        for (const c of children) {
+          result.add(c.id)
+          if (c.children) collect(c.children)
+        }
+      }
+      collect(node.children)
+    }
+  }
+  return [...result]
 }
 
 function onChildSelectionChange(rows) {
@@ -551,6 +667,10 @@ watch(() => props.versionId, () => {
   loadOptions()
 }, { immediate: true })
 
+watch(() => props.refreshTrigger, () => {
+  handleQuery()
+})
+
 onUnmounted(() => {
   sortableInstances.forEach(s => s.destroy())
 })
@@ -594,7 +714,8 @@ onUnmounted(() => {
 .op-btn:hover { text-decoration: underline; }
 .version-inline { display: flex; gap: 2px; white-space: nowrap; }
 .version-row { display: flex; align-items: center; }
-.product-cell { display: inline; }
+.product-cell { }
 .product-name { }
+.record-count { float: right; color: #999; font-size: 12px; margin-left: 6px; white-space: nowrap; }
 .level-tag { margin: 0 6px; vertical-align: middle; }
 </style>
