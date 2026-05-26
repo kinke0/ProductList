@@ -94,6 +94,15 @@ public class DataVersionService {
     }
 
     @Transactional
+    public DataVersion getOrCreateInitialVersion() {
+        List<DataVersion> all = versionRepository.findAll();
+        if (!all.isEmpty()) {
+            return all.get(0);
+        }
+        return createVersion();
+    }
+
+    @Transactional
     public DataVersion releaseVersion(Long versionId, Long userId) {
         DataVersion version = findById(versionId);
         if (!"draft".equals(version.getStatus())) {
