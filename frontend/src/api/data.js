@@ -1,0 +1,41 @@
+import request from '../utils/request'
+
+export function getTree(versionId) {
+  return request.get(`/data/tree/${versionId}`)
+}
+
+export function getChildren(versionId, parentId) {
+  return request.get(`/data/children/${versionId}/${parentId}`)
+}
+
+export function getEntry(id) {
+  return request.get(`/data/${id}`)
+}
+
+export function queryEntries(versionId, params) {
+  return request.get(`/data/query/${versionId}`, { params })
+}
+
+export function createEntry(data) {
+  return request.post('/data', data)
+}
+
+export function updateEntry(id, data) {
+  return request.put(`/data/${id}`, data)
+}
+
+export function deleteEntry(id) {
+  return request.delete(`/data/${id}`)
+}
+
+export function updateSort(sortList) {
+  return request.put('/data/sort', sortList)
+}
+
+export function levelUp(id) {
+  return request.put(`/data/${id}/level-up`)
+}
+
+export function levelDown(id) {
+  return request.put(`/data/${id}/level-down`)
+}

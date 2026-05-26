@@ -1,0 +1,62 @@
+<h2>Crane 的个人主页 — 选择你喜欢的布局风格</h2>
+<p class="subtitle">以下三种布局方案，请选择最符合你审美的</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>方案 A：居中卡片</h3>
+      <div class="mockup">
+        <div class="mockup-body">
+          <div style="text-align:center;padding:20px;">
+            <div style="width:80px;height:80px;border-radius:50%;background:#e0e0e0;margin:0 auto 12px;"></div>
+            <div style="font-weight:bold;font-size:20px;">Crane</div>
+            <div style="font-size:14px;color:#666;">医疗产品经理</div>
+            <div style="font-size:13px;color:#999;margin:8px 0;">爱好艺术的产品经理</div>
+            <div style="font-size:12px;color:#999;">微信 697481</div>
+          </div>
+        </div>
+      </div>
+      <p>内容居中在卡片上，简洁干净，有呼吸感</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>方案 B：左文右图式</h3>
+      <div class="mockup">
+        <div class="mockup-body">
+          <div style="display:flex;padding:16px;gap:16px;align-items:center;">
+            <div style="flex:1;">
+              <div style="font-weight:bold;font-size:20px;">Crane</div>
+              <div style="font-size:14px;color:#666;">医疗产品经理</div>
+              <div style="font-size:13px;color:#999;margin:8px 0;">爱好艺术的产品经理</div>
+              <div style="font-size:12px;color:#999;">微信 697481</div>
+            </div>
+            <div style="width:80px;height:80px;border-radius:50%;background:#e0e0e0;flex-shrink:0;"></div>
+          </div>
+        </div>
+      </div>
+      <p>信息在左，装饰/头像区在右，层次分明</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>方案 C：全屏大标题</h3>
+      <div class="mockup">
+        <div class="mockup-body">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;padding:20px;text-align:center;">
+            <div style="font-size:36px;font-weight:bold;letter-spacing:2px;">Crane</div>
+            <div style="font-size:16px;color:#555;margin-top:8px;">医疗产品经理</div>
+            <div style="width:40px;height:2px;background:#333;margin:12px 0;"></div>
+            <div style="font-size:14px;color:#999;">爱好艺术的产品经理</div>
+            <div style="font-size:13px;color:#999;margin-top:12px;">微信 697481</div>
+          </div>
+        </div>
+      </div>
+      <p>大标题居中，分割线点缀，简约大气</p>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:20px;color:#888;">点击你喜欢的方案选中它，然后在终端告诉我你的选择</p>

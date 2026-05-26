@@ -1,0 +1,1 @@
+import{r as e}from"./request-BCgl6h3L.js";function n(){return e.get("/versions")}function o(){return e.post("/versions")}function t(r){return e.post(`/versions/${r}/release`)}export{o as c,n as g,t as r};
