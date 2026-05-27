@@ -8,6 +8,10 @@ export function getDocRecords(versionId) {
   return request.get('/documents/records', { params: { versionId } })
 }
 
+export function getDocProgress(recordId) {
+  return request.get(`/documents/records/${recordId}/progress`)
+}
+
 export function downloadDocument(recordId) {
   return request.get(`/documents/records/${recordId}/download`, {
     responseType: 'blob'

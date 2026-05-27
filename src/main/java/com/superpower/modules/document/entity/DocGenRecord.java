@@ -42,6 +42,12 @@ public class DocGenRecord {
     @Column(name = "error_message", length = 1000)
     private String errorMessage;
 
+    @Column(name = "total_entries")
+    private Integer totalEntries;
+
+    @Column(name = "processed_entries")
+    private Integer processedEntries;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 

@@ -32,7 +32,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { queryEntries } from '../api/data'
 import * as echarts from 'echarts'
 
@@ -76,13 +76,18 @@ async function loadStats() {
 function renderPie(data) {
   if (!pieChart.value) return
   if (!pieInstance) pieInstance = echarts.init(pieChart.value)
+  if (pieChart.value.clientWidth === 0 || pieChart.value.clientHeight === 0) {
+    nextTick(() => renderPie(data))
+    return
+  }
   pieInstance.setOption({
     tooltip: { trigger: 'item' },
     series: [{
       type: 'pie',
       radius: ['30%', '60%'],
       data: data.length > 0 ? data : [{ name: '暂无数据', value: 1 }],
-      label: { show: true, formatter: '{b}: {c}' }
+      label: { show: true, formatter: '{b}: {c}', color: '#94A3B8' },
+      itemStyle: { borderColor: 'rgba(0,0,0,0.1)', borderWidth: 2, color: '#2563EB' }
     }]
   })
 }
@@ -90,6 +95,10 @@ function renderPie(data) {
 function renderBar(data) {
   if (!barChart.value) return
   if (!barInstance) barInstance = echarts.init(barChart.value)
+  if (barChart.value.clientWidth === 0 || barChart.value.clientHeight === 0) {
+    nextTick(() => renderBar(data))
+    return
+  }
   barInstance.setOption({
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: data.map(d => d.name) },
@@ -97,7 +106,7 @@ function renderBar(data) {
     series: [{
       type: 'bar',
       data: data.map(d => d.value),
-      itemStyle: { color: '#409eff' }
+      itemStyle: { color: '#2563EB' }
     }]
   })
 }
@@ -115,37 +124,48 @@ onMounted(loadStats)
 .stat-cards {
   display: flex;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 .stat-card {
   flex: 1;
-  background: linear-gradient(135deg, #1a2a3a, #2a4a6a);
-  border-radius: 8px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-lg);
   padding: 20px;
   text-align: center;
+  box-shadow: var(--si-shadow-sm);
 }
 .stat-label {
-  color: rgba(255,255,255,0.6);
-  font-size: 13px;
+  color: var(--si-text-muted);
+  font-size: 12px;
   margin-bottom: 8px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 .stat-value {
-  color: #fff;
+  color: var(--si-primary);
   font-size: 32px;
   font-weight: 700;
+  font-family: var(--si-font);
 }
 .stat-charts {
   display: flex;
   gap: 16px;
 }
 .chart-container {
-  background: #fafafa;
-  border-radius: 8px;
-  padding: 12px;
+  flex: 1;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-lg);
+  padding: 16px;
+  box-shadow: var(--si-shadow-sm);
 }
 .chart-title {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   font-size: 14px;
-  color: #666;
+  color: var(--si-text-secondary);
+  font-weight: 500;
+  font-family: var(--si-font);
 }
 </style>

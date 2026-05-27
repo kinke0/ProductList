@@ -1,7 +1,7 @@
 import request from '../utils/request'
 
 export function getTree(versionId) {
-  return request.get('/tree', { params: { versionId } })
+  return request.get(`/data/tree/${versionId}`)
 }
 
 export function getChildren(versionId, parentId) {
@@ -30,6 +30,18 @@ export function deleteEntry(id) {
 
 export function updateSort(sortList) {
   return request.put('/data/sort', sortList)
+}
+
+export function reorderAll(versionId) {
+  return request.put(`/data/reorder/${versionId}`)
+}
+
+export function dedupEntries(versionId) {
+  return request.delete(`/data/dedup/${versionId}`)
+}
+
+export function dedupDeepEntries(versionId) {
+  return request.delete(`/data/dedup-deep/${versionId}`)
 }
 
 export function levelUp(id) {

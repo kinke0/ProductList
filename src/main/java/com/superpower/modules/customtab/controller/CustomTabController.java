@@ -40,6 +40,11 @@ public class CustomTabController {
         return Result.success();
     }
 
+    @PutMapping("/{id}")
+    public Result<CustomTab> rename(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        return Result.success(customTabService.rename(id, body.get("name")));
+    }
+
     @PostMapping("/{id}/entries")
     public Result<Void> addEntries(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked")
@@ -52,6 +57,12 @@ public class CustomTabController {
     @DeleteMapping("/{id}/entries/{entryId}")
     public Result<Void> removeEntry(@PathVariable Long id, @PathVariable Long entryId) {
         customTabService.removeEntry(id, entryId);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/sort")
+    public Result<Void> updateSort(@PathVariable Long id, @RequestBody List<Map<String, Object>> sortList) {
+        customTabService.updateSortOrders(id, sortList);
         return Result.success();
     }
 }

@@ -20,7 +20,7 @@
 
   <div v-else class="workbench">
     <el-dialog v-model="showInsertDialog" title="选择目标清单" width="400px">
-      <el-table :data="customTabs" highlight-current-row @current-change="onSelectInsertTarget" style="cursor:pointer;">
+      <el-table :data="customTabs" highlight-current-row @row-click="onSelectInsertTarget" style="cursor:pointer;">
         <el-table-column prop="name" label="清单名称" />
       </el-table>
       <template #footer>
@@ -63,7 +63,7 @@
       </div>
       <div class="right-panel">
         <div class="tabs-wrapper">
-          <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;">
+          <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
             <el-tab-pane label="统计视图" name="stats">
               <StatsTab :version-id="selectedVersion.id" />
             </el-tab-pane>
@@ -78,17 +78,21 @@
             <el-tab-pane
               v-for="tab in customTabs"
               :key="'custom-' + tab.id"
-              :label="tab.name"
               :name="'custom-' + tab.id"
               :closable="true"
-              @tab-remove="onRemoveTab(tab)"
             >
+              <template #label>
+                <span @dblclick.stop="onRenameTab(tab)">{{ tab.name }}</span>
+              </template>
               <DataListTab
                 :version-id="selectedVersion.id"
-                :selected-node="null"
+                :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
                 :custom-tab-id="tab.id"
+                :refresh-trigger="customTabRefresh"
                 @insert-to-list="onInsertToList"
+                @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
+                @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
               />
             </el-tab-pane>
           </el-tabs>
@@ -115,7 +119,7 @@
       <el-form-item label="数据范围">
         <el-radio-group v-model="dataScope">
           <el-radio value="selected">仅勾选产品 ({{ selectedEntryIds.length }}条)</el-radio>
-          <el-radio value="all">整个版本</el-radio>
+          <el-radio value="all">{{ docCustomTabId ? '整个清单' : '整个版本' }}</el-radio>
         </el-radio-group>
       </el-form-item>
     </el-form>
@@ -125,7 +129,7 @@
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'generating' || row.status === 'processing'" type="warning" size="small">
-            <span class="spinning-dot" /> 生成中
+            {{ getRecordPercent(row) }}%
           </el-tag>
           <el-tag v-else-if="row.status === 'completed' || row.status === 'success'" type="success" size="small">已完成</el-tag>
           <el-tag v-else-if="row.status === 'error'" type="danger" size="small">生成错误</el-tag>
@@ -168,13 +172,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import TreePanel from '../../components/TreePanel.vue'
 import StatsTab from '../../components/StatsTab.vue'
 import DataListTab from '../../components/DataListTab.vue'
-import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord } from '../../api/document'
+import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
 import { getVersions } from '../../api/version'
-import { getCustomTabs, createCustomTab, deleteCustomTab, addEntriesToTab } from '../../api/customTab'
+import { getCustomTabs, createCustomTab, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const versions = ref([])
@@ -187,13 +191,67 @@ const docType = ref('feature')
 const docFormat = ref('word')
 const dataScope = ref('all')
 const selectedEntryIds = ref([])
+const docCustomTabId = ref(null)
 const docLoading = ref(false)
 const genRecords = ref([])
 const recordsLoading = ref(false)
 const customTabs = ref([])
 const showInsertDialog = ref(false)
 const insertEntryIds = ref([])
+const customTabRefresh = ref(0)
+const activeGenRecordId = ref(null)
+const progressTotal = ref(0)
+const progressProcessed = ref(0)
+const progressStatus = ref('')
 let pollTimer = null
+let progressTimer = null
+
+const showProgress = computed(() => activeGenRecordId.value !== null && progressTotal.value > 0)
+const progressPercent = computed(() => {
+  if (!progressTotal.value) return 0
+  return (progressProcessed.value / progressTotal.value) * 100
+})
+
+function getRecordPercent(row) {
+  if (row.id === activeGenRecordId.value && progressTotal.value > 0) {
+    return Math.round((progressProcessed.value / progressTotal.value) * 100)
+  }
+  if (row.totalEntries > 0) {
+    return Math.round(((row.processedEntries || 0) / row.totalEntries) * 100)
+  }
+  return 0
+}
+
+async function pollProgress() {
+  if (!activeGenRecordId.value) return
+  try {
+    const res = await getDocProgress(activeGenRecordId.value)
+    const r = res.data
+    if (r) {
+      progressTotal.value = r.totalEntries || 0
+      progressProcessed.value = r.processedEntries || 0
+      progressStatus.value = r.status || ''
+      if (r.status === 'completed' || r.status === 'error') {
+        stopProgressPoll()
+        loadGenRecords()
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function startProgressPoll() {
+  stopProgressPoll()
+  pollProgress()
+  progressTimer = setInterval(pollProgress, 100)
+}
+
+function stopProgressPoll() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+
+onBeforeUnmount(() => { stopProgressPoll(); stopPolling() })
 
 onMounted(async () => {
   try {
@@ -206,9 +264,23 @@ onMounted(async () => {
 
 watch(showDocDialog, (val) => {
   if (val && selectedVersion.value) {
-    loadGenRecords()
+    loadGenRecords().then(() => {
+      const gen = genRecords.value.find(r => r.status === 'generating')
+      if (gen) {
+        activeGenRecordId.value = gen.id
+        progressTotal.value = gen.totalEntries || 0
+        progressProcessed.value = gen.processedEntries || 0
+        progressStatus.value = gen.status || ''
+        startProgressPoll()
+      }
+    })
   } else {
     stopPolling()
+    stopProgressPoll()
+    activeGenRecordId.value = null
+    progressTotal.value = 0
+    progressProcessed.value = 0
+    progressStatus.value = ''
   }
 })
 
@@ -270,9 +342,11 @@ async function onAddList() {
   }
 }
 
-async function onRemoveTab(tab) {
+async function onRemoveTab(targetName) {
+  const tab = customTabs.value.find(t => 'custom-' + t.id === targetName)
+  if (!tab) return
   try {
-    await ElMessageBox.confirm(`确认删除清单"${tab.name}"？`, '确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确认删除清单"${tab.name}"？清单内的数据关联也将一并删除。`, '确认删除', { type: 'warning' })
     await deleteCustomTab(tab.id)
     ElMessage.success('已删除')
     activeTab.value = 'list'
@@ -283,6 +357,28 @@ async function onRemoveTab(tab) {
     }
   }
 }
+
+async function onRenameTab(tab) {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新名称', '重命名清单', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: tab.name,
+      inputValidator: (val) => val && val.trim() ? true : '名称不能为空'
+    })
+    if (value && value.trim() !== tab.name) {
+      await renameCustomTab(tab.id, value.trim())
+      ElMessage.success('重命名成功')
+      await loadCustomTabs()
+    }
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e?.response?.data?.message || '重命名失败')
+    }
+  }
+}
+
+function onTabClick() {}
 
 function onInsertToList(entryIds) {
   if (!entryIds || entryIds.length === 0) {
@@ -302,14 +398,29 @@ function onSelectInsertTarget(tab) {
     addEntriesToTab(tab.id, insertEntryIds.value).then(() => {
       ElMessage.success('插入成功')
       showInsertDialog.value = false
+      customTabRefresh.value++
     }).catch(() => {
       ElMessage.error('插入失败')
     })
   }
 }
 
-function onGenerateDoc(ids) {
+async function onRemoveFromList(tabId, entryIds) {
+  if (!entryIds || entryIds.length === 0) return
+  try {
+    for (const entryId of entryIds) {
+      await removeEntryFromTab(tabId, entryId)
+    }
+    ElMessage.success(`已移除 ${entryIds.length} 条记录`)
+    customTabRefresh.value++
+  } catch (e) {
+    ElMessage.error('移除失败')
+  }
+}
+
+function onGenerateDoc(ids, tabId) {
   selectedEntryIds.value = ids
+  docCustomTabId.value = tabId || null
   showDocDialog.value = true
 }
 
@@ -330,7 +441,7 @@ function startPolling() {
     loadGenRecords()
     const hasGenerating = genRecords.value.some(r => r.status === 'generating')
     if (!hasGenerating) stopPolling()
-  }, 2000)
+  }, 3000)
 }
 
 function stopPolling() {
@@ -349,11 +460,15 @@ async function handleGenerate() {
       docType: docType.value,
       format: docFormat.value,
       dataScope: dataScope.value,
-      entryIds: dataScope.value === 'selected' ? selectedEntryIds.value : []
+      entryIds: dataScope.value === 'selected' ? selectedEntryIds.value : [],
+      customTabId: docCustomTabId.value
     })
     if (res.code === 200) {
+      const recordId = res.data?.id
+      activeGenRecordId.value = recordId || null
       ElMessage.success('文档正在生成中...')
       loadGenRecords()
+      if (recordId) startProgressPoll()
       startPolling()
     } else {
       ElMessage.error(res.message || '生成失败')
@@ -423,10 +538,11 @@ async function handleDeleteRecord(row) {
 .version-pick h3 {
   margin-bottom: 16px;
   font-size: 18px;
-  color: #1a2a3a;
+  font-family: var(--si-font);
+  color: var(--si-text-primary);
 }
 .workbench {
-  height: calc(100vh - 82px);
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -434,10 +550,13 @@ async function handleDeleteRecord(row) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: #fff;
-  border-radius: 4px;
-  margin-bottom: 8px;
+  padding: 10px 16px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-md);
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  box-shadow: var(--si-shadow-sm);
 }
 .version-info {
   display: flex;
@@ -447,14 +566,15 @@ async function handleDeleteRecord(row) {
 .version-badge {
   font-weight: 700;
   font-size: 16px;
-  color: #1a2a3a;
+  font-family: var(--font-heading);
+  color: var(--si-primary);
 }
 .version-date {
-  color: #999;
+  color: var(--si-text-muted);
   font-size: 13px;
 }
 .readonly-tip {
-  color: #f56c6c;
+  color: var(--si-danger);
   font-size: 12px;
 }
 .tabs-wrapper {
@@ -462,60 +582,59 @@ async function handleDeleteRecord(row) {
   height: 100%;
 }
 .tabs-wrapper :deep(.el-tabs__header) {
-  padding-right: 100px;
+  padding-right: 120px;
+  padding-left: 8px;
 }
 .add-list-btn {
   position: absolute;
-  top: 5px;
-  right: 0;
+  top: 8px;
+  right: 4px;
   z-index: 1;
 }
 .workbench-body {
   display: flex;
   flex: 1;
-  gap: 8px;
+  gap: 12px;
   overflow: hidden;
+  min-height: 0;
 }
 .left-panel {
   width: 260px;
-  background: #fff;
-  border-radius: 4px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-lg);
   overflow-y: auto;
   flex-shrink: 0;
+  box-shadow: var(--si-shadow-sm);
 }
 .right-panel {
   flex: 1;
-  background: #fff;
-  border-radius: 4px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  box-shadow: var(--si-shadow-sm);
 }
 :deep(.el-tabs) { display: flex; flex-direction: column; height: 100%; }
 :deep(.el-tabs__header) { flex-shrink: 0; }
 :deep(.el-tabs__content) { flex: 1; overflow: hidden; min-height: 0; }
 :deep(.el-tab-pane) { height: 100%; overflow: hidden; }
 
-@keyframes spin-glow {
-  0% { box-shadow: 0 0 0 0 rgba(230, 162, 60, 0.6); }
-  50% { box-shadow: 0 0 6px 3px rgba(230, 162, 60, 0.4); }
-  100% { box-shadow: 0 0 0 0 rgba(230, 162, 60, 0.6); }
-}
-
 @keyframes spin-rotate {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
-
 .spinning-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 2px solid #e6a23c;
+  border: 2px solid var(--si-primary);
   border-top-color: transparent;
   margin-right: 4px;
   vertical-align: -1px;
-  animation: spin-rotate 0.8s linear infinite, spin-glow 1.2s ease-in-out infinite;
+  animation: spin-rotate 0.8s linear infinite;
 }
 </style>

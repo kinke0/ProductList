@@ -5,6 +5,8 @@ import com.superpower.modules.data.dto.DataEntryDTO;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
+import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
+import com.superpower.modules.customtab.entity.CustomTabEntry;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
 import org.springframework.stereotype.Service;
@@ -12,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -20,10 +23,13 @@ public class DataEntryService {
 
     private final DataEntryRepository entryRepository;
     private final DataVersionRepository dataVersionRepository;
+    private final CustomTabEntryRepository customTabEntryRepository;
 
-    public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository) {
+    public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
+                            CustomTabEntryRepository customTabEntryRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
+        this.customTabEntryRepository = customTabEntryRepository;
     }
 
     public List<TreeNodeDTO> getTree(Long versionId, String name, String status, String productManager,
@@ -64,10 +70,34 @@ public class DataEntryService {
                 .orElseThrow(() -> new BusinessException("数据条目不存在"));
     }
 
+    @Transactional
     public List<DataEntry> query(Long versionId, Long customTabId, String name, String status, String productManager,
                                  String solution, String versionDivision, String bizCategory, String bizDomain) {
-        return entryRepository.queryEntries(versionId, customTabId, name, status, productManager,
-                solution, versionDivision, bizCategory, bizDomain);
+        boolean hasFilter = (name != null && !name.isEmpty()) || (status != null && !status.isEmpty())
+                || (productManager != null && !productManager.isEmpty()) || (solution != null && !solution.isEmpty())
+                || (versionDivision != null && !versionDivision.isEmpty());
+
+        if (customTabId != null) {
+            List<DataEntry> entries;
+            if (hasFilter) {
+                entries = entryRepository.queryEntries(versionId, customTabId, name, status, productManager,
+                        solution, versionDivision, bizCategory, bizDomain);
+            } else {
+                entries = entryRepository.findEntriesByTab(versionId, customTabId);
+            }
+            return reorderByCustomTabSort(customTabId, entries);
+        }
+
+        if (hasFilter) {
+            return entryRepository.queryEntries(versionId, null, name, status, productManager,
+                    solution, versionDivision, bizCategory, bizDomain);
+        }
+
+        if (bizCategory != null || bizDomain != null) {
+            return entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
+        }
+
+        return entryRepository.findAllEntries(versionId);
     }
 
     @Transactional
@@ -97,19 +127,79 @@ public class DataEntryService {
     public DataEntry update(Long id, DataEntryDTO dto) {
         DataEntry entry = getById(id);
         ensureVersionEditable(entry.getVersionId());
+        String oldBizCategory = entry.getColBizCategory();
+        String oldBizDomain = entry.getColBizDomain();
         copyFields(entry, dto);
-        return entryRepository.save(entry);
+        DataEntry saved = entryRepository.save(entry);
+
+        if (entry.getLevel() != null && entry.getLevel() <= 2) {
+            cascadeLabelUpdate(entry, oldBizCategory, oldBizDomain);
+        }
+
+        return saved;
+    }
+
+    private void cascadeLabelUpdate(DataEntry entry, String oldBizCategory, String oldBizDomain) {
+        String newCategory = entry.getColBizCategory();
+        String newDomain = entry.getColBizDomain();
+
+        if (entry.getLevel() == 1 && newCategory != null && !newCategory.equals(oldBizCategory)) {
+            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            for (DataEntry d : descendants) {
+                d.setColBizCategory(newCategory);
+                entryRepository.save(d);
+            }
+        }
+
+        if (entry.getLevel() == 2 && newDomain != null && !newDomain.equals(oldBizDomain)) {
+            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            for (DataEntry d : descendants) {
+                d.setColBizDomain(newDomain);
+                entryRepository.save(d);
+            }
+        }
+    }
+
+    private List<DataEntry> collectDescendants(Long parentId, Long versionId) {
+        List<DataEntry> all = entryRepository.findByVersionId(versionId);
+        Map<Long, List<DataEntry>> parentMap = new HashMap<>();
+        for (DataEntry e : all) {
+            if (e.getParentId() != null) {
+                parentMap.computeIfAbsent(e.getParentId(), k -> new ArrayList<>()).add(e);
+            }
+        }
+        List<DataEntry> result = new ArrayList<>();
+        java.util.Queue<Long> queue = new java.util.LinkedList<>();
+        queue.add(parentId);
+        while (!queue.isEmpty()) {
+            Long pid = queue.poll();
+            List<DataEntry> children = parentMap.get(pid);
+            if (children != null) {
+                for (DataEntry child : children) {
+                    result.add(child);
+                    queue.add(child.getId());
+                }
+            }
+        }
+        return result;
     }
 
     @Transactional
     public void delete(Long id) {
         DataEntry entry = getById(id);
         ensureVersionEditable(entry.getVersionId());
-        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(entry.getVersionId(), id);
-        if (!children.isEmpty()) {
-            throw new BusinessException("该节点下有子节点，无法删除");
+        List<Long> allIds = new ArrayList<>();
+        allIds.add(id);
+        collectDescendantIds(entry.getVersionId(), id, allIds);
+        entryRepository.deleteAllById(allIds);
+    }
+
+    private void collectDescendantIds(Long versionId, Long parentId, List<Long> ids) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(versionId, parentId);
+        for (DataEntry child : children) {
+            ids.add(child.getId());
+            collectDescendantIds(versionId, child.getId(), ids);
         }
-        entryRepository.deleteById(id);
     }
 
     public void ensureVersionEditable(Long versionId) {
@@ -183,6 +273,134 @@ public class DataEntryService {
     }
 
     @Transactional
+    public void reorderAll(Long versionId) {
+        ensureVersionEditable(versionId);
+        List<DataEntry> all = entryRepository.findByVersionId(versionId);
+
+        Map<String, List<DataEntry>> groups = new HashMap<>();
+        for (DataEntry e : all) {
+            if (e.getLevel() < 3) continue;
+            String key = versionId + "_" + e.getLevel() + "_" + (e.getParentId() == null ? 0 : e.getParentId());
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(e);
+        }
+
+        java.util.Comparator<String> numericPrefixComparator = numericPrefixComparator();
+
+        for (List<DataEntry> group : groups.values()) {
+            group.sort((a, b) -> {
+                String nameA = a.getColProductSystem() != null ? a.getColProductSystem() : "";
+                String nameB = b.getColProductSystem() != null ? b.getColProductSystem() : "";
+                return numericPrefixComparator.compare(nameA, nameB);
+            });
+            for (int i = 0; i < group.size(); i++) {
+                group.get(i).setSortOrder(i);
+                entryRepository.save(group.get(i));
+            }
+        }
+    }
+
+    private String extractNumberPrefix(String name) {
+        if (name == null || name.isEmpty()) return "";
+        int end = 0;
+        while (end < name.length() && (Character.isDigit(name.charAt(end)) || name.charAt(end) == '.')) {
+            end++;
+        }
+        String prefix = name.substring(0, end);
+        while (prefix.endsWith(".")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        return prefix;
+    }
+
+    private String stripNumberPrefix(String name) {
+        if (name == null || name.isEmpty()) return "";
+        int end = 0;
+        while (end < name.length() && (Character.isDigit(name.charAt(end)) || name.charAt(end) == '.')) {
+            end++;
+        }
+        String rest = name.substring(end).trim();
+        return rest;
+    }
+
+    @Transactional
+    public int dedupByVersion(Long versionId) {
+        ensureVersionEditable(versionId);
+        return doDedup(versionId, false);
+    }
+
+    @Transactional
+    public int dedupDeep(Long versionId) {
+        ensureVersionEditable(versionId);
+        return doDedup(versionId, true);
+    }
+
+    private int doDedup(Long versionId, boolean deep) {
+        List<DataEntry> all = entryRepository.findByVersionId(versionId);
+
+        Map<String, List<DataEntry>> groups = new HashMap<>();
+        for (DataEntry e : all) {
+            String name = e.getColProductSystem() != null ? e.getColProductSystem().trim() : "";
+            String key;
+            if (deep) {
+                String coreName = stripNumberPrefix(name).replaceAll("\\s+", "");
+                key = e.getLevel() + "_" + coreName;
+            } else {
+                key = e.getLevel() + "_" + (e.getParentId() == null ? 0 : e.getParentId()) + "_" + name;
+            }
+            if (key.endsWith("_")) continue;
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(e);
+        }
+
+        int deleted = 0;
+        for (List<DataEntry> group : groups.values()) {
+            if (group.size() <= 1) continue;
+            group.sort((a, b) -> {
+                String nameA = a.getColProductSystem() != null ? a.getColProductSystem() : "";
+                String nameB = b.getColProductSystem() != null ? b.getColProductSystem() : "";
+                return numericPrefixComparator().compare(nameA, nameB);
+            });
+            DataEntry keeper = group.get(0);
+            for (int i = 1; i < group.size(); i++) {
+                DataEntry dup = group.get(i);
+                entryRepository.findByVersionIdAndParentId(versionId, dup.getId())
+                        .forEach(child -> {
+                            child.setParentId(keeper.getId());
+                            entryRepository.save(child);
+                        });
+                try {
+                    entryRepository.deleteById(dup.getId());
+                    deleted++;
+                } catch (Exception ignored) {}
+            }
+        }
+        return deleted;
+    }
+
+    private java.util.Comparator<String> numericPrefixComparator() {
+        return (a, b) -> {
+            String pa = extractNumberPrefix(a);
+            String pb = extractNumberPrefix(b);
+            if (pa.isEmpty() && pb.isEmpty()) return a.compareTo(b);
+            if (pa.isEmpty()) return 1;
+            if (pb.isEmpty()) return -1;
+            String[] partsA = pa.split("\\.");
+            String[] partsB = pb.split("\\.");
+            int len = Math.min(partsA.length, partsB.length);
+            for (int i = 0; i < len; i++) {
+                try {
+                    int na = Integer.parseInt(partsA[i]);
+                    int nb = Integer.parseInt(partsB[i]);
+                    if (na != nb) return Integer.compare(na, nb);
+                } catch (NumberFormatException e) {
+                    int cmp = partsA[i].compareTo(partsB[i]);
+                    if (cmp != 0) return cmp;
+                }
+            }
+            return Integer.compare(partsA.length, partsB.length);
+        };
+    }
+
+    @Transactional
     public void levelUp(Long id) {
         DataEntry entry = getById(id);
         ensureVersionEditable(entry.getVersionId());
@@ -219,5 +437,46 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() + 1);
         entry.setParentId(prevSibling.getId());
         entryRepository.save(entry);
+    }
+
+    private List<DataEntry> reorderByCustomTabSort(Long customTabId, List<DataEntry> entries) {
+        List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
+        boolean hasNullSort = tabEntries.stream().anyMatch(te -> te.getSortOrder() == null);
+        if (hasNullSort) {
+            Map<Long, Integer> entrySortMap = new HashMap<>();
+            for (DataEntry e : entries) {
+                entrySortMap.put(e.getId(), e.getSortOrder() != null ? e.getSortOrder() : 0);
+            }
+            tabEntries.sort((a, b) -> {
+                boolean aHasSort = a.getSortOrder() != null;
+                boolean bHasSort = b.getSortOrder() != null;
+                if (aHasSort && bHasSort) return Integer.compare(a.getSortOrder(), b.getSortOrder());
+                if (aHasSort) return -1;
+                if (bHasSort) return 1;
+                Integer sortA = entrySortMap.getOrDefault(a.getEntryId(), 0);
+                Integer sortB = entrySortMap.getOrDefault(b.getEntryId(), 0);
+                if (!sortA.equals(sortB)) return Integer.compare(sortA, sortB);
+                return Long.compare(a.getEntryId(), b.getEntryId());
+            });
+            int order = 0;
+            for (CustomTabEntry te : tabEntries) {
+                te.setSortOrder(order++);
+                customTabEntryRepository.save(te);
+            }
+        }
+        Map<Long, Integer> sortMap = new HashMap<>();
+        for (CustomTabEntry te : tabEntries) {
+            sortMap.put(te.getEntryId(), te.getSortOrder() != null ? te.getSortOrder() : 0);
+        }
+        entries.sort((a, b) -> {
+            Integer sortA = sortMap.get(a.getId());
+            Integer sortB = sortMap.get(b.getId());
+            if (sortA == null && sortB == null) return Long.compare(a.getId(), b.getId());
+            if (sortA == null) return 1;
+            if (sortB == null) return -1;
+            if (!sortA.equals(sortB)) return Integer.compare(sortA, sortB);
+            return Long.compare(a.getId(), b.getId());
+        });
+        return entries;
     }
 }

@@ -10,4 +10,5 @@ public class DocGenerateRequest {
     private String format;
     private String dataScope;
     private List<Long> entryIds;
+    private Long customTabId;
 }

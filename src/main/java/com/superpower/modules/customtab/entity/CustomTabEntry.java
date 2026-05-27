@@ -17,4 +17,7 @@ public class CustomTabEntry implements Serializable {
     @Id
     @Column(name = "entry_id", nullable = false)
     private Long entryId;
+
+    @Column(name = "sort_order")
+    private Integer sortOrder = 0;
 }

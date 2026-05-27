@@ -51,7 +51,7 @@ const routes = [
         path: 'base-data/app-role',
         name: 'AppRoleManage',
         component: () => import('../views/system/OptionManage.vue'),
-        meta: { title: '应用角色维护', type: 'app_role', roles: ['ADMIN'] }
+        meta: { title: '应用角色维护', type: 'appRole', roles: ['ADMIN'] }
       },
       {
         path: 'base-data/status',

@@ -63,5 +63,5 @@ onMounted(loadRoles)
 <style scoped>
 .page { padding: 0; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.page-header h3 { margin: 0; font-size: 16px; }
+.page-header h3 { margin: 0; font-size: 17px; font-weight: 600; color: rgba(0,0,0,0.87); }
 </style>

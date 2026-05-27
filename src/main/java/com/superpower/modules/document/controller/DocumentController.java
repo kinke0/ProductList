@@ -36,7 +36,10 @@ public class DocumentController {
             userName = user.getUsername();
         }
 
-        List<Long> entryIds = "all".equals(request.getDataScope()) ? List.of() : request.getEntryIds();
+        List<Long> entryIds = (request.getEntryIds() != null && !request.getEntryIds().isEmpty())
+                ? request.getEntryIds() : List.of();
+
+        Long customTabId = request.getCustomTabId();
 
         DocGenRecord record = documentService.createGenRecord(
                 request.getVersionId(), request.getDocType(), request.getFormat(), entryIds, userId, userName);
@@ -45,13 +48,18 @@ public class DocumentController {
         new Thread(() -> {
             try {
                 documentService.generateAndSaveDocument(
-                        recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId());
+                        recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId);
             } catch (Exception e) {
                 documentService.updateGenRecordError(recordId, e.getMessage());
             }
         }).start();
 
         return Result.success(record);
+    }
+
+    @GetMapping("/records/{id}/progress")
+    public Result<DocGenRecord> getProgress(@PathVariable Long id) {
+        return Result.success(documentService.getGenRecord(id));
     }
 
     @GetMapping("/records")

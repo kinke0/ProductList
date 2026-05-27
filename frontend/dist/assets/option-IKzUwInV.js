@@ -1,1 +1,0 @@
-import{r as n}from"./request-BCgl6h3L.js";function r(t){return n.get(`/options/${t}`)}function i(t,o){return n.post(`/options/${t}`,{value:o})}function p(t,o){return n.put(`/options/${t}`,{value:o})}function s(t){return n.delete(`/options/${t}`)}export{i as c,s as d,r as g,p as u};

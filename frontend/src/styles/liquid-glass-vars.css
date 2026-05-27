@@ -1,0 +1,47 @@
+/* Sales Intelligence Design Tokens */
+:root {
+  --si-bg: #F8FAFC;
+  --si-bg-sidebar: #0F172A;
+  --si-bg-card: #FFFFFF;
+  --si-bg-hover: #F1F5F9;
+  --si-bg-header: #FFFFFF;
+
+  --si-border: #E2E8F0;
+  --si-border-light: #F1F5F9;
+
+  --si-primary: #2563EB;
+  --si-primary-soft: rgba(37, 99, 235, 0.08);
+  --si-primary-hover: #1D4ED8;
+
+  --si-success: #16A34A;
+  --si-success-soft: rgba(22, 163, 74, 0.08);
+  --si-warning: #D97706;
+  --si-warning-soft: rgba(217, 119, 6, 0.08);
+  --si-danger: #DC2626;
+  --si-danger-soft: rgba(220, 38, 38, 0.08);
+  --si-info: #0891B2;
+  --si-info-soft: rgba(8, 145, 178, 0.08);
+
+  --si-text-primary: #0F172A;
+  --si-text-secondary: #475569;
+  --si-text-muted: #94A3B8;
+  --si-text-on-dark: #F8FAFC;
+  --si-text-on-dark-muted: #94A3B8;
+
+  --si-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --si-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --si-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
+
+  --si-radius-sm: 6px;
+  --si-radius-md: 8px;
+  --si-radius-lg: 10px;
+  --si-radius-xl: 12px;
+
+  --si-sidebar-width: 220px;
+  --si-header-height: 48px;
+
+  --si-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --si-font-mono: 'SF Mono', 'Fira Code', monospace;
+
+  --si-transition: 150ms ease;
+}

@@ -1,6 +1,15 @@
 <template>
   <div class="tree-panel">
     <div class="tree-title">层级导航</div>
+    <div class="tree-filter">
+      <el-input
+        v-model="filterText"
+        placeholder="搜索分类/领域"
+        size="small"
+        clearable
+        prefix-icon="Search"
+      />
+    </div>
     <div
       class="all-node"
       :class="{ active: selectedAll }"
@@ -17,6 +26,7 @@
       @node-click="onNodeClick"
       :show-checkbox="false"
       default-expand-all
+      :filter-node-method="filterNode"
     >
       <template #default="{ data }">
         <span>{{ data.label }}</span>
@@ -37,6 +47,11 @@ const selectedAll = ref(true)
 const treeData = ref([])
 const nodeMap = ref({})
 const treeProps = { children: 'children', label: 'label', isLeaf: 'isLeaf' }
+const filterText = ref('')
+
+watch(filterText, (val) => {
+  treeRef.value?.filter(val)
+})
 
 watch(() => props.versionId, async (val) => {
   if (val) {
@@ -59,6 +74,11 @@ function selectAll() {
   selectedAll.value = true
   if (treeRef.value) treeRef.value.setCurrentKey(null)
   emit('select', { id: 'all', level: 0, label: '全部', categoryLabel: '', domainLabel: '' })
+}
+
+function filterNode(value, data) {
+  if (!value) return true
+  return data.label?.includes(value)
 }
 
 
@@ -89,27 +109,56 @@ function onNodeClick(data) {
 
 <style scoped>
 .tree-panel {
-  padding: 8px;
+  padding: 12px;
 }
 .tree-title {
   font-weight: 600;
-  font-size: 14px;
-  padding: 8px;
-  border-bottom: 1px solid #f0f0f0;
-  margin-bottom: 4px;
+  font-size: 12px;
+  padding: 8px 12px;
+  color: var(--si-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--si-border);
+  margin-bottom: 6px;
+  font-family: var(--si-font);
+}
+.tree-filter {
+  padding: 0 4px 6px;
 }
 .all-node {
-  padding: 6px 8px;
+  padding: 8px 12px;
   cursor: pointer;
-  font-weight: 700;
-  color: #409eff;
-  border-radius: 4px;
-  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--si-text-secondary);
+  border-radius: 8px;
+  margin: 2px 0;
+  transition: background var(--si-transition), color var(--si-transition);
 }
 .all-node.active {
-  background: #ecf5ff;
+  background: var(--si-primary-soft);
+  color: var(--si-primary);
 }
 .all-node:hover {
-  background: #f0f7ff;
+  background: var(--si-bg-hover);
+  color: var(--si-text-primary);
+}
+:deep(.el-tree-node__content) {
+  border-radius: 8px;
+  margin: 1px 0;
+  transition: background-color var(--si-transition);
+  color: var(--si-text-secondary);
+}
+:deep(.el-tree-node__content:hover) {
+  background-color: var(--si-bg-hover);
+  color: var(--si-text-primary);
+}
+:deep(.el-tree-node.is-current > .el-tree-node__content) {
+  background-color: var(--si-primary-soft);
+  color: var(--si-primary);
+  font-weight: 500;
+}
+:deep(.el-tree) {
+  background: transparent;
+  color: var(--si-text-secondary);
 }
 </style>

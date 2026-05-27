@@ -3,39 +3,6 @@
     <h3>基础数据维护</h3>
     <p class="subtitle">维护左侧层级树的业务分类（L1）与业务域（L2）</p>
 
-    <div class="filter-section">
-      <el-form inline size="small">
-        <el-form-item label="名称">
-          <el-input v-model="filters.name" placeholder="请输入名称" clearable @change="handleFilter" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="请选择状态" clearable @change="handleFilter">
-            <el-option v-for="status in statusOptions" :key="status.value" :label="status.label" :value="status.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="产品经理">
-          <el-input v-model="filters.productManager" placeholder="请输入产品经理" clearable @change="handleFilter" />
-        </el-form-item>
-        <el-form-item label="解决方案">
-          <el-select v-model="filters.solution" placeholder="请选择解决方案" clearable @change="handleFilter">
-            <el-option label="智慧医疗" value="智慧医疗" />
-            <el-option label="智慧服务" value="智慧服务" />
-            <el-option label="智慧管理" value="智慧管理" />
-            <el-option label="互联互通" value="互联互通" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="版本">
-          <el-select v-model="filters.versionTag" placeholder="请选择版本" clearable @change="handleFilter">
-            <el-option v-for="version in versionOptions" :key="version.value" :label="version.label" :value="version.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleFilter">查询</el-button>
-          <el-button @click="resetFilters">重置</el-button>
-        </el-form-item>
-      </el-form>
-    </div>
-
     <div class="dual-tables">
       <div class="table-wrapper">
         <div class="table-header">
@@ -127,8 +94,8 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
-import { getTree, getChildren, createEntry, updateEntry, deleteEntry, queryEntries } from '../../api/data'
+import { ref, onMounted } from 'vue'
+import { getTree, getChildren, createEntry, updateEntry, deleteEntry } from '../../api/data'
 import { getVersions } from '../../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -144,22 +111,6 @@ const l2Form = ref({ colBizDomain: '' })
 const editingL2Id = ref(null)
 const editingL1Id = ref(null)
 
-const filters = ref({
-  name: '',
-  status: '',
-  productManager: '',
-  solution: '',
-  versionTag: ''
-})
-
-const statusOptions = ref([
-  { label: '已开发', value: '已开发' },
-  { label: '开发中', value: '开发中' },
-  { label: '已规划', value: '已规划' }
-])
-
-const versionOptions = ref([])
-
 let versionId = null
 const versionStatus = ref(null)
 
@@ -170,72 +121,14 @@ async function loadVersion() {
   versionStatus.value = draft ? 'draft' : 'released'
 }
 
-async function loadVersionOptions() {
-  try {
-    const res = await getVersions()
-    versionOptions.value = res.data.map(v => ({
-      label: v.versionNo,
-      value: v.versionNo
-    }))
-  } catch (error) {
-    console.error('加载版本选项失败:', error)
-  }
-}
-
-async function handleFilter() {
-  if (!versionId) return
-  await loadL1()
-}
-
-function resetFilters() {
-  filters.value = {
-    name: '',
-    status: '',
-    productManager: '',
-    solution: '',
-    versionTag: ''
-  }
-  handleFilter()
-}
-
 async function loadL1() {
-  const hasFilters = filters.value.name || filters.value.status || filters.value.productManager || filters.value.solution || filters.value.versionTag
-  if (hasFilters) {
-    const res = await queryEntries(versionId, {
-      name: filters.value.name,
-      status: filters.value.status,
-      productManager: filters.value.productManager,
-      solution: filters.value.solution,
-      versionTag: filters.value.versionTag,
-      level: 1
-    })
-    l1List.value = res.data || []
-  } else {
-    const res = await getTree(versionId)
-    l1List.value = res.data || []
-  }
+  const res = await getTree(versionId)
+  l1List.value = res.data || []
 }
 
 async function loadL2(l1Id) {
-  if (hasActiveFilters()) {
-    const res = await queryEntries(versionId, {
-      parentId: l1Id,
-      name: filters.value.name,
-      status: filters.value.status,
-      productManager: filters.value.productManager,
-      solution: filters.value.solution,
-      versionTag: filters.value.versionTag
-    })
-    l2List.value = res.data || []
-  } else {
-    const res = await getChildren(versionId, l1Id)
-    l2List.value = res.data || []
-  }
-}
-
-function hasActiveFilters() {
-  return filters.value.name || filters.value.status || filters.value.productManager ||
-         filters.value.solution || filters.value.versionTag;
+  const res = await getChildren(versionId, l1Id)
+  l2List.value = res.data || []
 }
 
 function onL1Select(row) {
@@ -271,7 +164,7 @@ async function saveL1() {
     })
     ElMessage.success('创建成功')
   } else {
-    await updateEntry(editingL1Id.value, { colBizCategory: l1Form.value.colBizCategory })
+    await updateEntry(editingL1Id.value, { colBizCategory: l1Form.value.colBizCategory, colProductSystem: l1Form.value.colBizCategory })
     ElMessage.success('保存成功')
   }
   l1Dialog.value = false
@@ -279,21 +172,21 @@ async function saveL1() {
 }
 
 async function deleteL1(row) {
-  ElMessageBox.confirm(`确认删除业务分类"${row.colBizCategory || row.label}"？下面的业务域也会一起删除。`, '提示', {
+  ElMessageBox.confirm(`确认删除业务分类"${row.colBizCategory || row.label}"？`, '提示', {
     type: 'warning'
   }).then(async () => {
-    // Delete all L2 children first
-    const children = await getChildren(versionId, row.id)
-    for (const c of children.data || []) {
-      await deleteEntry(c.id)
+    try {
+      await deleteEntry(row.id)
+      ElMessage.success('删除成功')
+      if (selectedL1.value?.id === row.id) {
+        selectedL1.value = null
+        l2List.value = []
+      }
+      await loadL1()
+    } catch (e) {
+      const msg = e?.response?.data?.message || '删除失败'
+      ElMessage.warning(msg)
     }
-    await deleteEntry(row.id)
-    ElMessage.success('删除成功')
-    if (selectedL1.value?.id === row.id) {
-      selectedL1.value = null
-      l2List.value = []
-    }
-    await loadL1()
   }).catch(() => {})
 }
 
@@ -327,7 +220,7 @@ async function saveL2() {
     })
     ElMessage.success('创建成功')
   } else {
-    await updateEntry(editingL2Id.value, { colBizDomain: l2Form.value.colBizDomain })
+    await updateEntry(editingL2Id.value, { colBizDomain: l2Form.value.colBizDomain, colProductSystem: l2Form.value.colBizDomain })
     ElMessage.success('保存成功')
   }
   l2Dialog.value = false
@@ -338,15 +231,19 @@ async function deleteL2(row) {
   ElMessageBox.confirm(`确认删除业务域"${row.colBizDomain || row.label}"？`, '提示', {
     type: 'warning'
   }).then(async () => {
-    await deleteEntry(row.id)
-    ElMessage.success('删除成功')
-    await loadL2(selectedL1.value.id)
+    try {
+      await deleteEntry(row.id)
+      ElMessage.success('删除成功')
+      await loadL2(selectedL1.value.id)
+    } catch (e) {
+      const msg = e?.response?.data?.message || '删除失败'
+      ElMessage.warning(msg)
+    }
   }).catch(() => {})
 }
 
 onMounted(async () => {
   await loadVersion()
-  await loadVersionOptions()
   await loadL1()
 })
 </script>
@@ -355,12 +252,6 @@ onMounted(async () => {
 .page { padding: 0; }
 h3 { margin: 0 0 4px; font-size: 16px; }
 .subtitle { margin: 0 0 16px; font-size: 13px; color: #999; }
-.filter-section {
-  padding: 12px;
-  background-color: #f5f7fa;
-  border-radius: 4px;
-  margin-bottom: 12px;
-}
 .dual-tables {
   display: flex;
   gap: 16px;

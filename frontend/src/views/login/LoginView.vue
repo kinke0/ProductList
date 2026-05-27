@@ -63,20 +63,47 @@ async function handleLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1a2a3a 0%, #0d1b2a 100%);
+  background: var(--si-bg);
 }
+
 .login-card {
   width: 400px;
-  padding: 40px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  padding: 48px 40px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-xl);
+  box-shadow: var(--si-shadow-lg);
 }
-.login-title {
+
+.login-brand {
   text-align: center;
-  margin-bottom: 30px;
-  color: #1a2a3a;
+  margin-bottom: 36px;
+}
+
+.login-logo {
+  width: 56px;
+  height: 56px;
+  line-height: 56px;
+  margin: 0 auto 16px;
+  background: var(--si-primary);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  border-radius: 16px;
+  font-family: var(--si-font);
+}
+
+.login-title {
+  margin: 0 0 6px;
+  color: var(--si-text-primary);
   font-size: 22px;
-  letter-spacing: 2px;
+  font-weight: 600;
+  font-family: var(--si-font);
+}
+
+.login-subtitle {
+  margin: 0;
+  color: var(--si-text-muted);
+  font-size: 14px;
 }
 </style>

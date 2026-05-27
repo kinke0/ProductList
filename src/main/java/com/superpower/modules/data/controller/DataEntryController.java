@@ -106,6 +106,27 @@ public class DataEntryController {
         return Result.success();
     }
 
+    @PutMapping("/reorder/{versionId}")
+    public Result<Void> reorder(@PathVariable Long versionId) {
+        checkVersionEditPermission(versionId);
+        dataEntryService.reorderAll(versionId);
+        return Result.success();
+    }
+
+    @DeleteMapping("/dedup/{versionId}")
+    public Result<Integer> dedup(@PathVariable Long versionId) {
+        checkVersionEditPermission(versionId);
+        int count = dataEntryService.dedupByVersion(versionId);
+        return Result.success(count);
+    }
+
+    @DeleteMapping("/dedup-deep/{versionId}")
+    public Result<Integer> dedupDeep(@PathVariable Long versionId) {
+        checkVersionEditPermission(versionId);
+        int count = dataEntryService.dedupDeep(versionId);
+        return Result.success(count);
+    }
+
     @PutMapping("/{id}/level-up")
     public Result<Void> levelUp(@PathVariable Long id) {
         DataEntry entry = dataEntryService.getById(id);

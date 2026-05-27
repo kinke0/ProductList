@@ -1,15 +1,17 @@
 <template>
-  <el-container style="height: 100vh">
-    <el-aside width="220px" style="background: #1a2a3a">
-      <div class="logo-area">
-        <span class="logo-text">添翼管理平台</span>
+  <div class="si-layout">
+    <div class="si-sidebar">
+      <div class="sidebar-logo">
+        <span class="logo-text">添翼</span>
+        <span class="logo-sub">PRO</span>
       </div>
       <el-menu
         :default-active="route.path"
-        background-color="#1a2a3a"
-        text-color="rgba(255,255,255,0.7)"
-        active-text-color="#409eff"
         router
+        class="si-menu"
+        background="transparent"
+        text-color="#94A3B8"
+        active-text-color="#FFFFFF"
       >
         <el-menu-item index="/dashboard">
           <el-icon><Monitor /></el-icon>
@@ -56,11 +58,13 @@
           </el-sub-menu>
         </el-sub-menu>
       </el-menu>
-    </el-aside>
-    <el-container>
-      <el-header style="background: #fff; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; justify-content: flex-end; padding: 0 20px; height: 50px;">
+    </div>
+
+    <div class="si-main">
+      <div class="si-header">
+        <span class="header-title">{{ route.meta?.title || '工作台' }}</span>
         <el-dropdown @command="handleCommand">
-          <span style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: #333;">
+          <span class="header-user">
             {{ nickname || '用户' }}
             <el-icon><ArrowDown /></el-icon>
           </span>
@@ -70,12 +74,13 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-      </el-header>
-      <el-main style="background: #f5f7fa; padding: 16px;">
+      </div>
+
+      <div class="si-content">
         <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -100,20 +105,108 @@ function handleCommand(command) {
 </script>
 
 <style scoped>
-.logo-area {
-  height: 50px;
+.si-layout {
+  display: flex;
+  height: 100vh;
+  background: var(--si-bg);
+}
+
+.si-sidebar {
+  width: var(--si-sidebar-width);
+  flex-shrink: 0;
+  background: var(--si-bg-sidebar);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-logo {
+  height: 48px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding: 0 16px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .logo-text {
-  color: #fff;
   font-size: 16px;
-  letter-spacing: 2px;
-  font-weight: 600;
+  font-weight: 700;
+  color: #fff;
 }
-.el-menu {
+.logo-sub {
+  font-size: 9px;
+  color: var(--si-text-on-dark-muted);
+  margin-left: 4px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+}
+
+.si-menu {
   border-right: none;
+  flex: 1;
+  overflow-y: auto;
+  background: transparent;
+  padding: 4px 8px;
+}
+.si-menu .el-menu-item {
+  height: 36px;
+  line-height: 36px;
+  margin: 1px 0;
+  border-radius: var(--si-radius-md);
+  font-size: 13px;
+}
+.si-menu .el-sub-menu .el-sub-menu__title {
+  height: 36px;
+  line-height: 36px;
+  margin: 1px 0;
+  border-radius: var(--si-radius-md);
+  font-size: 13px;
+}
+
+.si-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.si-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: var(--si-header-height);
+  flex-shrink: 0;
+  background: var(--si-bg-header);
+  border-bottom: 1px solid var(--si-border);
+}
+
+.header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--si-text-primary);
+}
+
+.header-user {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--si-text-secondary);
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--si-radius-sm);
+  transition: background var(--si-transition), color var(--si-transition);
+}
+.header-user:hover {
+  background: var(--si-bg-hover);
+  color: var(--si-text-primary);
+}
+
+.si-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 </style>

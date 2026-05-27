@@ -1,5 +1,7 @@
 package com.superpower.modules.document.service;
 
+import com.superpower.modules.customtab.entity.CustomTabEntry;
+import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.document.entity.DocGenRecord;
@@ -45,13 +47,16 @@ public class DocumentService {
 
     private final DataEntryRepository entryRepository;
     private final DocGenRecordRepository genRecordRepository;
+    private final CustomTabEntryRepository customTabEntryRepository;
 
     @Value("${app.doc-storage-path:./generated-docs}")
     private String docStoragePath;
 
-    public DocumentService(DataEntryRepository entryRepository, DocGenRecordRepository genRecordRepository) {
+    public DocumentService(DataEntryRepository entryRepository, DocGenRecordRepository genRecordRepository,
+                           CustomTabEntryRepository customTabEntryRepository) {
         this.entryRepository = entryRepository;
         this.genRecordRepository = genRecordRepository;
+        this.customTabEntryRepository = customTabEntryRepository;
     }
 
     public DocGenRecord createGenRecord(Long versionId, String docType, String format,
@@ -86,6 +91,15 @@ public class DocumentService {
         genRecordRepository.save(record);
     }
 
+    public void updateGenRecordProgress(Long recordId, int processed, int total) {
+        if (recordId == null) return;
+        genRecordRepository.findById(recordId).ifPresent(record -> {
+            record.setProcessedEntries(processed);
+            record.setUpdatedAt(LocalDateTime.now());
+            genRecordRepository.save(record);
+        });
+    }
+
     public List<DocGenRecord> getGenRecords(Long versionId) {
         return genRecordRepository.findByVersionIdOrderByCreatedAtDesc(versionId);
     }
@@ -107,17 +121,23 @@ public class DocumentService {
     public byte[] generateDocument(String docType, String format, List<Long> entryIds) throws Exception {
         List<DataEntry> entries = entryRepository.findAllById(entryIds);
         if ("word".equals(format)) {
-            return generateWord(docType, entries);
+            return generateWord(docType, entries, null);
         } else {
-            return generateExcel(docType, entries);
+            return generateExcel(docType, entries, null);
         }
     }
 
     public String generateAndSaveDocument(Long recordId, String docType, String format,
-                                          List<Long> entryIds, Long versionId) throws Exception {
+                                          List<Long> entryIds, Long versionId, Long customTabId) throws Exception {
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
-            entries = entryRepository.findByVersionId(versionId);
+            if (customTabId != null) {
+                List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabIdOrderBySortOrder(customTabId);
+                List<Long> tabEntryIds = tabEntries.stream().map(CustomTabEntry::getEntryId).collect(Collectors.toList());
+                entries = new ArrayList<>(entryRepository.findAllById(tabEntryIds));
+            } else {
+                entries = entryRepository.findByVersionId(versionId);
+            }
         } else {
             entries = new ArrayList<>(entryRepository.findAllById(entryIds));
             List<Long> allIds = new ArrayList<>(entries.stream().map(DataEntry::getId).toList());
@@ -125,11 +145,18 @@ public class DocumentService {
             collectDescendants(allIds, children);
             entries = entryRepository.findAllById(allIds);
         }
+        int totalSize = entries.size();
+        genRecordRepository.findById(recordId).ifPresent(r -> {
+            r.setTotalEntries(totalSize);
+            r.setProcessedEntries(0);
+            r.setUpdatedAt(LocalDateTime.now());
+            genRecordRepository.save(r);
+        });
         byte[] data;
         if ("word".equals(format)) {
-            data = generateWord(docType, entries);
+            data = generateWord(docType, entries, recordId);
         } else {
-            data = generateExcel(docType, entries);
+            data = generateExcel(docType, entries, recordId);
         }
 
         Path dir = Paths.get(docStoragePath);
@@ -169,13 +196,26 @@ public class DocumentService {
         } while (added);
     }
 
-    private byte[] generateWord(String docType, List<DataEntry> entries) throws Exception {
+    private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId) throws Exception {
         XWPFDocument doc = new XWPFDocument();
-        ensureBuiltinHeadingStyles(doc);
-        if ("bid".equals(docType)) {
-            generateBidWord(doc, entries);
+        InputStream stylesStream = getClass().getResourceAsStream("/templates/word/styles.xml");
+        if (stylesStream != null) {
+            try {
+                CTStyles ctStyles = CTStyles.Factory.parse(stylesStream);
+                doc.createStyles().setStyles(ctStyles);
+            } catch (Exception e) {
+                log.warn("Failed to load template styles, falling back to built-in", e);
+                ensureBuiltinHeadingStyles(doc);
+            } finally {
+                stylesStream.close();
+            }
         } else {
-            generateFeatureWord(doc, entries);
+            ensureBuiltinHeadingStyles(doc);
+        }
+        if ("bid".equals(docType)) {
+            generateBidWord(doc, entries, recordId);
+        } else {
+            generateFeatureWord(doc, entries, recordId);
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
@@ -183,7 +223,7 @@ public class DocumentService {
         return out.toByteArray();
     }
 
-    private void generateBidWord(XWPFDocument doc, List<DataEntry> entries) {
+    private void generateBidWord(XWPFDocument doc, List<DataEntry> entries, Long recordId) {
         for (int i = 0; i < entries.size(); i++) {
             DataEntry e = entries.get(i);
             if (i > 0) doc.createParagraph();
@@ -207,21 +247,24 @@ public class DocumentService {
             addField(doc, "产品经理", e.getColProductManager());
             addField(doc, "软著", e.getColCopyright());
             addField(doc, "备注", e.getColRemark());
+            updateGenRecordProgress(recordId, i + 1, entries.size());
         }
     }
 
-    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries) {
-        BigInteger numId = initMultilevelNumbering(doc);
-
+    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId) {
+        int totalSize = entries.size();
+        int[] progressCounter = {0};
         LinkedHashMap<String, List<DataEntry>> categoryGroups = new LinkedHashMap<>();
         for (DataEntry e : entries) {
             String category = e.getColBizCategory() != null ? e.getColBizCategory() : "";
             categoryGroups.computeIfAbsent(category, k -> new ArrayList<>()).add(e);
         }
 
+        int categoryCounter = 0;
         for (Map.Entry<String, List<DataEntry>> catEntry : categoryGroups.entrySet()) {
+            categoryCounter++;
             String categoryText = extractText(catEntry.getKey());
-            addNumberedHeading(doc, categoryText, 1, numId);
+            addNumberedHeading(doc, categoryText, 1, String.valueOf(categoryCounter));
 
             List<DataEntry> catEntries = catEntry.getValue();
             LinkedHashMap<String, List<DataEntry>> domainGroups = new LinkedHashMap<>();
@@ -230,9 +273,12 @@ public class DocumentService {
                 domainGroups.computeIfAbsent(domain, k -> new ArrayList<>()).add(e);
             }
 
+            int domainCounter = 0;
             for (Map.Entry<String, List<DataEntry>> domEntry : domainGroups.entrySet()) {
+                domainCounter++;
                 String domainText = extractText(domEntry.getKey());
-                addNumberedHeading(doc, domainText, 2, numId);
+                String domainNumber = categoryCounter + "." + domainCounter;
+                addNumberedHeading(doc, domainText, 2, domainNumber);
 
                 List<DataEntry> domEntries = domEntry.getValue();
                 List<DataEntry> treeEntries = domEntries.stream()
@@ -261,7 +307,11 @@ public class DocumentService {
                 int[] level3Counter = {0};
                 Map<String, Integer> childCounters = new HashMap<>();
                 for (DataEntry root : rootEntries) {
-                    processNodeAndChildren(doc, root, "", childrenMap, numId, level3Counter, childCounters);
+                    processNodeAndChildren(doc, root, domainNumber, childrenMap, level3Counter, childCounters, recordId, progressCounter, totalSize);
+                }
+                if (progressCounter[0] < totalSize && domEntries.size() > treeEntries.size()) {
+                    progressCounter[0] += domEntries.size() - treeEntries.size();
+                    updateGenRecordProgress(recordId, progressCounter[0], totalSize);
                 }
             }
         }
@@ -269,12 +319,13 @@ public class DocumentService {
 
     private void processNodeAndChildren(XWPFDocument doc, DataEntry entry,
                                          String parentNewNum, Map<Long, List<DataEntry>> childrenMap,
-                                         BigInteger numId, int[] level3Counter,
-                                         Map<String, Integer> childCounters) {
+                                         int[] level3Counter,
+                                         Map<String, Integer> childCounters,
+                                         Long recordId, int[] progressCounter, int totalSize) {
         String currentNewNum;
         if (entry.getLevel() != null && entry.getLevel() == 3) {
             level3Counter[0]++;
-            currentNewNum = String.valueOf(level3Counter[0]);
+            currentNewNum = parentNewNum + "." + level3Counter[0];
         } else {
             String parentKey = parentNewNum != null && !parentNewNum.isEmpty() ? parentNewNum : "0";
             int counter = childCounters.getOrDefault(parentKey, 0) + 1;
@@ -283,19 +334,22 @@ public class DocumentService {
         }
 
         String name = extractName(entry.getColProductSystem());
-        int docLevel = currentNewNum.split("\\.").length + 2;
+        int docLevel = currentNewNum.split("\\.").length;
         docLevel = Math.min(Math.max(docLevel, 3), MAX_HEADING_LEVEL);
-        addNumberedHeading(doc, name, docLevel, numId);
+        addNumberedHeading(doc, name, docLevel, currentNewNum);
 
         String description = entry.getColFeatureDesc();
         if (description != null && !description.isBlank()) {
             processDescriptionWithImages(doc, description);
         }
 
+        progressCounter[0]++;
+        updateGenRecordProgress(recordId, progressCounter[0], totalSize);
+
         List<DataEntry> children = childrenMap.get(entry.getId());
         if (children != null) {
             for (DataEntry child : children) {
-                processNodeAndChildren(doc, child, currentNewNum, childrenMap, numId, level3Counter, childCounters);
+                processNodeAndChildren(doc, child, currentNewNum, childrenMap, level3Counter, childCounters, recordId, progressCounter, totalSize);
             }
         }
     }
@@ -633,63 +687,17 @@ public class DocumentService {
         }
     }
 
-    private BigInteger initMultilevelNumbering(XWPFDocument doc) {
-        String[] lvlTexts = {"%1", "%1.%2", "%1.%2.%3", "%1.%2.%3.%4",
-                "%1.%2.%3.%4.%5", "%1.%2.%3.%4.%5.%6",
-                "%1.%2.%3.%4.%5.%6.%7", "%1.%2.%3.%4.%5.%6.%7.%8",
-                "%1.%2.%3.%4.%5.%6.%7.%8.%9"};
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("<w:abstractNum xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" w:multiLevelType=\"hybridMultilevel\">");
-        for (int l = 0; l < 9; l++) {
-            sb.append("<w:lvl w:ilvl=\"").append(l).append("\">");
-            sb.append("<w:start w:val=\"1\"/>");
-            sb.append("<w:numFmt w:val=\"decimal\"/>");
-            sb.append("<w:lvlText w:val=\"").append(lvlTexts[l]).append("\"/>");
-            sb.append("<w:lvlJc w:val=\"left\"/>");
-            sb.append("<w:suff w:val=\"Space\"/>");
-            sb.append("<w:pPr><w:ind w:left=\"").append(960 * l).append("\" w:hanging=\"480\"/></w:pPr>");
-            sb.append("</w:lvl>");
-        }
-        sb.append("</w:abstractNum>");
-
-        XWPFNumbering numbering = doc.createNumbering();
-        CTAbstractNum ctAbstractNum;
-        try {
-            ctAbstractNum = CTAbstractNum.Factory.parse(sb.toString());
-        } catch (Exception e) {
-            log.error("Failed to parse numbering XML", e);
-            return null;
-        }
-
-        XWPFAbstractNum abstractNum = new XWPFAbstractNum(ctAbstractNum, numbering);
-        BigInteger abstractNumId = numbering.addAbstractNum(abstractNum);
-        BigInteger numId = numbering.addNum(abstractNumId);
-
-        return numId;
-    }
-
-    private void addNumberedHeading(XWPFDocument doc, String text, int level, BigInteger numId) {
+    private void addNumberedHeading(XWPFDocument doc, String text, int level, String number) {
         XWPFParagraph para = doc.createParagraph();
         para.setStyle("Heading" + level);
         para.setAlignment(ParagraphAlignment.LEFT);
-        para.setSpacingBetween(1.5);
 
         CTPPr pPr = para.getCTP().isSetPPr() ? para.getCTP().getPPr() : para.getCTP().addNewPPr();
-
-        CTDecimalNumber outlineLvl = pPr.addNewOutlineLvl();
-        outlineLvl.setVal(BigInteger.valueOf(level - 1));
-
-        CTNumPr numPr = pPr.addNewNumPr();
-        numPr.addNewIlvl().setVal(BigInteger.valueOf(level - 1));
-        numPr.addNewNumId().setVal(numId);
+        pPr.addNewOutlineLvl().setVal(BigInteger.valueOf(level - 1));
 
         XWPFRun run = para.createRun();
-        run.setText(text);
+        run.setText(number + " " + text);
         setFontStyle(run);
-        if (level >= 1 && level <= 4) {
-            run.setBold(true);
-        }
     }
 
     private void ensureBuiltinHeadingStyles(XWPFDocument doc) {
@@ -705,80 +713,61 @@ public class DocumentService {
         if (allExist) return;
 
         String fontTheme = FONT_NAME;
-        StringBuilder sb = new StringBuilder();
-        sb.append("<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
-
-        sb.append("<w:docDefaults>");
-        sb.append("<w:rPrDefault><w:rPr>");
-        sb.append("<w:rFonts w:ascii=\"").append(fontTheme).append("\" w:eastAsia=\"").append(fontTheme)
-                .append("\" w:hAnsi=\"").append(fontTheme).append("\" w:cs=\"").append(fontTheme).append("\"/>");
-        sb.append("<w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/>");
-        sb.append("<w:lang w:val=\"zh-CN\" w:eastAsia=\"zh-CN\" w:bidi=\"ar-SA\"/>");
-        sb.append("</w:rPr></w:rPrDefault>");
-        sb.append("<w:pPrDefault><w:pPr>");
-        sb.append("<w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>");
-        sb.append("</w:pPr></w:pPrDefault>");
-        sb.append("</w:docDefaults>");
-
-        sb.append("<w:latentStyles w:defLockedState=\"0\" w:defUIPriority=\"99\" w:defSemiHidden=\"1\" "
-                + "w:defUnhideWhenUsed=\"1\" w:defQFormat=\"0\" w:count=\"276\">");
-        sb.append("<w:lsdException w:name=\"Normal\" w:semiHidden=\"0\" w:uiPriority=\"0\" w:unhideWhenUsed=\"0\" w:qFormat=\"1\"/>");
-        for (int i = 1; i <= 9; i++) {
-            sb.append("<w:lsdException w:name=\"heading ").append(i).append("\" w:uiPriority=\"9\" w:qFormat=\"1\"/>");
-        }
-        sb.append("<w:lsdException w:name=\"toc 1\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 2\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 3\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 4\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 5\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 6\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 7\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 8\" w:uiPriority=\"39\"/>");
-        sb.append("<w:lsdException w:name=\"toc 9\" w:uiPriority=\"39\"/>");
-        sb.append("</w:latentStyles>");
-
-        sb.append("<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">");
-        sb.append("<w:name w:val=\"Normal\"/>");
-        sb.append("<w:qFormat/>");
-        sb.append("<w:pPr><w:spacing w:line=\"360\" w:lineRule=\"auto\"/></w:pPr>");
-        sb.append("</w:style>");
-
         boolean[] headingBold = {true, true, true, true, false, false, false, false, false};
         boolean[] headingItalic = {false, false, false, true, false, true, true, false, true};
         Integer[] headingSizes = {28, 26, null, null, null, null, null, 20, 20};
 
-        for (int level = 1; level <= 9; level++) {
-            sb.append("<w:style w:type=\"paragraph\" w:styleId=\"Heading").append(level).append("\">");
-            sb.append("<w:name w:val=\"heading ").append(level).append("\"/>");
-            sb.append("<w:basedOn w:val=\"Normal\"/>");
-            sb.append("<w:next w:val=\"Normal\"/>");
-            sb.append("<w:uiPriority w:val=\"9\"/>");
-            sb.append("<w:qFormat/>");
-            sb.append("<w:pPr>");
-            sb.append("<w:keepNext/><w:keepLines/>");
-            sb.append("<w:spacing w:before=\"").append(level == 1 ? "480" : "200").append("\" w:after=\"0\"/>");
-            sb.append("<w:outlineLvl w:val=\"").append(level - 1).append("\"/>");
-            sb.append("</w:pPr>");
-            sb.append("<w:rPr>");
-            sb.append("<w:rFonts w:ascii=\"").append(fontTheme).append("\" w:eastAsia=\"").append(fontTheme)
-                    .append("\" w:hAnsi=\"").append(fontTheme).append("\" w:cs=\"").append(fontTheme).append("\"/>");
-            if (headingBold[level - 1]) sb.append("<w:b/><w:bCs/>");
-            if (headingItalic[level - 1]) sb.append("<w:i/><w:iCs/>");
-            if (headingSizes[level - 1] != null) {
-                sb.append("<w:sz w:val=\"").append(headingSizes[level - 1]).append("\"/>");
-                sb.append("<w:szCs w:val=\"").append(headingSizes[level - 1]).append("\"/>");
+        for (int level = 0; level <= 9; level++) {
+            String styleId = level == 0 ? "Normal" : "Heading" + level;
+            String styleName = level == 0 ? "Normal" : "heading " + level;
+
+            CTStyle ctStyle = CTStyle.Factory.newInstance();
+            ctStyle.setStyleId(styleId);
+            ctStyle.setType(STStyleType.PARAGRAPH);
+            if (level == 0) ctStyle.setDefault(true);
+            ctStyle.addNewName().setVal(styleName);
+            if (level > 0) {
+                ctStyle.addNewBasedOn().setVal("Normal");
+                ctStyle.addNewNext().setVal("Normal");
             }
-            sb.append("</w:rPr>");
-            sb.append("</w:style>");
-        }
+            ctStyle.addNewUiPriority().setVal(BigInteger.valueOf(level == 0 ? 0 : 9));
+            ctStyle.addNewQFormat();
 
-        sb.append("</w:styles>");
+            var pPr = ctStyle.addNewPPr();
+            if (level > 0) {
+                pPr.addNewKeepNext();
+                pPr.addNewKeepLines();
+                CTSpacing spacing = pPr.addNewSpacing();
+                spacing.setBefore(BigInteger.valueOf(level == 1 ? 480 : 200));
+                spacing.setAfter(BigInteger.valueOf(0));
+                pPr.addNewOutlineLvl().setVal(BigInteger.valueOf(level - 1));
+            } else {
+                CTSpacing spacing = pPr.addNewSpacing();
+                spacing.setLine(BigInteger.valueOf(360));
+                spacing.setLineRule(STLineSpacingRule.AUTO);
+            }
 
-        try {
-            CTStyles ctStyles = CTStyles.Factory.parse(sb.toString());
-            styles.setStyles(ctStyles);
-        } catch (Exception e) {
-            log.error("Failed to create built-in heading styles", e);
+            var rPr = ctStyle.addNewRPr();
+            CTFonts fonts = rPr.addNewRFonts();
+            fonts.setAscii(fontTheme);
+            fonts.setEastAsia(fontTheme);
+            fonts.setHAnsi(fontTheme);
+            fonts.setCs(fontTheme);
+            if (level > 0 && headingBold[level - 1]) {
+                rPr.addNewB();
+                rPr.addNewBCs();
+            }
+            if (level > 0 && headingItalic[level - 1]) {
+                rPr.addNewI();
+                rPr.addNewICs();
+            }
+            if (level > 0 && headingSizes[level - 1] != null) {
+                rPr.addNewSz().setVal(BigInteger.valueOf(headingSizes[level - 1]));
+                rPr.addNewSzCs().setVal(BigInteger.valueOf(headingSizes[level - 1]));
+            }
+
+            XWPFStyle xwpfStyle = new XWPFStyle(ctStyle, styles);
+            styles.addStyle(xwpfStyle);
         }
     }
 
@@ -797,7 +786,7 @@ public class DocumentService {
         setFontStyle(run);
     }
 
-    private byte[] generateExcel(String docType, List<DataEntry> entries) throws Exception {
+    private byte[] generateExcel(String docType, List<DataEntry> entries, Long recordId) throws Exception {
         Workbook wb = new XSSFWorkbook();
         Sheet sheet;
 
@@ -806,13 +795,13 @@ public class DocumentService {
             String[] headers = {"产品/系统", "应用角色", "状态", "业务分类", "业务域", "版本划分", "产品经理", "招标参数说明", "功能说明", "软著"};
             String[] fields = {"colProductSystem", "colAppRole", "colStatus", "colBizCategory", "colBizDomain",
                     "colVersionDivision", "colProductManager", "colBidParamDesc", "colFeatureDesc", "colCopyright"};
-            fillSheet(sheet, headers, fields, entries);
+            fillSheet(sheet, headers, fields, entries, recordId);
         } else {
             sheet = wb.createSheet("功能说明");
             String[] headers = {"产品/系统", "应用角色", "状态", "业务分类", "业务域", "产品经理", "功能说明", "招标参数说明"};
             String[] fields = {"colProductSystem", "colAppRole", "colStatus", "colBizCategory", "colBizDomain",
                     "colProductManager", "colFeatureDesc", "colBidParamDesc"};
-            fillSheet(sheet, headers, fields, entries);
+            fillSheet(sheet, headers, fields, entries, recordId);
         }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -821,7 +810,7 @@ public class DocumentService {
         return out.toByteArray();
     }
 
-    private void fillSheet(Sheet sheet, String[] headers, String[] fields, List<DataEntry> entries) {
+    private void fillSheet(Sheet sheet, String[] headers, String[] fields, List<DataEntry> entries, Long recordId) {
         Row headerRow = sheet.createRow(0);
         for (int i = 0; i < headers.length; i++) {
             headerRow.createCell(i).setCellValue(headers[i]);
@@ -834,6 +823,7 @@ public class DocumentService {
                 String val = getFieldValue(e, fields[c]);
                 row.createCell(c).setCellValue(val != null ? val : "");
             }
+            updateGenRecordProgress(recordId, r + 1, entries.size());
         }
 
         for (int i = 0; i < headers.length; i++) {

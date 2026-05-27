@@ -4,7 +4,7 @@ import router from '../router'
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: 60000
 })
 
 request.interceptors.request.use(config => {
@@ -32,7 +32,7 @@ request.interceptors.response.use(
     return res
   },
   error => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 || error.response?.status === 403) {
       localStorage.removeItem('token')
       router.push('/login')
     }
