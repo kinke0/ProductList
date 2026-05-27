@@ -285,9 +285,16 @@ public class DocumentService {
     private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId) {
         int totalSize = entries.size();
         int[] progressCounter = {0};
+        log.info("generateFeatureWord: total entries={}, recordId={}", totalSize, recordId);
+
+        Set<Long> entryIds = new HashSet<>();
+        for (DataEntry e : entries) {
+            entryIds.add(e.getId());
+        }
+
         LinkedHashMap<String, List<DataEntry>> categoryGroups = new LinkedHashMap<>();
         for (DataEntry e : entries) {
-            String category = e.getColBizCategory() != null ? e.getColBizCategory() : "";
+            String category = e.getColBizCategory() != null ? e.getColBizCategory().trim() : "";
             categoryGroups.computeIfAbsent(category, k -> new ArrayList<>()).add(e);
         }
 
@@ -300,7 +307,7 @@ public class DocumentService {
             List<DataEntry> catEntries = catEntry.getValue();
             LinkedHashMap<String, List<DataEntry>> domainGroups = new LinkedHashMap<>();
             for (DataEntry e : catEntries) {
-                String domain = e.getColBizDomain() != null ? e.getColBizDomain() : "";
+                String domain = e.getColBizDomain() != null ? e.getColBizDomain().trim() : "";
                 domainGroups.computeIfAbsent(domain, k -> new ArrayList<>()).add(e);
             }
 
@@ -313,148 +320,46 @@ public class DocumentService {
 
                 List<DataEntry> domEntries = domEntry.getValue();
 
-                Map<String, NodeInfo> nodes = new LinkedHashMap<>();
+                Map<Long, List<DataEntry>> childrenByParent = new LinkedHashMap<>();
+                List<DataEntry> roots = new ArrayList<>();
                 for (DataEntry e : domEntries) {
-                    String code = extractCode(e.getColProductSystem());
-                    if (code != null) {
-                        String parentCode = null;
-                        if (e.getColParentRecord() != null && !e.getColParentRecord().isBlank()) {
-                            parentCode = extractCode(e.getColParentRecord());
-                        }
-                        nodes.put(code, new NodeInfo(extractName(e.getColProductSystem()), parentCode, e.getColFeatureDesc(), e));
+                    if (e.getParentId() == null || e.getParentId() == 0 || !entryIds.contains(e.getParentId())) {
+                        roots.add(e);
+                    } else {
+                        childrenByParent.computeIfAbsent(e.getParentId(), k -> new ArrayList<>()).add(e);
                     }
                 }
+                roots.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
 
-                if (nodes.isEmpty()) {
-                    progressCounter[0] += domEntries.size();
-                    updateGenRecordProgress(recordId, progressCounter[0], totalSize);
-                    continue;
-                }
-
-                Map<String, List<String>> codeChildrenMap = new LinkedHashMap<>();
-                for (Map.Entry<String, NodeInfo> ne : nodes.entrySet()) {
-                    String parentCode = ne.getValue().parentCode;
-                    if (parentCode != null && nodes.containsKey(parentCode)) {
-                        codeChildrenMap.computeIfAbsent(parentCode, k -> new ArrayList<>()).add(ne.getKey());
-                    }
-                }
-
-                Map<String, String> numberingMap = buildNumberingMap(nodes, codeChildrenMap);
-
-                Set<String> processedNodes = new HashSet<>();
-                List<String> level3Codes = new ArrayList<>();
-                for (String code : nodes.keySet()) {
-                    if (code.split("\\.").length == 3) {
-                        level3Codes.add(code);
-                    }
-                }
-                level3Codes.sort((a, b) -> {
-                    String[] pa = a.split("\\.");
-                    String[] pb = b.split("\\.");
-                    int len = Math.max(pa.length, pb.length);
-                    for (int k = 0; k < len; k++) {
-                        int va = k < pa.length ? Integer.parseInt(pa[k]) : 0;
-                        int vb = k < pb.length ? Integer.parseInt(pb[k]) : 0;
-                        if (va != vb) return va - vb;
-                    }
-                    return 0;
-                });
-
-                for (String code : level3Codes) {
-                    processNodeWithNumbering(doc, code, nodes, codeChildrenMap, numberingMap, processedNodes, recordId, progressCounter, totalSize);
-                }
-
-                int processed = (int) nodes.values().stream().filter(n -> processedNodes.contains(extractCode(n.entry.getColProductSystem()))).count();
-                int unprocessed = domEntries.size() - processed;
-                if (unprocessed > 0) {
-                    progressCounter[0] += unprocessed;
-                    updateGenRecordProgress(recordId, progressCounter[0], totalSize);
+                for (int i = 0; i < roots.size(); i++) {
+                    String nodeNumber = domainNumber + "." + (i + 1);
+                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize);
                 }
             }
         }
     }
 
-    private static class NodeInfo {
-        String name;
-        String parentCode;
-        String description;
-        DataEntry entry;
+    private void writeNode(XWPFDocument doc, DataEntry entry, String number, int level,
+                           Map<Long, List<DataEntry>> childrenByParent,
+                           Long recordId, int[] progressCounter, int totalSize) {
+        int docLevel = Math.min(level, MAX_HEADING_LEVEL);
+        String name = extractName(entry.getColProductSystem());
+        addNumberedHeading(doc, name, docLevel, number);
 
-        NodeInfo(String name, String parentCode, String description, DataEntry entry) {
-            this.name = name;
-            this.parentCode = parentCode;
-            this.description = description;
-            this.entry = entry;
-        }
-    }
-
-    private Map<String, String> buildNumberingMap(Map<String, NodeInfo> nodes, Map<String, List<String>> codeChildrenMap) {
-        Map<String, String> numberingMap = new LinkedHashMap<>();
-        List<String> l1Codes = new ArrayList<>();
-        for (String code : nodes.keySet()) {
-            if (!code.contains(".")) {
-                l1Codes.add(code);
-            }
-        }
-        l1Codes.sort(Comparator.comparingInt(a -> a.matches("\\d+") ? Integer.parseInt(a) : 0));
-
-        for (int i = 0; i < l1Codes.size(); i++) {
-            String code = l1Codes.get(i);
-            numberingMap.put(code, String.valueOf(i + 1));
-            processChildrenNumbering(code, codeChildrenMap, numberingMap, String.valueOf(i + 1));
-        }
-        return numberingMap;
-    }
-
-    private void processChildrenNumbering(String parentCode, Map<String, List<String>> codeChildrenMap,
-                                            Map<String, String> numberingMap, String parentNum) {
-        List<String> children = codeChildrenMap.get(parentCode);
-        if (children == null) return;
-        children.sort((a, b) -> {
-            String[] pa = a.split("\\.");
-            String[] pb = b.split("\\.");
-            int len = Math.max(pa.length, pb.length);
-            for (int k = 0; k < len; k++) {
-                int va = k < pa.length ? Integer.parseInt(pa[k]) : 0;
-                int vb = k < pb.length ? Integer.parseInt(pb[k]) : 0;
-                if (va != vb) return va - vb;
-            }
-            return 0;
-        });
-        for (int i = 0; i < children.size(); i++) {
-            String childNum = parentNum + "." + (i + 1);
-            numberingMap.put(children.get(i), childNum);
-            processChildrenNumbering(children.get(i), codeChildrenMap, numberingMap, childNum);
-        }
-    }
-
-    private void processNodeWithNumbering(XWPFDocument doc, String code,
-                                           Map<String, NodeInfo> nodes,
-                                           Map<String, List<String>> codeChildrenMap,
-                                           Map<String, String> numberingMap,
-                                           Set<String> processedNodes,
-                                           Long recordId, int[] progressCounter, int totalSize) {
-        if (processedNodes.contains(code) || !nodes.containsKey(code)) return;
-        processedNodes.add(code);
-
-        String currentNumber = numberingMap.getOrDefault(code, "");
-        int docLevel = currentNumber.split("\\.").length + 2;
-        docLevel = Math.min(Math.max(docLevel, 3), MAX_HEADING_LEVEL);
-
-        NodeInfo info = nodes.get(code);
-        addNumberedHeading(doc, info.name, docLevel, currentNumber);
-
-        if (info.description != null && !info.description.isBlank()) {
-            processDescriptionWithImages(doc, info.description);
+        String desc = entry.getColFeatureDesc();
+        if (desc != null && !desc.isBlank()) {
+            processDescriptionWithImages(doc, desc);
         }
 
         progressCounter[0]++;
         updateGenRecordProgress(recordId, progressCounter[0], totalSize);
 
-        List<String> children = codeChildrenMap.get(code);
+        List<DataEntry> children = childrenByParent.get(entry.getId());
         if (children != null) {
-            for (String childCode : children) {
-                processNodeWithNumbering(doc, childCode, nodes, codeChildrenMap, numberingMap, processedNodes, recordId, progressCounter, totalSize);
+            children.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
+            for (int i = 0; i < children.size(); i++) {
+                String childNumber = number + "." + (i + 1);
+                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize);
             }
         }
     }
