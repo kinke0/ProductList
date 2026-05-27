@@ -198,20 +198,7 @@ public class DocumentService {
 
     private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId) throws Exception {
         XWPFDocument doc = new XWPFDocument();
-        InputStream stylesStream = getClass().getResourceAsStream("/templates/word/styles.xml");
-        if (stylesStream != null) {
-            try {
-                CTStyles ctStyles = CTStyles.Factory.parse(stylesStream);
-                doc.createStyles().setStyles(ctStyles);
-            } catch (Exception e) {
-                log.warn("Failed to load template styles, falling back to built-in", e);
-                ensureBuiltinHeadingStyles(doc);
-            } finally {
-                stylesStream.close();
-            }
-        } else {
-            ensureBuiltinHeadingStyles(doc);
-        }
+        ensureBuiltinHeadingStyles(doc);
         if ("bid".equals(docType)) {
             generateBidWord(doc, entries, recordId);
         } else {
@@ -221,6 +208,50 @@ public class DocumentService {
         doc.write(out);
         doc.close();
         return out.toByteArray();
+    }
+
+    public byte[] generateTestWord() throws Exception {
+        XWPFDocument doc = new XWPFDocument();
+        ensureBuiltinHeadingStyles(doc);
+
+        addNumberedHeading(doc, "业务分类一", 1, "1");
+
+        addNumberedHeading(doc, "业务域A", 2, "1.1");
+
+        addNumberedHeading(doc, "产品节点一", 3, "1.1.1");
+        addParagraph(doc, "这是产品节点一的功能说明文字，用于验证标题是否能被WPS正确识别。");
+
+        addNumberedHeading(doc, "产品节点二", 3, "1.1.2");
+        addParagraph(doc, "这是产品节点二的功能说明文字。");
+
+        addNumberedHeading(doc, "子节点", 4, "1.1.2.1");
+        addParagraph(doc, "这是四级标题下的说明文字。");
+
+        addNumberedHeading(doc, "业务域B", 2, "1.2");
+
+        addNumberedHeading(doc, "产品节点三", 3, "1.2.1");
+        addParagraph(doc, "这是产品节点三的功能说明文字。");
+
+        addNumberedHeading(doc, "业务分类二", 1, "2");
+
+        addNumberedHeading(doc, "业务域C", 2, "2.1");
+
+        addNumberedHeading(doc, "产品节点四", 3, "2.1.1");
+        addParagraph(doc, "这是产品节点四的功能说明文字。");
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        doc.write(out);
+        doc.close();
+        return out.toByteArray();
+    }
+
+    private void addParagraph(XWPFDocument doc, String text) {
+        XWPFParagraph para = doc.createParagraph();
+        para.setIndentationFirstLine(420);
+        para.setSpacingBetween(1.5);
+        XWPFRun run = para.createRun();
+        run.setText(text);
+        setFontStyle(run);
     }
 
     private void generateBidWord(XWPFDocument doc, List<DataEntry> entries, Long recordId) {
@@ -281,77 +312,158 @@ public class DocumentService {
                 addNumberedHeading(doc, domainText, 2, domainNumber);
 
                 List<DataEntry> domEntries = domEntry.getValue();
-                List<DataEntry> treeEntries = domEntries.stream()
-                        .filter(e -> e.getLevel() != null && e.getLevel() >= 3)
-                        .sorted(Comparator.comparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0))
-                        .collect(Collectors.toList());
 
-                if (treeEntries.isEmpty()) continue;
-
-                Set<Long> treeIds = treeEntries.stream().map(DataEntry::getId).collect(Collectors.toSet());
-                Map<Long, List<DataEntry>> childrenMap = new LinkedHashMap<>();
-                List<DataEntry> rootEntries = new ArrayList<>();
-
-                for (DataEntry e : treeEntries) {
-                    if (e.getParentId() == null || !treeIds.contains(e.getParentId())) {
-                        rootEntries.add(e);
-                    } else {
-                        childrenMap.computeIfAbsent(e.getParentId(), k -> new ArrayList<>()).add(e);
+                Map<String, NodeInfo> nodes = new LinkedHashMap<>();
+                for (DataEntry e : domEntries) {
+                    String code = extractCode(e.getColProductSystem());
+                    if (code != null) {
+                        String parentCode = null;
+                        if (e.getColParentRecord() != null && !e.getColParentRecord().isBlank()) {
+                            parentCode = extractCode(e.getColParentRecord());
+                        }
+                        nodes.put(code, new NodeInfo(extractName(e.getColProductSystem()), parentCode, e.getColFeatureDesc(), e));
                     }
                 }
 
-                for (List<DataEntry> children : childrenMap.values()) {
-                    children.sort(Comparator.comparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+                if (nodes.isEmpty()) {
+                    progressCounter[0] += domEntries.size();
+                    updateGenRecordProgress(recordId, progressCounter[0], totalSize);
+                    continue;
                 }
 
-                int[] level3Counter = {0};
-                Map<String, Integer> childCounters = new HashMap<>();
-                for (DataEntry root : rootEntries) {
-                    processNodeAndChildren(doc, root, domainNumber, childrenMap, level3Counter, childCounters, recordId, progressCounter, totalSize);
+                Map<String, List<String>> codeChildrenMap = new LinkedHashMap<>();
+                for (Map.Entry<String, NodeInfo> ne : nodes.entrySet()) {
+                    String parentCode = ne.getValue().parentCode;
+                    if (parentCode != null && nodes.containsKey(parentCode)) {
+                        codeChildrenMap.computeIfAbsent(parentCode, k -> new ArrayList<>()).add(ne.getKey());
+                    }
                 }
-                if (progressCounter[0] < totalSize && domEntries.size() > treeEntries.size()) {
-                    progressCounter[0] += domEntries.size() - treeEntries.size();
+
+                Map<String, String> numberingMap = buildNumberingMap(nodes, codeChildrenMap);
+
+                Set<String> processedNodes = new HashSet<>();
+                List<String> level3Codes = new ArrayList<>();
+                for (String code : nodes.keySet()) {
+                    if (code.split("\\.").length == 3) {
+                        level3Codes.add(code);
+                    }
+                }
+                level3Codes.sort((a, b) -> {
+                    String[] pa = a.split("\\.");
+                    String[] pb = b.split("\\.");
+                    int len = Math.max(pa.length, pb.length);
+                    for (int k = 0; k < len; k++) {
+                        int va = k < pa.length ? Integer.parseInt(pa[k]) : 0;
+                        int vb = k < pb.length ? Integer.parseInt(pb[k]) : 0;
+                        if (va != vb) return va - vb;
+                    }
+                    return 0;
+                });
+
+                for (String code : level3Codes) {
+                    processNodeWithNumbering(doc, code, nodes, codeChildrenMap, numberingMap, processedNodes, recordId, progressCounter, totalSize);
+                }
+
+                int processed = (int) nodes.values().stream().filter(n -> processedNodes.contains(extractCode(n.entry.getColProductSystem()))).count();
+                int unprocessed = domEntries.size() - processed;
+                if (unprocessed > 0) {
+                    progressCounter[0] += unprocessed;
                     updateGenRecordProgress(recordId, progressCounter[0], totalSize);
                 }
             }
         }
     }
 
-    private void processNodeAndChildren(XWPFDocument doc, DataEntry entry,
-                                         String parentNewNum, Map<Long, List<DataEntry>> childrenMap,
-                                         int[] level3Counter,
-                                         Map<String, Integer> childCounters,
-                                         Long recordId, int[] progressCounter, int totalSize) {
-        String currentNewNum;
-        if (entry.getLevel() != null && entry.getLevel() == 3) {
-            level3Counter[0]++;
-            currentNewNum = parentNewNum + "." + level3Counter[0];
-        } else {
-            String parentKey = parentNewNum != null && !parentNewNum.isEmpty() ? parentNewNum : "0";
-            int counter = childCounters.getOrDefault(parentKey, 0) + 1;
-            childCounters.put(parentKey, counter);
-            currentNewNum = parentNewNum + "." + counter;
+    private static class NodeInfo {
+        String name;
+        String parentCode;
+        String description;
+        DataEntry entry;
+
+        NodeInfo(String name, String parentCode, String description, DataEntry entry) {
+            this.name = name;
+            this.parentCode = parentCode;
+            this.description = description;
+            this.entry = entry;
         }
+    }
 
-        String name = extractName(entry.getColProductSystem());
-        int docLevel = currentNewNum.split("\\.").length;
+    private Map<String, String> buildNumberingMap(Map<String, NodeInfo> nodes, Map<String, List<String>> codeChildrenMap) {
+        Map<String, String> numberingMap = new LinkedHashMap<>();
+        List<String> l1Codes = new ArrayList<>();
+        for (String code : nodes.keySet()) {
+            if (!code.contains(".")) {
+                l1Codes.add(code);
+            }
+        }
+        l1Codes.sort(Comparator.comparingInt(a -> a.matches("\\d+") ? Integer.parseInt(a) : 0));
+
+        for (int i = 0; i < l1Codes.size(); i++) {
+            String code = l1Codes.get(i);
+            numberingMap.put(code, String.valueOf(i + 1));
+            processChildrenNumbering(code, codeChildrenMap, numberingMap, String.valueOf(i + 1));
+        }
+        return numberingMap;
+    }
+
+    private void processChildrenNumbering(String parentCode, Map<String, List<String>> codeChildrenMap,
+                                            Map<String, String> numberingMap, String parentNum) {
+        List<String> children = codeChildrenMap.get(parentCode);
+        if (children == null) return;
+        children.sort((a, b) -> {
+            String[] pa = a.split("\\.");
+            String[] pb = b.split("\\.");
+            int len = Math.max(pa.length, pb.length);
+            for (int k = 0; k < len; k++) {
+                int va = k < pa.length ? Integer.parseInt(pa[k]) : 0;
+                int vb = k < pb.length ? Integer.parseInt(pb[k]) : 0;
+                if (va != vb) return va - vb;
+            }
+            return 0;
+        });
+        for (int i = 0; i < children.size(); i++) {
+            String childNum = parentNum + "." + (i + 1);
+            numberingMap.put(children.get(i), childNum);
+            processChildrenNumbering(children.get(i), codeChildrenMap, numberingMap, childNum);
+        }
+    }
+
+    private void processNodeWithNumbering(XWPFDocument doc, String code,
+                                           Map<String, NodeInfo> nodes,
+                                           Map<String, List<String>> codeChildrenMap,
+                                           Map<String, String> numberingMap,
+                                           Set<String> processedNodes,
+                                           Long recordId, int[] progressCounter, int totalSize) {
+        if (processedNodes.contains(code) || !nodes.containsKey(code)) return;
+        processedNodes.add(code);
+
+        String currentNumber = numberingMap.getOrDefault(code, "");
+        int docLevel = currentNumber.split("\\.").length + 2;
         docLevel = Math.min(Math.max(docLevel, 3), MAX_HEADING_LEVEL);
-        addNumberedHeading(doc, name, docLevel, currentNewNum);
 
-        String description = entry.getColFeatureDesc();
-        if (description != null && !description.isBlank()) {
-            processDescriptionWithImages(doc, description);
+        NodeInfo info = nodes.get(code);
+        addNumberedHeading(doc, info.name, docLevel, currentNumber);
+
+        if (info.description != null && !info.description.isBlank()) {
+            processDescriptionWithImages(doc, info.description);
         }
 
         progressCounter[0]++;
         updateGenRecordProgress(recordId, progressCounter[0], totalSize);
 
-        List<DataEntry> children = childrenMap.get(entry.getId());
+        List<String> children = codeChildrenMap.get(code);
         if (children != null) {
-            for (DataEntry child : children) {
-                processNodeAndChildren(doc, child, currentNewNum, childrenMap, level3Counter, childCounters, recordId, progressCounter, totalSize);
+            for (String childCode : children) {
+                processNodeWithNumbering(doc, childCode, nodes, codeChildrenMap, numberingMap, processedNodes, recordId, progressCounter, totalSize);
             }
         }
+    }
+
+    String extractCode(String product) {
+        if (product == null) return null;
+        String text = product.trim().replace("\n", "").replace("\r", "");
+        Matcher m = Pattern.compile("^[\\d.]+").matcher(text);
+        return m.find() ? m.group() : null;
     }
 
     private void processDescriptionWithImages(XWPFDocument doc, String description) {

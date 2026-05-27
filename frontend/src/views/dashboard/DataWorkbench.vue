@@ -165,6 +165,7 @@
     </el-table>
 
     <template #footer>
+      <el-button @click="handleTestGenerate" :loading="testDocLoading">测试生成</el-button>
       <el-button @click="showDocDialog = false">取消</el-button>
       <el-button type="primary" :loading="docLoading" @click="handleGenerate">生成</el-button>
     </template>
@@ -176,7 +177,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import TreePanel from '../../components/TreePanel.vue'
 import StatsTab from '../../components/StatsTab.vue'
 import DataListTab from '../../components/DataListTab.vue'
-import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
+import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress, downloadTestWord } from '../../api/document'
 import { getVersions } from '../../api/version'
 import { getCustomTabs, createCustomTab, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -192,7 +193,8 @@ const docFormat = ref('word')
 const dataScope = ref('all')
 const selectedEntryIds = ref([])
 const docCustomTabId = ref(null)
-const docLoading = ref(false)
+ const docLoading = ref(false)
+const testDocLoading = ref(false)
 const genRecords = ref([])
 const recordsLoading = ref(false)
 const customTabs = ref([])
@@ -477,6 +479,25 @@ async function handleGenerate() {
     ElMessage.error('文档生成请求失败')
   } finally {
     docLoading.value = false
+  }
+}
+
+async function handleTestGenerate() {
+  testDocLoading.value = true
+  try {
+    const res = await downloadTestWord()
+    const blob = new Blob([res], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = '测试标题.docx'
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('测试文档已下载')
+  } catch (e) {
+    ElMessage.error('测试文档生成失败')
+  } finally {
+    testDocLoading.value = false
   }
 }
 

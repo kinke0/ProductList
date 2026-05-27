@@ -95,4 +95,14 @@ public class DocumentController {
         documentService.deleteGenRecord(id);
         return Result.success();
     }
+
+    @GetMapping("/test-word")
+    public ResponseEntity<byte[]> testWord() throws Exception {
+        byte[] data = documentService.generateTestWord();
+        String filename = URLEncoder.encode("测试标题.docx", StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+                .body(data);
+    }
 }
