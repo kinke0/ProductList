@@ -20,22 +20,28 @@
     </div>
     <div class="stat-charts">
       <div class="chart-container" style="flex: 1;">
-        <h4 class="chart-title">各业务域产品分布</h4>
-        <div ref="pieChart" style="height: 280px;"></div>
-      </div>
-      <div class="chart-container" style="flex: 1;">
-        <h4 class="chart-title">各状态产品分布</h4>
-        <div ref="barChart" style="height: 280px;"></div>
-      </div>
-    </div>
-    <div class="stat-charts" style="margin-top:16px;">
-      <div class="chart-container" style="flex: 1;">
         <h4 class="chart-title">可交付功能审批完成度</h4>
         <div ref="approvalPie" style="height: 280px;"></div>
       </div>
       <div class="chart-container" style="flex: 1;">
         <h4 class="chart-title">各审批状态数量</h4>
         <div ref="approvalBar" style="height: 280px;"></div>
+      </div>
+    </div>
+    <div class="stat-charts" style="margin-top:16px;">
+      <div class="chart-container" style="flex: 1;">
+        <h4 class="chart-title">产品经理审批状态分布</h4>
+        <div ref="pmStackBar" style="height: 300px;"></div>
+      </div>
+    </div>
+    <div class="stat-charts" style="margin-top:16px;">
+      <div class="chart-container" style="flex: 1;">
+        <h4 class="chart-title">各业务域产品分布</h4>
+        <div ref="pieChart" style="height: 280px;"></div>
+      </div>
+      <div class="chart-container" style="flex: 1;">
+        <h4 class="chart-title">各状态产品分布</h4>
+        <div ref="barChart" style="height: 280px;"></div>
       </div>
     </div>
   </div>
@@ -59,10 +65,12 @@ const pieChart = ref(null)
 const barChart = ref(null)
 const approvalPie = ref(null)
 const approvalBar = ref(null)
+const pmStackBar = ref(null)
 let pieInstance = null
 let barInstance = null
 let approvalPieInstance = null
 let approvalBarInstance = null
+let pmStackBarInstance = null
 
 async function loadStats() {
   if (!props.versionId) return
@@ -97,6 +105,15 @@ async function loadStats() {
     approvalMap[s] = (approvalMap[s] || 0) + 1
   })
   renderApprovalBar(Object.entries(approvalMap).map(([name, value]) => ({ name, value })))
+
+  const pmMap = {}
+  entries.forEach(e => {
+    const pm = e.colProductManager || '未指定'
+    if (!pmMap[pm]) pmMap[pm] = { '待提交': 0, '待审核': 0, '审核通过': 0, '驳回': 0 }
+    const s = e.approvalStatus || '待提交'
+    if (pmMap[pm][s] !== undefined) pmMap[pm][s]++
+  })
+  renderPmStackBar(pmMap)
 }
 
 function renderPie(data) {
@@ -192,6 +209,37 @@ function renderApprovalBar(data) {
       barWidth: 24,
       label: { show: true, position: 'right', formatter: '{c}', color: '#606266', fontSize: 13 }
     }]
+  })
+}
+
+function renderPmStackBar(pmMap) {
+  if (!pmStackBar.value) return
+  if (!pmStackBarInstance) pmStackBarInstance = echarts.init(pmStackBar.value)
+  if (pmStackBar.value.clientWidth === 0 || pmStackBar.value.clientHeight === 0) {
+    nextTick(() => renderPmStackBar(pmMap))
+    return
+  }
+  const managers = Object.keys(pmMap).sort((a, b) => {
+    const ta = Object.values(pmMap[a]).reduce((s, v) => s + v, 0)
+    const tb = Object.values(pmMap[b]).reduce((s, v) => s + v, 0)
+    return tb - ta
+  })
+  const statuses = ['待提交', '待审核', '审核通过', '驳回']
+  const colors = ['#409EFF', '#E6A23C', '#67C23A', '#F56C6C']
+  pmStackBarInstance.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { data: statuses, top: 0 },
+    grid: { left: 100, right: 30, top: 30, bottom: 10 },
+    xAxis: { type: 'value' },
+    yAxis: { type: 'category', data: managers, axisLabel: { fontSize: 12 } },
+    series: statuses.map((s, i) => ({
+      name: s,
+      type: 'bar',
+      stack: 'total',
+      data: managers.map(pm => pmMap[pm][s]),
+      itemStyle: { color: colors[i] },
+      emphasis: { focus: 'series' }
+    }))
   })
 }
 
