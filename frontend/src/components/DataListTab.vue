@@ -75,7 +75,7 @@
            <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll" size="small" />
          </div>
        </div>
-      <div class="vcol" style="min-width:200px;flex:1;">名称</div>
+       <div class="vcol" style="min-width:200px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ totalEntryCount }}条记录</span></div>
       <div class="vcol" style="width:80px;">状态</div>
       <div class="vcol" style="width:100px;">产品经理</div>
       <div class="vcol" style="width:180px;">版本划分</div>
@@ -268,6 +268,7 @@ const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc'])
 
 const authStore = useAuthStore()
 const tableData = ref([])
+const totalEntryCount = ref(0)
 const showEditDialog = ref(false)
 const isNew = ref(false)
 const editingId = ref(null)
@@ -320,8 +321,8 @@ const appRoleSelections = ref([])
        }
      }
    }
-   displayData.value = result
- }
+     displayData.value = result
+  }
 
   function startDrag(e, rowIndex) {
     if (e.button !== 0) return
@@ -784,6 +785,7 @@ function initEditForm() {
       for (const r of nonSepRows.value) {
         allIds.add(r.id)
         manuallySelectedIds.value.add(r.id)
+        for (const id of collectDescendantIds(r)) allIds.add(id)
       }
       selectedIds.value = [...allIds]
     } else {
@@ -915,7 +917,8 @@ async function handleQuery(preserveExpand = false) {
        bizDomain: props.selectedNode?.id !== 'all' ? (props.selectedNode?.domainLabel || undefined) : undefined
      })
      const entries = res.data || []
-      tableData.value = buildTree(entries)
+       totalEntryCount.value = entries.length
+       tableData.value = buildTree(entries)
       if (!preserveExpand) {
         collapsedDomains.value = new Set()
         const defaultExpanded = new Set()
@@ -935,7 +938,8 @@ async function handleQuery(preserveExpand = false) {
     console.error('查询数据失败:', e)
     tableData.value = []
     displayData.value = []
-  }
+    totalEntryCount.value = 0
+   }
 }
 
 function resetQuery() {

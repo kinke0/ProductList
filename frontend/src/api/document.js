@@ -28,9 +28,3 @@ export function previewDocument(recordId) {
 export function deleteDocRecord(id) {
   return request.delete(`/documents/records/${id}`)
 }
-
-export function downloadTestWord() {
-  return request.get('/documents/test-word', {
-    responseType: 'blob'
-  })
-}

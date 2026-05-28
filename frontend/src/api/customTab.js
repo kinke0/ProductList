@@ -8,6 +8,10 @@ export function createCustomTab(data) {
   return request.post('/custom-tab', data)
 }
 
+export function createCustomTabWithFilter(data) {
+  return request.post('/custom-tab/create-with-filter', data)
+}
+
 export function deleteCustomTab(id) {
   return request.delete(`/custom-tab/${id}`)
 }

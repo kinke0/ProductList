@@ -23,6 +23,21 @@ public class CustomTabController {
         return Result.success(customTabService.findByVersionId(versionId));
     }
 
+    @PostMapping("/create-with-filter")
+    public Result<CustomTab> createWithFilter(@RequestBody Map<String, Object> body) {
+        String name = (String) body.get("name");
+        Long versionId = Long.valueOf(body.get("versionId").toString());
+        Long userId = body.get("userId") != null ? Long.valueOf(body.get("userId").toString()) : null;
+        String entryName = (String) body.getOrDefault("entryName", "");
+        String status = (String) body.getOrDefault("status", "");
+        String productManager = (String) body.getOrDefault("productManager", "");
+        String solution = (String) body.getOrDefault("solution", "");
+        String versionTag = (String) body.getOrDefault("versionTag", "");
+        CustomTab tab = customTabService.createWithFilter(name, versionId, userId,
+                entryName, status, productManager, solution, versionTag);
+        return Result.success(tab);
+    }
+
     @PostMapping
     public Result<CustomTab> create(@RequestBody Map<String, Object> body) {
         String name = (String) body.get("name");

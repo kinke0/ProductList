@@ -165,21 +165,56 @@
     </el-table>
 
     <template #footer>
-      <el-button @click="handleTestGenerate" :loading="testDocLoading">测试生成</el-button>
       <el-button @click="showDocDialog = false">取消</el-button>
       <el-button type="primary" :loading="docLoading" @click="handleGenerate">生成</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="showAddListDialog" title="添加清单" width="420px" :close-on-click-modal="false">
+    <el-form :model="addListForm" label-width="100px" size="small">
+      <el-form-item label="清单名称" required>
+        <el-input v-model="addListForm.name" placeholder="请输入清单名称" />
+      </el-form-item>
+      <el-form-item label="产品/系统">
+        <el-input v-model="addListForm.entryName" placeholder="按名称检索" clearable />
+      </el-form-item>
+      <el-form-item label="状态">
+        <el-select v-model="addListForm.status" placeholder="全部" clearable style="width:100%">
+          <el-option v-for="s in addListStatusList" :key="s" :label="s" :value="s" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="产品经理">
+        <el-input v-model="addListForm.productManager" placeholder="产品经理" clearable />
+      </el-form-item>
+      <el-form-item label="解决方案">
+        <el-select v-model="addListForm.solution" placeholder="全部" clearable style="width:100%">
+          <el-option v-for="s in addListSolutions" :key="s" :label="s" :value="s" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="版本划分">
+        <el-select v-model="addListForm.versionTag" placeholder="全部" clearable style="width:100%">
+          <el-option label="A-曜系列" value="A-曜系列" />
+          <el-option label="B-远系列" value="B-远系列" />
+          <el-option label="C-驰系列" value="C-驰系列" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="showAddListDialog = false">取消</el-button>
+      <el-button type="primary" :loading="addListLoading" @click="handleAddList">创建</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import TreePanel from '../../components/TreePanel.vue'
 import StatsTab from '../../components/StatsTab.vue'
 import DataListTab from '../../components/DataListTab.vue'
-import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress, downloadTestWord } from '../../api/document'
+import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
 import { getVersions } from '../../api/version'
-import { getCustomTabs, createCustomTab, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
+import { getCustomTabs, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
+import { getOptions } from '../../api/option'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const versions = ref([])
@@ -192,16 +227,27 @@ const docType = ref('feature')
 const docFormat = ref('word')
 const dataScope = ref('all')
 const selectedEntryIds = ref([])
-const docCustomTabId = ref(null)
- const docLoading = ref(false)
-const testDocLoading = ref(false)
-const genRecords = ref([])
+ const docCustomTabId = ref(null)
+  const docLoading = ref(false)
+ const genRecords = ref([])
 const recordsLoading = ref(false)
 const customTabs = ref([])
 const showInsertDialog = ref(false)
 const insertEntryIds = ref([])
 const customTabRefresh = ref(0)
 const activeGenRecordId = ref(null)
+const showAddListDialog = ref(false)
+const addListLoading = ref(false)
+ const addListSolutions = ref([])
+const addListStatusList = ref([])
+ const addListForm = reactive({
+  name: '',
+  entryName: '',
+  status: '',
+  productManager: '',
+  solution: '',
+  versionTag: ''
+})
 const progressTotal = ref(0)
 const progressProcessed = ref(0)
 const progressStatus = ref('')
@@ -319,28 +365,55 @@ async function loadCustomTabs() {
 }
 
 async function onAddList() {
+  addListForm.name = ''
+  addListForm.entryName = ''
+  addListForm.status = ''
+  addListForm.productManager = ''
+  addListForm.solution = ''
+  addListForm.versionTag = ''
+  if (selectedVersion.value) {
+    try {
+      const [solRes, stRes] = await Promise.all([
+        getOptions(selectedVersion.value.id, 'solution'),
+        getOptions(selectedVersion.value.id, 'status')
+      ])
+      addListSolutions.value = (solRes.data || []).map(o => o.value)
+      addListStatusList.value = (stRes.data || []).map(o => o.value)
+    } catch (e) {
+      addListSolutions.value = []
+      addListStatusList.value = []
+    }
+  }
+  showAddListDialog.value = true
+}
+
+async function handleAddList() {
+  if (!addListForm.name || !addListForm.name.trim()) {
+    ElMessage.warning('请输入清单名称')
+    return
+  }
+  addListLoading.value = true
   try {
-    const { value } = await ElMessageBox.prompt('请输入清单名称', '添加清单', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputValidator: (val) => val && val.trim() ? true : '名称不能为空'
+    await createCustomTabWithFilter({
+      name: addListForm.name.trim(),
+      versionId: selectedVersion.value.id,
+      entryName: addListForm.entryName || undefined,
+      status: addListForm.status || undefined,
+      productManager: addListForm.productManager || undefined,
+      solution: addListForm.solution || undefined,
+      versionTag: addListForm.versionTag || undefined
     })
-    if (value) {
-      await createCustomTab({
-        name: value.trim(),
-        versionId: selectedVersion.value.id
-      })
-      ElMessage.success('清单创建成功')
-      await loadCustomTabs()
-      if (customTabs.value.length > 0) {
-        const last = customTabs.value[customTabs.value.length - 1]
-        activeTab.value = 'custom-' + last.id
-      }
+    ElMessage.success('清单创建成功')
+    showAddListDialog.value = false
+    await loadCustomTabs()
+    if (customTabs.value.length > 0) {
+      const last = customTabs.value[customTabs.value.length - 1]
+      activeTab.value = 'custom-' + last.id
     }
   } catch (e) {
-    if (e !== 'cancel' && e !== 'close') {
-      ElMessage.error(e?.response?.data?.message || '创建失败')
-    }
+    ElMessage.error(e?.response?.data?.message || '创建失败')
+  } finally {
+    addListLoading.value = false
   }
 }
 
@@ -479,25 +552,6 @@ async function handleGenerate() {
     ElMessage.error('文档生成请求失败')
   } finally {
     docLoading.value = false
-  }
-}
-
-async function handleTestGenerate() {
-  testDocLoading.value = true
-  try {
-    const res = await downloadTestWord()
-    const blob = new Blob([res], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = '测试标题.docx'
-    a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('测试文档已下载')
-  } catch (e) {
-    ElMessage.error('测试文档生成失败')
-  } finally {
-    testDocLoading.value = false
   }
 }
 
@@ -658,4 +712,5 @@ async function handleDeleteRecord(row) {
   vertical-align: -1px;
   animation: spin-rotate 0.8s linear infinite;
 }
+.record-count { color: #8f959e; font-size: 12px; }
 </style>

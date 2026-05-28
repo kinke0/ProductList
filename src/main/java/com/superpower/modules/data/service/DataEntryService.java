@@ -75,7 +75,8 @@ public class DataEntryService {
                                  String solution, String versionDivision, String bizCategory, String bizDomain) {
         boolean hasFilter = (name != null && !name.isEmpty()) || (status != null && !status.isEmpty())
                 || (productManager != null && !productManager.isEmpty()) || (solution != null && !solution.isEmpty())
-                || (versionDivision != null && !versionDivision.isEmpty());
+                || (versionDivision != null && !versionDivision.isEmpty())
+                || (bizCategory != null && !bizCategory.isEmpty()) || (bizDomain != null && !bizDomain.isEmpty());
 
         if (customTabId != null) {
             List<DataEntry> entries;

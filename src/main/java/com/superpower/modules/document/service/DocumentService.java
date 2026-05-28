@@ -24,6 +24,7 @@ import java.math.BigInteger;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -204,41 +205,6 @@ public class DocumentService {
         } else {
             generateFeatureWord(doc, entries, recordId);
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        doc.write(out);
-        doc.close();
-        return out.toByteArray();
-    }
-
-    public byte[] generateTestWord() throws Exception {
-        XWPFDocument doc = new XWPFDocument();
-        ensureBuiltinHeadingStyles(doc);
-
-        addNumberedHeading(doc, "业务分类一", 1, "1");
-
-        addNumberedHeading(doc, "业务域A", 2, "1.1");
-
-        addNumberedHeading(doc, "产品节点一", 3, "1.1.1");
-        addParagraph(doc, "这是产品节点一的功能说明文字，用于验证标题是否能被WPS正确识别。");
-
-        addNumberedHeading(doc, "产品节点二", 3, "1.1.2");
-        addParagraph(doc, "这是产品节点二的功能说明文字。");
-
-        addNumberedHeading(doc, "子节点", 4, "1.1.2.1");
-        addParagraph(doc, "这是四级标题下的说明文字。");
-
-        addNumberedHeading(doc, "业务域B", 2, "1.2");
-
-        addNumberedHeading(doc, "产品节点三", 3, "1.2.1");
-        addParagraph(doc, "这是产品节点三的功能说明文字。");
-
-        addNumberedHeading(doc, "业务分类二", 1, "2");
-
-        addNumberedHeading(doc, "业务域C", 2, "2.1");
-
-        addNumberedHeading(doc, "产品节点四", 3, "2.1.1");
-        addParagraph(doc, "这是产品节点四的功能说明文字。");
-
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
         doc.close();
@@ -487,62 +453,91 @@ public class DocumentService {
         }
     }
 
-    private ImageData downloadAndProcessImage(String url) {
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setRequestProperty("User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            conn.setRequestProperty("Accept", "image/webp,image/apng,image/*,*/*;q=0.8");
-            conn.setRequestProperty("Referer", "https://feishu.cn/");
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(15000);
-            conn.setInstanceFollowRedirects(true);
+    private ImageData downloadAndProcessImage(String rawUrl) {
+        String[] candidates = buildUrlCandidates(rawUrl);
+        for (String url : candidates) {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                conn.setRequestProperty("User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                conn.setRequestProperty("Accept", "image/webp,image/apng,image/*,*/*;q=0.8");
+                conn.setRequestProperty("Referer", "https://feishu.cn/");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(15000);
+                conn.setInstanceFollowRedirects(true);
 
-            int responseCode = conn.getResponseCode();
-            if (responseCode != 200) {
-                return null;
+                int responseCode = conn.getResponseCode();
+                if (responseCode != 200) {
+                    continue;
+                }
+
+                String contentType = conn.getContentType();
+                if (contentType != null && contentType.startsWith("text/")) {
+                    continue;
+                }
+
+                byte[] imageData = conn.getInputStream().readAllBytes();
+                if (imageData.length == 0) {
+                    continue;
+                }
+
+                BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageData));
+                if (img == null) {
+                    continue;
+                }
+
+                int width = img.getWidth();
+                int height = img.getHeight();
+
+                String lowerUrl = url.toLowerCase();
+                int pictureType;
+                if (lowerUrl.contains(".png")) {
+                    pictureType = XWPFDocument.PICTURE_TYPE_PNG;
+                } else if (lowerUrl.contains(".jpg") || lowerUrl.contains(".jpeg")) {
+                    pictureType = XWPFDocument.PICTURE_TYPE_JPEG;
+                } else if (lowerUrl.contains(".gif")) {
+                    pictureType = XWPFDocument.PICTURE_TYPE_GIF;
+                } else if (lowerUrl.contains(".bmp")) {
+                    pictureType = XWPFDocument.PICTURE_TYPE_BMP;
+                } else {
+                    ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
+                    ImageIO.write(img, "png", pngOut);
+                    imageData = pngOut.toByteArray();
+                    pictureType = XWPFDocument.PICTURE_TYPE_PNG;
+                }
+
+                return new ImageData(imageData, width, height, pictureType);
+            } catch (Exception e) {
+                log.debug("URL candidate failed: {}", url);
             }
-
-            String contentType = conn.getContentType();
-            if (contentType != null && contentType.startsWith("text/")) {
-                return null;
-            }
-
-            byte[] imageData = conn.getInputStream().readAllBytes();
-            if (imageData.length == 0) {
-                return null;
-            }
-
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageData));
-            if (img == null) {
-                return null;
-            }
-
-            int width = img.getWidth();
-            int height = img.getHeight();
-
-            String lowerUrl = url.toLowerCase();
-            int pictureType;
-            if (lowerUrl.contains(".png")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_PNG;
-            } else if (lowerUrl.contains(".jpg") || lowerUrl.contains(".jpeg")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_JPEG;
-            } else if (lowerUrl.contains(".gif")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_GIF;
-            } else if (lowerUrl.contains(".bmp")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_BMP;
-            } else {
-                ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
-                ImageIO.write(img, "png", pngOut);
-                imageData = pngOut.toByteArray();
-                pictureType = XWPFDocument.PICTURE_TYPE_PNG;
-            }
-
-            return new ImageData(imageData, width, height, pictureType);
-        } catch (Exception e) {
-            log.warn("Failed to download image: {}", url, e);
-            return null;
         }
+        log.warn("All URL candidates failed for: {}", rawUrl);
+        return null;
+    }
+
+    private String[] buildUrlCandidates(String rawUrl) {
+        List<String> candidates = new ArrayList<>();
+        candidates.add(rawUrl);
+        try {
+            URL parsedUrl = new URL(rawUrl);
+            String path = parsedUrl.getPath();
+            String[] segments = path.split("/", -1);
+            StringBuilder encodedPath = new StringBuilder();
+            for (int s = 0; s < segments.length; s++) {
+                if (s > 0) encodedPath.append("/");
+                encodedPath.append(URLEncoder.encode(segments[s], "UTF-8").replace("+", "%20"));
+            }
+            String encoded = parsedUrl.getProtocol() + "://" + parsedUrl.getHost()
+                    + (parsedUrl.getPort() != -1 ? ":" + parsedUrl.getPort() : "")
+                    + encodedPath.toString();
+            if (parsedUrl.getQuery() != null) {
+                encoded += "?" + parsedUrl.getQuery();
+            }
+            if (!encoded.equals(rawUrl)) {
+                candidates.add(encoded);
+            }
+        } catch (Exception ignored) {}
+        return candidates.toArray(new String[0]);
     }
 
     private void insertSingleImage(XWPFDocument doc, String url, ImageData imgData) {
@@ -588,14 +583,27 @@ public class DocumentService {
         int numRows = (int) Math.ceil((double) images.size() / numCols);
 
         XWPFTable table = doc.createTable(numRows, numCols);
+        CTTblPr tblPr = table.getCTTbl().getTblPr();
+        CTJcTable jc = tblPr.isSetJc() ? tblPr.getJc() : tblPr.addNewJc();
+        jc.setVal(STJcTable.CENTER);
+        CTTblBorders borders = tblPr.isSetTblBorders() ? tblPr.getTblBorders() : tblPr.addNewTblBorders();
+        setWhiteBorder(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
+        setWhiteBorder(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
+        setWhiteBorder(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
+        setWhiteBorder(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
+        setWhiteBorder(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
+        setWhiteBorder(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
 
         int imgIdx = 0;
         for (int r = 0; r < numRows; r++) {
+            XWPFTableRow row = table.getRow(r);
             for (int c = 0; c < numCols; c++) {
-                XWPFTableCell cell = table.getRow(r).getCell(c);
+                XWPFTableCell cell = row.getCell(c);
                 cell.removeParagraph(0);
                 XWPFParagraph cellPara = cell.addParagraph();
                 cellPara.setAlignment(ParagraphAlignment.CENTER);
+                CTTcPr tcPr = cell.getCTTc().addNewTcPr();
+                tcPr.addNewTcW().setW(BigInteger.valueOf(3000));
 
                 if (imgIdx < images.size()) {
                     ImageData img = images.get(imgIdx);
@@ -628,6 +636,13 @@ public class DocumentService {
                 }
             }
         }
+    }
+
+    private void setWhiteBorder(CTBorder border) {
+        border.setVal(STBorder.SINGLE);
+        border.setSz(BigInteger.valueOf(4));
+        border.setSpace(BigInteger.ZERO);
+        border.setColor("FFFFFF");
     }
 
     private void insertFallbackText(XWPFDocument doc, String url) {
