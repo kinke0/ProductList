@@ -147,11 +147,16 @@
     </RecycleScroller>
     </div>
 
-    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" :title="editDialogTitle" width="80%" top="5vh">
-      <div v-if="!isNew && editingRow" style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:12px;">
-        <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="default">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
-        <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:13px;">原因：{{ lastRejectReason }}</span>
-      </div>
+    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh">
+      <template #header>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
+          <div v-if="!isNew && editingRow" style="display:flex;align-items:center;">
+            <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
+            <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:14px;">原因：{{ lastRejectReason }}</span>
+          </div>
+        </div>
+      </template>
       <el-form :model="editForm" label-width="120px" size="small">
         <el-row :gutter="16">
           <el-col :span="12">
