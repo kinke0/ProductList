@@ -740,16 +740,19 @@ function onQuillReady(quill) {
 }
 
 function insertImage(img) {
-  if (quillInstance && QuillModule && img.url) {
+  if (quillInstance && img.url) {
     const range = quillInstance.getSelection(true)
-    quillInstance.insertEmbed(range.index, 'image', img.url, 'user')
-    quillInstance.setSelection(range.index + 1)
+    const name = img.filename || '图片'
+    const html = `<img src="${img.url}" alt="${name}" data-filename="${name}" style="max-width:240px;max-height:180px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;padding:4px;background:#f8fafc;vertical-align:middle;margin:4px 6px 4px 0;cursor:pointer;" /><span style="font-size:13px;color:#475569;vertical-align:middle;margin-right:8px;">${name}</span>`
+    quillInstance.clipboard.dangerouslyPasteHTML(range.index, html)
   }
 }
 
 function onEditDialogClick(e) {
   const target = e.target
   if (target.tagName === 'IMG' && target.closest('.ql-editor')) {
+    e.preventDefault()
+    e.stopPropagation()
     const url = target.getAttribute('src')
     if (url) {
       imgPreviewUrl.value = url
@@ -1569,15 +1572,6 @@ watch(() => props.versionId, () => {
 .quill-wrapper :deep(.ql-container.ql-snow) { border-radius: 0 0 8px 8px; border-color: #dcdfe6; height: 250px; font-size: 14px; }
 .quill-wrapper :deep(.ql-editor) { min-height: 200px; }
 .quill-wrapper :deep(.ql-editor img) {
-  max-width: 80px;
-  max-height: 60px;
-  object-fit: contain;
   cursor: pointer;
-  border-radius: 4px;
-  border: 1px solid #e2e8f0;
-  padding: 2px;
-  background: #f8fafc;
-  vertical-align: middle;
-  margin: 4px 4px 4px 0;
 }
 </style>
