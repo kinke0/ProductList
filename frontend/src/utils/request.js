@@ -32,11 +32,14 @@ request.interceptors.response.use(
     return res
   },
   error => {
+    const msg = error.response?.data?.message || error.message || '网络错误'
     if (error.response?.status === 401 || error.response?.status === 403) {
+      ElMessage.error(msg)
       localStorage.removeItem('token')
       router.push('/login')
+    } else {
+      ElMessage.error(msg)
     }
-    ElMessage.error(error.message || '网络错误')
     return Promise.reject(error)
   }
 )
