@@ -250,7 +250,9 @@
           <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" />
         </el-form-item>
         <el-form-item label="功能说明">
-          <QuillEditor v-model:content="editForm.colFeatureDesc" content-type="html" :toolbar="quillToolbar" style="height:300px;" @ready="onQuillReady" />
+          <div class="quill-wrapper">
+            <QuillEditor v-model:content="editForm.colFeatureDesc" content-type="html" :toolbar="quillToolbar" @ready="onQuillReady" />
+          </div>
         </el-form-item>
         <el-row :gutter="16">
           <el-col :span="12">
@@ -1548,4 +1550,8 @@ watch(() => props.versionId, () => {
 .version-inline { display: flex; gap: 2px; white-space: nowrap; }
 .record-count { color: #8f959e; font-size: 12px; margin-left: auto; white-space: nowrap; flex-shrink: 0; padding-right: 4px; }
 .level-tag { margin: 0 6px; vertical-align: middle; }
+.quill-wrapper { width: 100%; }
+.quill-wrapper :deep(.ql-toolbar.ql-snow) { border-radius: 8px 8px 0 0; border-color: #dcdfe6; }
+.quill-wrapper :deep(.ql-container.ql-snow) { border-radius: 0 0 8px 8px; border-color: #dcdfe6; height: 250px; font-size: 14px; }
+.quill-wrapper :deep(.ql-editor) { min-height: 200px; }
 </style>
