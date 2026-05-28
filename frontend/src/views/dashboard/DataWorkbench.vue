@@ -72,7 +72,7 @@
                 :version-id="selectedVersion.id"
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
-                user-role="admin"
+                :user-role="currentUserRole"
                 @insert-to-list="onInsertToList"
               />
             </el-tab-pane>
@@ -219,6 +219,7 @@ import { getOptions } from '../../api/option'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const versions = ref([])
+const currentUserRole = localStorage.getItem('roleCode') || 'USER'
 const selectedVersion = ref(null)
 const showVersionDialog = ref(false)
 const selectedNode = ref(null)
