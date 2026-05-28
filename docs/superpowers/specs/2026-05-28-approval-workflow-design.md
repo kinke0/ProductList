@@ -110,6 +110,32 @@
 }
 ```
 
+## 审批流转日志
+
+### 实体：ApprovalLog
+
+记录每条数据的状态流转历史。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Long | 主键 |
+| entryId | Long | 关联的 DataEntry ID |
+| fromStatus | String | 变更前状态 |
+| toStatus | String | 变更后状态 |
+| action | String | 操作类型：submit/approve/reject |
+| operatorId | Long | 操作人 ID |
+| operatorName | String | 操作人姓名 |
+| comment | String | 备注（驳回原因等，可选） |
+| createdAt | LocalDateTime | 操作时间 |
+
+每次审批操作（submit/approve/reject）成功后，自动写入一条日志记录。
+
+### 接口
+
+`GET /api/data/{id}/approval-logs`
+
+返回该条数据的所有审批流转日志，按时间倒序排列。
+
 ## 前端变更
 
 ### 状态标签颜色
