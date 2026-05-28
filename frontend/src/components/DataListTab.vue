@@ -55,7 +55,17 @@
           <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
             <el-button type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
             <el-button type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
-            <el-button type="warning" size="small" plain @click="batchChangeStatus"><el-icon><Edit /></el-icon>状态修改</el-button>
+             <el-dropdown @command="onBatchCommand">
+              <el-button type="warning" size="small" plain>
+                <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="status">状态修改</el-dropdown-item>
+                  <el-dropdown-item command="solution">解决方案</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
       </div>
     </div>
 
@@ -273,20 +283,33 @@
         </div>
       </template>
     </el-dialog>
-    <el-dialog v-model="showBatchStatusDialog" title="批量修改功能状态" width="400px">
-      <el-form label-width="80px">
-        <el-form-item label="功能状态">
-          <el-select v-model="batchStatusValue" placeholder="请选择" style="width:100%;">
-            <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showBatchStatusDialog = false">取消</el-button>
-        <el-button type="primary" @click="confirmBatchStatus">确定</el-button>
-      </template>
-    </el-dialog>
-  </div>
+     <el-dialog v-model="showBatchStatusDialog" title="批量修改功能状态" width="400px">
+       <el-form label-width="80px">
+         <el-form-item label="功能状态">
+           <el-select v-model="batchStatusValue" placeholder="请选择" style="width:100%;">
+             <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
+           </el-select>
+         </el-form-item>
+       </el-form>
+       <template #footer>
+         <el-button @click="showBatchStatusDialog = false">取消</el-button>
+         <el-button type="primary" @click="confirmBatchStatus">确定</el-button>
+       </template>
+     </el-dialog>
+     <el-dialog v-model="showBatchSolutionDialog" title="批量修改解决方案" width="400px">
+       <el-form label-width="80px">
+         <el-form-item label="解决方案">
+           <el-select v-model="batchSolutionValue" placeholder="请选择" style="width:100%;">
+             <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
+           </el-select>
+         </el-form-item>
+       </el-form>
+       <template #footer>
+         <el-button @click="showBatchSolutionDialog = false">取消</el-button>
+         <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
+       </template>
+     </el-dialog>
+   </div>
 </template>
 
 <script setup>
@@ -322,6 +345,8 @@ const editingRow = ref(null)
 const lastRejectReason = ref('')
 const showBatchStatusDialog = ref(false)
 const batchStatusValue = ref('')
+const showBatchSolutionDialog = ref(false)
+const batchSolutionValue = ref('')
 const selectedIds = ref([])
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
@@ -782,7 +807,21 @@ async function batchReject() {
   handleQuery(true)
  }
 
- function batchChangeStatus() {
+ function onBatchCommand(cmd) {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要操作的条目')
+    return
+  }
+  if (cmd === 'status') {
+    batchStatusValue.value = ''
+    showBatchStatusDialog.value = true
+  } else if (cmd === 'solution') {
+    batchSolutionValue.value = ''
+    showBatchSolutionDialog.value = true
+  }
+}
+
+function batchChangeStatus() {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先选择要操作的条目')
     return
@@ -810,6 +849,28 @@ async function confirmBatchStatus() {
   }
   showBatchStatusDialog.value = false
   ElMessage.success(`成功修改 ${successCount} 条功能状态`)
+  handleQuery(true)
+ }
+
+async function confirmBatchSolution() {
+  if (!batchSolutionValue.value) {
+    ElMessage.warning('请选择解决方案')
+    return
+  }
+  let successCount = 0
+  for (const id of selectedIds.value) {
+    try {
+      const row = findRowById(id, tableData.value)
+      if (row) {
+        await updateEntry(id, { ...row, colOtherSolutionTag: batchSolutionValue.value })
+        successCount++
+      }
+    } catch (e) {
+      console.error(`修改解决方案失败 id=${id}:`, e)
+    }
+  }
+  showBatchSolutionDialog.value = false
+  ElMessage.success(`成功修改 ${successCount} 条解决方案`)
   handleQuery(true)
 }
 
