@@ -252,7 +252,7 @@
         <el-form-item label="功能说明">
           <div class="feature-editor">
             <div class="feature-editor-toolbar">
-              <button type="button" class="fe-btn" title="插入图片" @click="showImagePicker = true">
+              <button type="button" class="fe-btn" title="插入图片" @click="saveSelectionAndShowPicker">
                 <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
               </button>
             </div>
@@ -328,8 +328,8 @@
          <el-button type="primary" @click="confirmBatchManager">确定</el-button>
        </template>
 </el-dialog>
-     <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="editForm.colProductSystem" @select="insertImage" />
-      <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="editForm.colProductSystem" @select="replaceImageCard" />
+      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="insertImage" />
+       <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
@@ -384,6 +384,7 @@ const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
 const editorRef = ref(null)
 const manuallySelectedIds = ref(new Set())
+const pendingImageUpdates = ref([])
 const parentRow = ref(null)
 const appRoles = ref([])
 const solutions = ref([])
@@ -396,8 +397,30 @@ const appRoleSelections = ref([])
  const expandedNodeIds = ref(new Set())
   const scrollerRef = ref(null)
   const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, ghostEl: null })
-let dragMoveHandler = null
+ let dragMoveHandler = null
 let dragUpHandler = null
+
+const imagePickerProduct = computed(() => {
+  if (editForm.level === 3) return editForm.colProductSystem
+  let node = nodeMap.value.get(editingId.value)
+  while (node) {
+    if (node.level === 3) return node.colProductSystem
+    if (node.parentId) {
+      node = nodeMap.value.get(node.parentId)
+    } else {
+      break
+    }
+  }
+  if (parentRow.value && parentRow.value.level === 3) return parentRow.value.colProductSystem
+  if (parentRow.value) {
+    let p = nodeMap.value.get(parentRow.value.id)
+    while (p) {
+      if (p.level === 3) return p.colProductSystem
+      p = p.parentId ? nodeMap.value.get(p.parentId) : null
+    }
+  }
+  return editForm.colProductSystem
+})
 
 watch(showEditDialog, (val) => {
   if (val) {
@@ -687,6 +710,9 @@ async function handleDedupCommand(mode) {
 
 function onDialogChange(val) {
   showEditDialog.value = val
+  if (!val) {
+    pendingImageUpdates.value = []
+  }
 }
 
 function hasVer(row, ver) {
@@ -759,6 +785,7 @@ const replacingCard = ref(null)
 const showReplacePicker = ref(false)
 const editorTooltip = ref(null)
 let tooltipTimer = null
+let savedSelectionRange = null
 
 function onEditorClick(e) {
   const card = e.target.closest('.image-card')
@@ -883,6 +910,15 @@ function replaceImageCard(img) {
   if (size) size.textContent = formatSize(img.size)
   replacingCard.value = null
   editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+  collectPendingImageUpdate(img)
+}
+
+function saveSelectionAndShowPicker() {
+  const sel = window.getSelection()
+  if (sel.rangeCount > 0) {
+    savedSelectionRange = sel.getRangeAt(0).cloneRange()
+  }
+  showImagePicker.value = true
 }
 
 function insertImage(img) {
@@ -898,6 +934,12 @@ function insertImage(img) {
   card.innerHTML = `<span class="image-thumb"><img src="${img.url}" alt="${name}" /></span><span class="image-info"><button type="button" class="image-action-btn image-edit-name-btn" data-action="edit-name">编辑</button><span class="image-name">${name}</span><span class="image-size">${formatSize(img.size)}</span></span><span class="image-actions"><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button><button type="button" class="image-action-btn" data-action="replace">替换</button></span>`
   const after = document.createElement('br')
   editorRef.value.focus()
+  if (savedSelectionRange) {
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(savedSelectionRange)
+    savedSelectionRange = null
+  }
   const sel = window.getSelection()
   if (sel.rangeCount) {
     const range = sel.getRangeAt(0)
@@ -911,6 +953,7 @@ function insertImage(img) {
     editorRef.value.appendChild(after)
   }
   editForm.colFeatureDesc = editorRef.value.innerHTML
+  collectPendingImageUpdate(img)
 }
 
 function formatSize(bytes) {
@@ -918,6 +961,26 @@ function formatSize(bytes) {
   if (bytes < 1024) return bytes + 'B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB'
   return (bytes / 1024 / 1024).toFixed(1) + 'MB'
+}
+
+function collectPendingImageUpdate(img) {
+  if (img._pendingCategory || img._pendingDomain || img._pendingProduct) {
+    pendingImageUpdates.value.push({
+      id: img.id,
+      category: img._pendingCategory,
+      domain: img._pendingDomain,
+      product: img._pendingProduct
+    })
+  }
+}
+
+async function flushPendingImageUpdates() {
+  const updates = pendingImageUpdates.value.splice(0)
+  for (const u of updates) {
+    try {
+      await updateImage(u.id, { category: u.category, domain: u.domain, product: u.product })
+    } catch (e) { /* ignore */ }
+  }
 }
 
 async function handleReject(row) {
@@ -1592,8 +1655,9 @@ async function saveEdit() {
     await updateEntry(editingId.value, editForm)
     ElMessage.success('保存成功')
   }
-   showEditDialog.value = false
-   handleQuery(true)
+  flushPendingImageUpdates()
+  showEditDialog.value = false
+  handleQuery(true)
 }
 
 watch(() => props.versionId, () => {

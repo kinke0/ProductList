@@ -1,5 +1,7 @@
 package com.superpower.modules.image.service;
 
+import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.repository.BaseCategoryRepository;
 import com.superpower.common.BusinessException;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
@@ -16,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -28,14 +31,17 @@ public class ImageResourceService {
 
     private final ImageResourceRepository imageResourceRepository;
     private final DataEntryRepository dataEntryRepository;
+    private final BaseCategoryRepository baseCategoryRepository;
 
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
 
     public ImageResourceService(ImageResourceRepository imageResourceRepository,
-                                DataEntryRepository dataEntryRepository) {
+                                DataEntryRepository dataEntryRepository,
+                                BaseCategoryRepository baseCategoryRepository) {
         this.imageResourceRepository = imageResourceRepository;
         this.dataEntryRepository = dataEntryRepository;
+        this.baseCategoryRepository = baseCategoryRepository;
     }
 
     @Transactional
@@ -60,13 +66,24 @@ public class ImageResourceService {
         Path dirPath = Paths.get(storagePath, subPath);
         try {
             Files.createDirectories(dirPath);
+            int waitRetry = 0;
+            while (!Files.exists(dirPath) && waitRetry < 10) {
+                Thread.sleep(50);
+                waitRetry++;
+            }
+            if (!Files.exists(dirPath)) {
+                Files.createDirectories(dirPath);
+            }
         } catch (IOException e) {
             throw new BusinessException("创建目录失败: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("创建目录被中断");
         }
 
         Path filePath = dirPath.resolve(storedName);
         try {
-            Files.copy(file.getInputStream(), filePath);
+            Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             throw new BusinessException("文件保存失败: " + e.getMessage());
         }
@@ -90,6 +107,41 @@ public class ImageResourceService {
     }
 
     public List<ImageResource> findAll(String category, String domain, String product, Long versionId) {
+        List<ImageResource> direct = findDirect(category, domain, product, versionId);
+
+        if (versionId != null && category != null && domain != null) {
+            List<DataEntry> matchingEntries = dataEntryRepository.findByVersionIdAndColBizCategoryAndColBizDomain(
+                    versionId, category, domain);
+            if (product != null) {
+                Map<Long, DataEntry> entryMap = new HashMap<>();
+                for (DataEntry e : dataEntryRepository.findByVersionId(versionId)) {
+                    entryMap.put(e.getId(), e);
+                }
+                matchingEntries = matchingEntries.stream()
+                        .filter(e -> {
+                            DataEntry l3 = findAncestorAtLevel(e, entryMap, 3);
+                            return l3 != null && product.equals(l3.getColProductSystem());
+                        })
+                        .toList();
+            }
+            Set<Long> directIds = direct.stream().map(ImageResource::getId).collect(Collectors.toSet());
+            List<ImageResource> referenced = findReferencedImages(matchingEntries, directIds);
+            direct.addAll(referenced);
+        }
+
+        return direct;
+    }
+
+    private List<ImageResource> findDirect(String category, String domain, String product, Long versionId) {
+        if (versionId != null && category != null && domain != null && product != null) {
+            return imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProduct(versionId, category, domain, product);
+        }
+        if (versionId != null && category != null && domain != null) {
+            return imageResourceRepository.findByVersionIdAndCategoryAndDomain(versionId, category, domain);
+        }
+        if (versionId != null && category != null) {
+            return imageResourceRepository.findByVersionIdAndCategory(versionId, category);
+        }
         if (versionId != null) {
             return imageResourceRepository.findByVersionId(versionId);
         }
@@ -103,6 +155,31 @@ public class ImageResourceService {
             return imageResourceRepository.findByCategory(category);
         }
         return imageResourceRepository.findAll();
+    }
+
+    private List<ImageResource> findReferencedImages(List<DataEntry> entries, Set<Long> excludeIds) {
+        List<String> descs = entries.stream()
+                .map(DataEntry::getColFeatureDesc)
+                .filter(d -> d != null && !d.isEmpty())
+                .toList();
+        if (descs.isEmpty()) return new ArrayList<>();
+
+        Long versionId = entries.get(0).getVersionId();
+        List<ImageResource> allImages = imageResourceRepository.findByVersionId(versionId);
+        List<ImageResource> result = new ArrayList<>();
+        for (ImageResource img : allImages) {
+            if (excludeIds.contains(img.getId())) continue;
+            String url = img.getUrl();
+            if (url == null) continue;
+            for (String desc : descs) {
+                if (desc.contains(url)) {
+                    result.add(img);
+                    excludeIds.add(img.getId());
+                    break;
+                }
+            }
+        }
+        return result;
     }
 
     @Transactional
@@ -127,6 +204,15 @@ public class ImageResourceService {
         if (body.getFilename() != null) {
             image.setFilename(body.getFilename());
         }
+        if (body.getCategory() != null) {
+            image.setCategory(body.getCategory());
+        }
+        if (body.getDomain() != null) {
+            image.setDomain(body.getDomain());
+        }
+        if (body.getProduct() != null) {
+            image.setProduct(body.getProduct());
+        }
         return imageResourceRepository.save(image);
     }
 
@@ -138,31 +224,77 @@ public class ImageResourceService {
             images = imageResourceRepository.findAll();
         }
 
-        Map<String, Map<String, Map<String, List<ImageResource>>>> treeMap = new LinkedHashMap<>();
+        Map<String, Map<String, Map<String, Set<Long>>>> treeImgIds = new LinkedHashMap<>();
+        Map<Long, ImageResource> imgMap = new LinkedHashMap<>();
         for (ImageResource img : images) {
+            imgMap.put(img.getId(), img);
             String cat = img.getCategory() != null ? img.getCategory() : "未分类";
             String dom = img.getDomain() != null ? img.getDomain() : "未分类";
             String prod = img.getProduct() != null ? img.getProduct() : "未分类";
-            treeMap.computeIfAbsent(cat, k -> new LinkedHashMap<>())
+            treeImgIds.computeIfAbsent(cat, k -> new LinkedHashMap<>())
                     .computeIfAbsent(dom, k -> new LinkedHashMap<>())
-                    .computeIfAbsent(prod, k -> new ArrayList<>())
-                    .add(img);
+                    .computeIfAbsent(prod, k -> new LinkedHashSet<>())
+                    .add(img.getId());
+        }
+
+        if (versionId != null) {
+            Map<Long, DataEntry> entryMap = new HashMap<>();
+            for (DataEntry e : dataEntryRepository.findByVersionId(versionId)) {
+                entryMap.put(e.getId(), e);
+            }
+            for (DataEntry entry : entryMap.values()) {
+                String desc = entry.getColFeatureDesc();
+                if (desc == null) continue;
+                String entryCat = entry.getColBizCategory();
+                String entryDom = entry.getColBizDomain();
+                if (entryCat == null || entryDom == null) continue;
+                DataEntry l3 = findAncestorAtLevel(entry, entryMap, 3);
+                String entryProd = l3 != null ? l3.getColProductSystem() : entry.getColProductSystem();
+                if (entryProd == null) continue;
+                for (ImageResource img : images) {
+                    String url = img.getUrl();
+                    if (url != null && desc.contains(url)) {
+                        if (!entryCat.equals(img.getCategory()) || !entryDom.equals(img.getDomain()) || !entryProd.equals(img.getProduct())) {
+                            treeImgIds.computeIfAbsent(entryCat, k -> new LinkedHashMap<>())
+                                    .computeIfAbsent(entryDom, k -> new LinkedHashMap<>())
+                                    .computeIfAbsent(entryProd, k -> new LinkedHashSet<>())
+                                    .add(img.getId());
+                        }
+                    }
+                }
+            }
+        }
+
+        List<String> orderedCategories = new ArrayList<>();
+        if (versionId != null) {
+            List<BaseCategory> baseCategories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+            for (BaseCategory bc : baseCategories) {
+                if (treeImgIds.containsKey(bc.getName())) {
+                    orderedCategories.add(bc.getName());
+                }
+            }
+        }
+        for (String cat : treeImgIds.keySet()) {
+            if (!orderedCategories.contains(cat)) {
+                orderedCategories.add(cat);
+            }
         }
 
         List<ImageDirectoryNode> roots = new ArrayList<>();
-        for (Map.Entry<String, Map<String, Map<String, List<ImageResource>>>> catEntry : treeMap.entrySet()) {
+        for (String catName : orderedCategories) {
+            Map<String, Map<String, Set<Long>>> domMap = treeImgIds.get(catName);
             ImageDirectoryNode catNode = new ImageDirectoryNode();
-            catNode.setLabel(catEntry.getKey());
+            catNode.setLabel(catName);
             List<ImageDirectoryNode> domainNodes = new ArrayList<>();
             int catCount = 0;
 
-            for (Map.Entry<String, Map<String, List<ImageResource>>> domEntry : catEntry.getValue().entrySet()) {
+            for (Map.Entry<String, Map<String, Set<Long>>> domEntry : domMap.entrySet()) {
                 ImageDirectoryNode domNode = new ImageDirectoryNode();
                 domNode.setLabel(domEntry.getKey());
                 List<ImageDirectoryNode> prodNodes = new ArrayList<>();
                 int domCount = 0;
 
-                for (Map.Entry<String, List<ImageResource>> prodEntry : domEntry.getValue().entrySet()) {
+                for (Map.Entry<String, Set<Long>> prodEntry : domEntry.getValue().entrySet()) {
                     ImageDirectoryNode prodNode = new ImageDirectoryNode();
                     prodNode.setLabel(prodEntry.getKey());
                     prodNode.setCount(prodEntry.getValue().size());
@@ -183,6 +315,16 @@ public class ImageResourceService {
         }
 
         return roots;
+    }
+
+    private DataEntry findAncestorAtLevel(DataEntry entry, Map<Long, DataEntry> entryMap, int targetLevel) {
+        DataEntry current = entry;
+        while (current != null && current.getLevel() != null && current.getLevel() > targetLevel) {
+            Long parentId = current.getParentId();
+            if (parentId == null) break;
+            current = entryMap.get(parentId);
+        }
+        return (current != null && current.getLevel() != null && current.getLevel() == targetLevel) ? current : null;
     }
 
     public List<DataEntry> findReferences(Long imageId) {

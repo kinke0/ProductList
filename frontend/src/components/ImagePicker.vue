@@ -3,6 +3,7 @@
     <div class="picker-body">
       <div class="picker-sidebar">
         <el-tree
+          ref="treeRef"
           :data="treeData"
           :props="{ children: 'children', label: 'label' }"
           node-key="label"
@@ -60,6 +61,7 @@ const curCategory = ref(null)
 const curDomain = ref(null)
 const curProduct = ref(null)
 const fileInput = ref(null)
+const treeRef = ref(null)
 
 watch(() => props.modelValue, async (v) => {
   visible.value = v
@@ -82,11 +84,23 @@ async function loadTree() {
   treeData.value = res.data || []
 }
 
-function onNodeClick(data) {
-  const level = data.children ? (data.children[0]?.children ? 1 : 2) : 3
-  if (level === 1) { curCategory.value = data.label; curDomain.value = null; curProduct.value = null }
-  else if (level === 2) { curDomain.value = data.label }
-  else { curProduct.value = data.label }
+function onNodeClick(data, node) {
+  const path = []
+  let n = node
+  while (n && n.data && n.data.label) { path.unshift(n.data.label); n = n.parent }
+  if (path.length >= 3) {
+    curCategory.value = path[0]
+    curDomain.value = path[1]
+    curProduct.value = path[2]
+  } else if (path.length === 2) {
+    curCategory.value = path[0]
+    curDomain.value = path[1]
+    curProduct.value = null
+  } else {
+    curCategory.value = path[0]
+    curDomain.value = null
+    curProduct.value = null
+  }
   loadImages()
 }
 
@@ -109,9 +123,14 @@ function selectImage(img) {
   selectedImage.value = img
 }
 
-function confirmSelect() {
+async function confirmSelect() {
   if (selectedImage.value) {
-    emit('select', selectedImage.value)
+    emit('select', {
+      ...selectedImage.value,
+      _pendingCategory: props.defaultCategory || null,
+      _pendingDomain: props.defaultDomain || null,
+      _pendingProduct: props.defaultProduct || null
+    })
     visible.value = false
   }
 }
@@ -137,8 +156,14 @@ async function handleFileUpload(e) {
     const uploadProduct = curProduct.value || props.defaultProduct
     await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
     ElMessage.success('上传成功')
-    loadImages()
-    loadTree()
+    await loadTree()
+    curCategory.value = uploadCategory
+    curDomain.value = uploadDomain
+    curProduct.value = uploadProduct
+    if (uploadProduct && treeRef.value) {
+      treeRef.value.setCurrentKey(uploadProduct)
+    }
+    await loadImages()
   } catch (err) {
     if (err !== 'cancel' && err !== 'close') {
       ElMessage.error(err?.response?.data?.message || '上传失败')

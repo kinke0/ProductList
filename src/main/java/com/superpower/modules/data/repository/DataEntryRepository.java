@@ -101,4 +101,10 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
                                         @Param("bizDomain") String bizDomain);
 
     long countByVersionIdAndLevel(Long versionId, Integer level);
+
+    List<DataEntry> findByVersionIdAndColBizCategoryAndColBizDomainAndColProductSystem(
+            Long versionId, String colBizCategory, String colBizDomain, String colProductSystem);
+
+    List<DataEntry> findByVersionIdAndColBizCategoryAndColBizDomain(
+            Long versionId, String colBizCategory, String colBizDomain);
 }

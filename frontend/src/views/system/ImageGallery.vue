@@ -102,11 +102,23 @@ async function loadTree() {
   treeData.value = res.data || []
 }
 
-function onNodeClick(data) {
-  const level = data.children ? (data.children[0]?.children ? 1 : 2) : 3
-  if (level === 1) { selectedCategory.value = data.label; selectedDomain.value = null; selectedProduct.value = null }
-  else if (level === 2) { selectedDomain.value = data.label }
-  else { selectedProduct.value = data.label }
+function onNodeClick(data, node) {
+  const path = []
+  let n = node
+  while (n && n.data && n.data.label) { path.unshift(n.data.label); n = n.parent }
+  if (path.length >= 3) {
+    selectedCategory.value = path[0]
+    selectedDomain.value = path[1]
+    selectedProduct.value = path[2]
+  } else if (path.length === 2) {
+    selectedCategory.value = path[0]
+    selectedDomain.value = path[1]
+    selectedProduct.value = null
+  } else {
+    selectedCategory.value = path[0]
+    selectedDomain.value = null
+    selectedProduct.value = null
+  }
   selectedNode.value = data
   loadImages()
 }
@@ -170,6 +182,17 @@ async function showReferences(img) {
 
 async function handleDelete(img) {
   try {
+    const refRes = await getImageReferences(img.id)
+    const refs = refRes.data || []
+    if (refs.length > 0) {
+      const list = refs.map(r => `ID:${r.id} ${r.colBizCategory || ''} - ${r.colBizDomain || ''} - ${r.colProductSystem || ''}`).join('\n')
+      ElMessageBox.alert(
+        `图片"${img.filename}"正被以下 ${refs.length} 条记录引用，无法删除：\n${list}`,
+        '图片被引用',
+        { type: 'warning' }
+      )
+      return
+    }
     await ElMessageBox.confirm(`确认删除图片"${img.filename}"？`, '提示', { type: 'warning' })
     await deleteImageApi(img.id)
     ElMessage.success('删除成功')

@@ -16,4 +16,10 @@ public interface ImageResourceRepository extends JpaRepository<ImageResource, Lo
     List<ImageResource> findByCategoryAndDomain(String category, String domain);
 
     List<ImageResource> findByVersionId(Long versionId);
+
+    List<ImageResource> findByVersionIdAndCategory(Long versionId, String category);
+
+    List<ImageResource> findByVersionIdAndCategoryAndDomain(Long versionId, String category, String domain);
+
+    List<ImageResource> findByVersionIdAndCategoryAndDomainAndProduct(Long versionId, String category, String domain, String product);
 }
