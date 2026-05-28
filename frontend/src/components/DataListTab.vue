@@ -743,7 +743,7 @@ function insertImage(img) {
   if (quillInstance && img.url) {
     const range = quillInstance.getSelection(true)
     const name = img.filename || '图片'
-    const html = `<img src="${img.url}" alt="${name}" data-filename="${name}" style="max-width:240px;max-height:180px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;padding:4px;background:#f8fafc;vertical-align:middle;margin:4px 6px 4px 0;cursor:pointer;" /><span style="font-size:13px;color:#475569;vertical-align:middle;margin-right:8px;">${name}</span>`
+    const html = `<div style="display:inline-block;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff;margin:4px;cursor:pointer;" contenteditable="false"><div style="height:90px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;"><img src="${img.url}" style="max-width:120px;max-height:90px;object-fit:contain;" /></div><div style="padding:4px 8px;font-size:12px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:center;">${name}</div></div>`
     quillInstance.clipboard.dangerouslyPasteHTML(range.index, html)
   }
 }
