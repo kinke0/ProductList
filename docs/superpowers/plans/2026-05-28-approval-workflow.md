@@ -381,13 +381,14 @@ async function handleApprove(row, action) {
   handleQuery(true)
 }
 async function handleReject(row) {
-  const { value } = await ElMessageBox.prompt('请输入驳回原因', '驳回', {
+  const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '驳回', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
-    inputPlaceholder: '可选'
+    inputPlaceholder: '请输入驳回原因，可不填',
+    inputValidator: () => true
   }).catch(() => ({ value: null }))
   if (value === null) return
-  await approveEntry(row.id, 'reject', value)
+  await approveEntry(row.id, 'reject', value || '')
   ElMessage.success('已驳回')
   handleQuery(true)
 }
