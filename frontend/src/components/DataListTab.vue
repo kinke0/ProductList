@@ -1710,7 +1710,7 @@ watch(() => props.versionId, () => {
 }
 .feature-editor :deep(.image-card:hover) { box-shadow: var(--si-shadow-md); }
 .feature-editor :deep(.image-thumb) {
-  display: block; height: 140px; overflow: hidden; cursor: pointer;
+  height: 140px; overflow: hidden; cursor: pointer;
   display: flex; align-items: center; justify-content: center; background: #f5f5f5;
 }
 .feature-editor :deep(.image-thumb img) {

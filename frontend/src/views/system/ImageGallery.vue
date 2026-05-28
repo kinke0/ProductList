@@ -28,7 +28,7 @@
             </div>
             <div class="image-info">
               <template v-if="editingImgId === img.id">
-                <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" ref="nameInputRef" />
+                <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" />
               </template>
               <template v-else>
                 <span class="image-name" :title="img.filename">{{ img.filename }}</span>
@@ -195,6 +195,7 @@ function startEditName(img) {
 async function saveImgName(img) {
   if (editingImgId.value !== img.id) return
   const newName = editingName.value.trim()
+  editingImgId.value = null
   if (newName && newName !== img.filename) {
     try {
       await updateImage(img.id, { filename: newName })
@@ -204,7 +205,6 @@ async function saveImgName(img) {
       ElMessage.error(e?.response?.data?.message || '更新失败')
     }
   }
-  editingImgId.value = null
 }
 
 function replaceImage(img) {
