@@ -29,15 +29,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { getOptions, createOption, updateOption, deleteOption } from '../../api/option'
 import { getVersions } from '../../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
-const type = route.meta.type || 'status'
-const title = route.meta.title || '选项维护'
+const type = computed(() => route.meta.type || 'status')
+const title = computed(() => route.meta.title || '选项维护')
 
 const versionId = ref(null)
 const items = ref([])
@@ -54,7 +54,7 @@ async function loadVersion() {
 
 async function loadData() {
   if (!versionId.value) return
-  const res = await getOptions(versionId.value, type)
+  const res = await getOptions(versionId.value, type.value)
   items.value = res.data || []
 }
 
@@ -67,7 +67,7 @@ function openDialog(row) {
 async function handleSave() {
   if (!form.value.value) { ElMessage.warning('请输入名称'); return }
   if (isEdit.value) await updateOption(editingId.value, form.value.value)
-  else await createOption(versionId.value, type, form.value.value)
+  else await createOption(versionId.value, type.value, form.value.value)
   ElMessage.success('保存成功')
   showDialog.value = false
   loadData()
@@ -82,6 +82,11 @@ async function handleDelete(id) {
 }
 
 onMounted(async () => {
+  await loadVersion()
+  await loadData()
+})
+
+watch(() => route.path, async () => {
   await loadVersion()
   await loadData()
 })
