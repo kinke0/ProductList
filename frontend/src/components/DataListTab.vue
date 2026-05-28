@@ -170,7 +170,7 @@
     </RecycleScroller>
     </div>
 
-    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh">
+    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh" @click.capture="onEditDialogClick">
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
@@ -324,6 +324,9 @@
        </template>
 </el-dialog>
      <ImagePicker v-model="showImagePicker" @select="insertImage" />
+     <el-dialog v-model="imgPreviewVisible" title="查看原图" width="60%" top="5vh">
+       <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="width:100%;" />
+     </el-dialog>
      </div>
 </template>
 
@@ -369,6 +372,8 @@ const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
 const selectedIds = ref([])
 const showImagePicker = ref(false)
+const imgPreviewVisible = ref(false)
+const imgPreviewUrl = ref('')
 const quillToolbar = [
   ['image']
 ]
@@ -735,8 +740,19 @@ function onQuillReady(quill) {
 function insertImage(img) {
   if (quillInstance && img.url) {
     const range = quillInstance.getSelection(true)
-    quillInstance.insertEmbed(range.index, 'image', img.url)
-    quillInstance.setSelection(range.index + 1)
+    const html = `<div class="img-thumb-block" contenteditable="false" style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;margin:4px 0;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;cursor:pointer;" data-img-url="${img.url}"><img src="${img.url}" style="max-width:60px;max-height:40px;object-fit:contain;border-radius:4px;" /><span style="font-size:13px;color:#475569;">${img.filename || '图片'}</span></div>`
+    quillInstance.clipboard.dangerouslyPasteHTML(range.index, html)
+  }
+}
+
+function onEditDialogClick(e) {
+  const target = e.target.closest('.img-thumb-block')
+  if (target) {
+    const url = target.getAttribute('data-img-url')
+    if (url) {
+      imgPreviewUrl.value = url
+      imgPreviewVisible.value = true
+    }
   }
 }
 
