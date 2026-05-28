@@ -249,29 +249,36 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.page { padding: 0; }
-h3 { margin: 0 0 4px; font-size: 16px; }
-.subtitle { margin: 0 0 16px; font-size: 13px; color: #999; }
+.page { padding: 20px 24px; }
+h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; color: var(--si-text-primary); }
+.subtitle { margin: 0 0 20px; font-size: 13px; color: var(--si-text-muted); }
 .dual-tables {
   display: flex;
   gap: 16px;
 }
 .table-wrapper {
   flex: 1;
-  background: #fff;
-  border-radius: 4px;
-  padding: 12px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: var(--si-radius-lg);
+  padding: 16px;
+  box-shadow: var(--si-shadow-sm);
 }
 .table-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--si-border-light);
 }
+.table-header strong { color: var(--si-text-primary); font-size: 14px; }
 .placeholder {
   text-align: center;
   padding: 40px;
-  color: #999;
+  color: var(--si-text-muted);
   font-size: 14px;
 }
+:deep(.el-table) { border-radius: var(--si-radius-md); }
+:deep(.el-table th.el-table__cell) { background: var(--si-bg-hover); color: var(--si-text-secondary); font-weight: 600; }
 </style>

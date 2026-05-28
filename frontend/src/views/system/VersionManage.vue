@@ -82,8 +82,10 @@ onMounted(loadVersions)
 </script>
 
 <style scoped>
-.page { padding: 0; }
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.page-header h3 { margin: 0; font-size: 17px; font-weight: 600; color: rgba(0,0,0,0.87); }
-.status-bar { margin-bottom: 12px; font-size: 14px; }
+.page { padding: 20px 24px; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--si-border); }
+.page-header h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--si-text-primary); }
+.status-bar { margin-bottom: 16px; font-size: 14px; color: var(--si-text-secondary); display: flex; align-items: center; gap: 8px; }
+:deep(.el-table) { border-radius: var(--si-radius-md); }
+:deep(.el-table th.el-table__cell) { background: var(--si-bg-hover); color: var(--si-text-secondary); font-weight: 600; }
 </style>
