@@ -63,6 +63,7 @@
                 <el-dropdown-menu>
                   <el-dropdown-item command="status">状态修改</el-dropdown-item>
                   <el-dropdown-item command="solution">解决方案</el-dropdown-item>
+                  <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -308,8 +309,19 @@
          <el-button @click="showBatchSolutionDialog = false">取消</el-button>
          <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
        </template>
+      </el-dialog>
+     <el-dialog v-model="showBatchManagerDialog" title="批量指定产品经理" width="400px">
+       <el-form label-width="80px">
+         <el-form-item label="产品经理">
+           <el-input v-model="batchManagerValue" placeholder="请输入产品经理" />
+         </el-form-item>
+       </el-form>
+       <template #footer>
+         <el-button @click="showBatchManagerDialog = false">取消</el-button>
+         <el-button type="primary" @click="confirmBatchManager">确定</el-button>
+       </template>
      </el-dialog>
-   </div>
+    </div>
 </template>
 
 <script setup>
@@ -347,6 +359,8 @@ const showBatchStatusDialog = ref(false)
 const batchStatusValue = ref('')
 const showBatchSolutionDialog = ref(false)
 const batchSolutionValue = ref('')
+const showBatchManagerDialog = ref(false)
+const batchManagerValue = ref('')
 const selectedIds = ref([])
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
@@ -818,6 +832,9 @@ async function batchReject() {
   } else if (cmd === 'solution') {
     batchSolutionValue.value = ''
     showBatchSolutionDialog.value = true
+  } else if (cmd === 'manager') {
+    batchManagerValue.value = ''
+    showBatchManagerDialog.value = true
   }
 }
 
@@ -871,6 +888,28 @@ async function confirmBatchSolution() {
   }
   showBatchSolutionDialog.value = false
   ElMessage.success(`成功修改 ${successCount} 条解决方案`)
+  handleQuery(true)
+ }
+
+async function confirmBatchManager() {
+  if (!batchManagerValue.value) {
+    ElMessage.warning('请输入产品经理')
+    return
+  }
+  let successCount = 0
+  for (const id of selectedIds.value) {
+    try {
+      const row = findRowById(id, tableData.value)
+      if (row) {
+        await updateEntry(id, { ...row, colProductManager: batchManagerValue.value })
+        successCount++
+      }
+    } catch (e) {
+      console.error(`指定产品经理失败 id=${id}:`, e)
+    }
+  }
+  showBatchManagerDialog.value = false
+  ElMessage.success(`成功指定 ${successCount} 条产品经理`)
   handleQuery(true)
 }
 
@@ -1387,13 +1426,14 @@ watch(() => props.versionId, () => {
 .query-bar :deep(.el-form-item) {
   margin-bottom: 0;
 }
-.table-toolbar {
-  flex-shrink: 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
+ .table-toolbar {
+   flex-shrink: 0;
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   margin-bottom: 8px;
+ }
+.toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .table-body {
   flex: 1;
   display: flex;
