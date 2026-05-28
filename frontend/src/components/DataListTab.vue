@@ -76,10 +76,11 @@
          </div>
        </div>
        <div class="vcol" style="min-width:200px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ totalEntryCount }}条记录</span></div>
-      <div class="vcol" style="width:80px;">状态</div>
-      <div class="vcol" style="width:100px;">产品经理</div>
-      <div class="vcol" style="width:180px;">版本划分</div>
-      <div class="vcol" style="width:160px;">操作</div>
+       <div class="vcol" style="width:80px;">审批</div>
+       <div class="vcol" style="width:80px;">状态</div>
+       <div class="vcol" style="width:100px;">产品经理</div>
+       <div class="vcol" style="width:180px;">版本划分</div>
+       <div class="vcol" style="width:240px;">操作</div>
     </div>
     <RecycleScroller
       ref="scrollerRef"
@@ -122,9 +123,12 @@
             <span class="product-name">{{ row.colProductSystem || '(无名称)' }}</span>
             <span v-if="row.children && row.children.length > 0" class="record-count">{{ getDescendantCount(row) }}条记录</span>
           </span>
-        </div>
-        <div class="vcol" style="width:80px;">
-          <el-tag v-if="!row._isSeparator && row.colStatus" :type="statusTagType(row.colStatus)" size="small">{{ row.colStatus }}</el-tag>
+         </div>
+         <div class="vcol" style="width:80px;">
+           <el-tag v-if="!row._isSeparator && row.approvalStatus" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
+         </div>
+         <div class="vcol" style="width:80px;">
+           <el-tag v-if="!row._isSeparator && row.colStatus" :type="statusTagType(row.colStatus)" size="small">{{ row.colStatus }}</el-tag>
         </div>
         <div class="vcol vcol-ellipsis" style="width:100px;">
           <span v-if="!row._isSeparator">{{ row.colProductManager }}</span>
@@ -141,10 +145,12 @@
             <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
             <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
             <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
-            <span v-if="canEditRow(row) && props.isEditing" class="op-btn op-edit" @click="editRow(row)">编辑</span>
-            <span v-if="canEditRow(row) && props.isEditing && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
-            <span v-if="canEditRow(row) && props.isEditing && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>
-            <span v-if="canEditRow(row) && props.isEditing && !props.customTabId" class="op-btn op-del" @click="deleteRow(row)">删除</span>
+            <template v-if="props.isEditing">
+              <span v-if="canEditRow(row)" class="op-btn op-edit" @click="editRow(row)">编辑</span>
+              <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
+              <span v-if="canEditRow(row) && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>
+              <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-del" @click="deleteRow(row)">删除</span>
+            </template>
           </template>
         </div>
       </div>
@@ -604,23 +610,24 @@ const approvalRole = computed(() => {
 function canEditRow(row) {
   if (approvalRole.value === 'admin') return true
   if (approvalRole.value === 'editor') {
-    const s = row.colStatus
+    const s = row.approvalStatus
     return !s || s === '待提交' || s === '驳回'
   }
   return false
 }
 
 function canSubmit(row) {
-  const s = row.colStatus
-  return ['editor', 'admin'].includes(approvalRole.value) && (!s || s === '待提交' || s === '驳回')
+  const s = row.approvalStatus
+  if (!s || s === '待提交' || s === '驳回') return ['editor', 'admin'].includes(approvalRole.value)
+  return false
 }
 
 function canApprove(row) {
-  return ['reviewer', 'admin'].includes(approvalRole.value) && row.colStatus === '待审核'
+  return ['reviewer', 'admin'].includes(approvalRole.value) && row.approvalStatus === '待审核'
 }
 
 function canReject(row) {
-  return ['reviewer', 'admin'].includes(approvalRole.value) && (row.colStatus === '待审核' || row.colStatus === '审核通过')
+  return ['reviewer', 'admin'].includes(approvalRole.value) && (row.approvalStatus === '待审核' || row.approvalStatus === '审核通过')
 }
 
 async function handleApprove(row, action) {
@@ -653,14 +660,18 @@ async function handleReject(row) {
 
 function statusTagType(status) {
   if (!status) return ''
-  if (status === '待提交') return 'primary'
-  if (status === '待审核') return 'warning'
-  if (status === '审核通过') return 'success'
-  if (status === '驳回') return 'danger'
   if (status.includes('可交付')) return 'success'
   if (status.includes('立项')) return 'warning'
   if (status.includes('演示')) return 'primary'
   if (status.includes('缺失')) return 'danger'
+  return 'info'
+}
+
+function approvalTagType(status) {
+  if (status === '待提交') return 'primary'
+  if (status === '待审核') return 'warning'
+  if (status === '审核通过') return 'success'
+  if (status === '驳回') return 'danger'
   return 'info'
 }
 
@@ -739,7 +750,7 @@ const editForm = reactive({
   colAppRole: '',
   colBidParamDesc: '',
   colFeatureDesc: '',
-  colStatus: '待提交',
+  colStatus: '',
   colBizCategory: '',
   colBizDomain: '',
   colVersionDivision: '',
@@ -771,7 +782,7 @@ const productLabel = computed(() => {
 
 const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
-  colStatus: '待提交', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
+  colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
   colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colAssetType: '', colRemark: '',
   colYao: '', colYuan: '', colChi: ''
 })

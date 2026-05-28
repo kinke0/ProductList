@@ -28,6 +28,9 @@ public class DataEntry {
     @Column(name = "is_leaf")
     private Boolean isLeaf = true;
 
+    @Column(name = "approval_status", length = 20)
+    private String approvalStatus = "待提交";
+
     @Column(name = "col_产品系统", length = 500)
     private String colProductSystem;
 

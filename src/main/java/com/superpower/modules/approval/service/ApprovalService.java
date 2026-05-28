@@ -74,7 +74,7 @@ public class ApprovalService {
             throw new BusinessException("仅编辑中版本可变更审批状态");
         }
 
-        String currentStatus = entry.getColStatus();
+        String currentStatus = entry.getApprovalStatus();
         if (currentStatus == null || currentStatus.isEmpty()) {
             currentStatus = ST_PENDING;
         }
@@ -85,7 +85,7 @@ public class ApprovalService {
             throw new BusinessException("当前状态不允许此操作：" + currentStatus + " → " + targetStatus);
         }
 
-        entry.setColStatus(targetStatus);
+        entry.setApprovalStatus(targetStatus);
         entryRepository.save(entry);
 
         ApprovalLog log = new ApprovalLog();
@@ -103,10 +103,10 @@ public class ApprovalService {
         return logRepository.findByEntryIdOrderByCreatedAtDesc(entryId);
     }
 
-    public static boolean canEdit(String status, String sysRoleCode) {
+    public static boolean canEdit(String approvalStatus, String sysRoleCode) {
         String role = ROLE_CODE_MAP.getOrDefault(sysRoleCode, "editor");
         if ("admin".equals(role)) return true;
-        if ("editor".equals(role)) return ST_PENDING.equals(status) || ST_REJECTED.equals(status);
+        if ("editor".equals(role)) return approvalStatus == null || ST_PENDING.equals(approvalStatus) || ST_REJECTED.equals(approvalStatus);
         return false;
     }
 }
