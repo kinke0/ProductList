@@ -59,12 +59,17 @@
             生成文档
           </el-button>
         </template>
-        <template v-else>
-          <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog">新建</el-button>
-          <el-button type="success" size="small" @click="onInsertClick">
-            插入待生成清单
-          </el-button>
-        </template>
+         <template v-else>
+           <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog">新建</el-button>
+           <el-button type="success" size="small" @click="onInsertClick">
+             插入待生成清单
+           </el-button>
+         </template>
+         <template v-if="selectedIds.length > 0">
+           <el-button type="primary" size="small" plain @click="batchApprove('submit')">批量提交</el-button>
+           <el-button type="success" size="small" plain @click="batchApprove('approve')">批量通过</el-button>
+           <el-button type="danger" size="small" plain @click="batchReject">批量驳回</el-button>
+         </template>
       </div>
     </div>
 
@@ -248,14 +253,14 @@
       </el-form>
       <template #footer>
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
-          <div>
-            <el-button v-if="!isNew && canSubmit(editingRow)" type="primary" size="small" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
-            <el-button v-if="!isNew && canApprove(editingRow)" type="success" size="small" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
-            <el-button v-if="!isNew && canReject(editingRow)" type="danger" size="small" @click="handleReject(editingRow)">驳回</el-button>
+          <div style="margin-left:120px;">
+            <el-button v-if="!isNew && canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
+            <el-button v-if="!isNew && canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
+            <el-button v-if="!isNew && canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
           </div>
           <div>
-            <el-button size="small" @click="onDialogChange(false)">取消</el-button>
-            <el-button type="primary" size="small" @click="saveEdit">保存</el-button>
+            <el-button @click="onDialogChange(false)">取消</el-button>
+            <el-button type="primary" @click="saveEdit">保存</el-button>
           </div>
         </div>
       </template>
@@ -660,6 +665,97 @@ async function handleReject(row) {
       ElMessage.error(e?.response?.data?.message || '驳回失败')
     }
   }
+}
+
+function findRowById(id, nodes) {
+  for (const n of nodes) {
+    if (n.id === id) return n
+    if (n.children) {
+      const found = findRowById(id, n.children)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+async function batchApprove(action) {
+  const actionLabel = action === 'submit' ? '提交' : '通过'
+  const validStatus = action === 'submit' ? ['待提交', '驳回'] : ['待审核']
+  const validIds = []
+  const invalidRows = []
+  for (const id of selectedIds.value) {
+    const row = findRowById(id, tableData.value)
+    const s = row?.approvalStatus || '待提交'
+    if (validStatus.includes(s)) {
+      validIds.push(id)
+    } else {
+      invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+    }
+  }
+  if (invalidRows.length > 0) {
+    const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('、')
+    ElMessage.warning(`以下条目不满足${actionLabel}条件，已跳过：${names}`)
+  }
+  if (validIds.length === 0) {
+    ElMessage.warning('没有可操作的条目')
+    return
+  }
+  let successCount = 0
+  for (const id of validIds) {
+    try {
+      await approveEntry(id, action, '')
+      successCount++
+    } catch (e) {
+      console.error(`批量${actionLabel}失败 id=${id}:`, e)
+    }
+  }
+  ElMessage.success(`成功${actionLabel} ${successCount} 条`)
+  handleQuery(true)
+}
+
+async function batchReject() {
+  const validIds = []
+  const invalidRows = []
+  for (const id of selectedIds.value) {
+    const row = findRowById(id, tableData.value)
+    const s = row?.approvalStatus || '待提交'
+    if (s === '待审核') {
+      validIds.push(id)
+    } else {
+      invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+    }
+  }
+  if (invalidRows.length > 0) {
+    const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('、')
+    ElMessage.warning(`以下条目不满足驳回条件，已跳过：${names}`)
+  }
+  if (validIds.length === 0) {
+    ElMessage.warning('没有可操作的条目')
+    return
+  }
+  let reason = ''
+  try {
+    const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '批量驳回', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPlaceholder: '请输入驳回原因，可不填',
+      inputValidator: () => true
+    })
+    reason = value || ''
+  } catch (e) {
+    return
+  }
+  let successCount = 0
+  for (const id of validIds) {
+    try {
+      await approveEntry(id, 'reject', reason)
+      successCount++
+    } catch (e) {
+      console.error(`批量驳回失败 id=${id}:`, e)
+    }
+  }
+  ElMessage.success(`成功驳回 ${successCount} 条`)
+  handleQuery(true)
 }
 
 function statusTagType(status) {
