@@ -120,6 +120,16 @@ public class ImageResourceService {
         imageResourceRepository.deleteById(id);
     }
 
+    @Transactional
+    public ImageResource update(Long id, ImageResource body) {
+        ImageResource image = imageResourceRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("图片不存在"));
+        if (body.getFilename() != null) {
+            image.setFilename(body.getFilename());
+        }
+        return imageResourceRepository.save(image);
+    }
+
     public List<ImageDirectoryNode> getTree(Long versionId) {
         List<ImageResource> images;
         if (versionId != null) {

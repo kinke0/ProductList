@@ -329,9 +329,12 @@
        </template>
 </el-dialog>
      <ImagePicker v-model="showImagePicker" @select="insertImage" />
-     <el-dialog v-model="imgPreviewVisible" title="查看原图" width="60%" top="5vh">
-       <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="width:100%;" />
-     </el-dialog>
+      <ImagePicker v-model="showReplacePicker" @select="replaceImageCard" />
+<el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" :style="{ maxWidth: '90vw' }">
+        <div style="max-width:85vw;max-height:75vh;display:flex;align-items:center;justify-content:center;">
+          <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:75vh;object-fit:contain;" />
+        </div>
+      </el-dialog>
      </div>
 </template>
 
@@ -750,6 +753,9 @@ function onEditorPaste(e) {
   document.execCommand('insertText', false, text)
 }
 
+const replacingCard = ref(null)
+const showReplacePicker = ref(false)
+
 function onEditorClick(e) {
   const card = e.target.closest('.image-card')
   if (card && card.closest('.feature-editor-body')) {
@@ -764,6 +770,39 @@ function onEditorClick(e) {
       } else if (action === 'delete') {
         card.remove()
         editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+      } else if (action === 'edit-name') {
+        const nameEl = card.querySelector('.image-name')
+        if (nameEl && !nameEl.querySelector('input')) {
+          const oldName = nameEl.textContent
+          const input = document.createElement('input')
+          input.type = 'text'
+          input.value = oldName
+          input.style.cssText = 'width:80px;font-size:12px;border:1px solid #409eff;border-radius:3px;padding:1px 4px;outline:none;'
+          nameEl.textContent = ''
+          nameEl.appendChild(input)
+          input.focus()
+          input.select()
+          actionBtn.textContent = '保存'
+          actionBtn.setAttribute('data-action', 'save-name')
+          const doSave = () => {
+            const newName = input.value.trim() || oldName
+            card.setAttribute('data-filename', newName)
+            nameEl.textContent = newName
+            nameEl.title = newName
+            actionBtn.textContent = '编辑'
+            actionBtn.setAttribute('data-action', 'edit-name')
+            editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+          }
+          input.addEventListener('blur', doSave)
+          input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); input.blur() } })
+        }
+      } else if (action === 'save-name') {
+        const nameEl = card.querySelector('.image-name')
+        const input = nameEl?.querySelector('input')
+        if (input) { input.blur() }
+      } else if (action === 'replace') {
+        replacingCard.value = card
+        showReplacePicker.value = true
       }
       return
     }
@@ -783,31 +822,33 @@ function onEditorClick(e) {
   }
 }
 
-function removeImgCard(btn) {
-  const card = btn.closest('.image-card')
-  if (card) {
-    card.remove()
-    editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
-  }
-}
-
-function previewImgCard(card) {
-  const url = card.getAttribute('data-url')
-  if (url) {
-    imgPreviewUrl.value = url
-    imgPreviewVisible.value = true
-  }
+function replaceImageCard(img) {
+  if (!replacingCard.value || !img.url) return
+  const card = replacingCard.value
+  const name = img.filename || '图片'
+  card.setAttribute('data-url', img.url)
+  card.setAttribute('data-filename', name)
+  card.setAttribute('data-id', img.id || '')
+  const thumb = card.querySelector('.image-thumb')
+  if (thumb) thumb.innerHTML = `<img src="${img.url}" alt="${name}" />`
+  const info = card.querySelector('.image-name')
+  if (info) { info.textContent = name; info.title = name }
+  const size = card.querySelector('.image-size')
+  if (size) size.textContent = formatSize(img.size)
+  replacingCard.value = null
+  editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
 }
 
 function insertImage(img) {
   if (!editorRef.value || !img.url) return
   const name = img.filename || '图片'
-  const card = document.createElement('div')
+  const card = document.createElement('span')
   card.className = 'image-card'
   card.setAttribute('contenteditable', 'false')
   card.setAttribute('data-url', img.url)
   card.setAttribute('data-filename', name)
-  card.innerHTML = `<div class="image-thumb"><img src="${img.url}" alt="${name}" /></div><div class="image-info"><span class="image-name" title="${name}">${name}</span><span class="image-size">${formatSize(img.size)}</span></div><div class="image-actions"><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button></div>`
+  card.setAttribute('data-id', img.id || '')
+  card.innerHTML = `<span class="image-thumb"><img src="${img.url}" alt="${name}" /></span><span class="image-info"><span class="image-name" title="${name}">${name}</span><span class="image-size">${formatSize(img.size)}</span></span><span class="image-actions"><button type="button" class="image-action-btn" data-action="edit-name">编辑</button><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button><button type="button" class="image-action-btn" data-action="replace">替换</button></span>`
   const after = document.createElement('br')
   editorRef.value.focus()
   const sel = window.getSelection()
@@ -1662,20 +1703,21 @@ watch(() => props.versionId, () => {
   content: '请输入功能说明...'; color: #c0c4cc; pointer-events: none;
 }
 .feature-editor :deep(.image-card) {
-  display: inline-block; border: 1px solid var(--si-border); border-radius: var(--si-radius-md);
-  overflow: hidden; background: #fff; margin: 4px 8px 4px 0; vertical-align: top;
+  display: inline-block; width: 180px; vertical-align: top;
+  border: 1px solid var(--si-border); border-radius: var(--si-radius-md);
+  overflow: hidden; background: #fff; margin: 4px 8px 4px 0;
   user-select: none; transition: box-shadow 0.2s;
 }
 .feature-editor :deep(.image-card:hover) { box-shadow: var(--si-shadow-md); }
 .feature-editor :deep(.image-thumb) {
-  height: 140px; overflow: hidden; cursor: pointer; display: flex;
-  align-items: center; justify-content: center; background: #f5f5f5;
+  display: block; height: 140px; overflow: hidden; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; background: #f5f5f5;
 }
 .feature-editor :deep(.image-thumb img) {
   max-width: 100%; max-height: 100%; object-fit: contain;
 }
 .feature-editor :deep(.image-info) {
-  padding: 6px 8px; display: flex; justify-content: space-between; align-items: center;
+  display: flex; padding: 6px 8px; justify-content: space-between; align-items: center;
 }
 .feature-editor :deep(.image-name) {
   font-size: 12px; color: var(--si-text-primary); overflow: hidden;
@@ -1685,8 +1727,8 @@ watch(() => props.versionId, () => {
   font-size: 11px; color: var(--si-text-muted);
 }
 .feature-editor :deep(.image-actions) {
-  padding: 4px 8px 6px; display: flex; gap: 4px; justify-content: center;
-  border-top: 1px solid var(--si-border-light);
+  display: flex; flex-wrap: wrap; gap: 2px; justify-content: center;
+  padding: 4px 6px 6px; border-top: 1px solid var(--si-border-light);
 }
 .feature-editor :deep(.image-action-btn) {
   font-size: 12px; border: none; background: none; cursor: pointer; padding: 2px 6px;

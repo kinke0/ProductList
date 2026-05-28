@@ -55,6 +55,11 @@ public class ImageResourceController {
         return Result.success();
     }
 
+    @PutMapping("/{id}")
+    public Result<ImageResource> update(@PathVariable Long id, @RequestBody ImageResource body) {
+        return Result.success(imageResourceService.update(id, body));
+    }
+
     @GetMapping("/{id}/references")
     public Result<List<DataEntry>> findReferences(@PathVariable Long id) {
         return Result.success(imageResourceService.findReferences(id));

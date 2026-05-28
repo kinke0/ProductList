@@ -26,6 +26,10 @@ export function deleteImage(id) {
   return request.delete(`/images/${id}`)
 }
 
+export function updateImage(id, data) {
+  return request.put(`/images/${id}`, data)
+}
+
 export function getImageReferences(id) {
   return request.get(`/images/${id}/references`)
 }

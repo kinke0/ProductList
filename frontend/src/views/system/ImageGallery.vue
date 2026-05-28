@@ -27,20 +27,29 @@
               <img :src="img.url" :alt="img.filename" />
             </div>
             <div class="image-info">
-              <span class="image-name" :title="img.filename">{{ img.filename }}</span>
+              <template v-if="editingImgId === img.id">
+                <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" ref="nameInputRef" />
+              </template>
+              <template v-else>
+                <span class="image-name" :title="img.filename">{{ img.filename }}</span>
+              </template>
               <span class="image-size">{{ formatSize(img.size) }}</span>
             </div>
             <div class="image-actions">
+              <el-button size="small" type="primary" link @click="startEditName(img)">{{ editingImgId === img.id ? '保存' : '编辑' }}</el-button>
               <el-button size="small" type="primary" link @click="copyUrl(img)">复制URL</el-button>
               <el-button size="small" link @click="showReferences(img)">引用</el-button>
+              <el-button size="small" link @click="replaceImage(img)">替换</el-button>
               <el-button size="small" type="danger" link @click="handleDelete(img)">删除</el-button>
             </div>
           </div>
         </div>
       </div>
     </div>
-    <el-dialog v-model="previewVisible" title="图片预览" width="60%">
-      <img v-if="previewUrl" :src="previewUrl" style="width:100%;" />
+    <el-dialog v-model="previewVisible" title="图片预览" width="auto" :style="{ maxWidth: '90vw' }">
+      <div style="max-width:85vw;max-height:75vh;display:flex;align-items:center;justify-content:center;">
+        <img v-if="previewUrl" :src="previewUrl" style="max-width:85vw;max-height:75vh;object-fit:contain;" />
+      </div>
     </el-dialog>
     <el-dialog v-model="refVisible" title="引用列表" width="60%">
       <el-table :data="refList" border size="small">
@@ -51,12 +60,13 @@
       </el-table>
       <div v-if="refList.length === 0" style="text-align:center;padding:20px;color:#999;">暂无引用</div>
     </el-dialog>
+    <input ref="replaceFileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" @change="handleReplaceFile" />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences } from '../../api/image'
+import { ref, onMounted, nextTick } from 'vue'
+import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, updateImage } from '../../api/image'
 import { getVersions } from '../../api/version'
 import { Upload } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -73,6 +83,10 @@ const previewUrl = ref('')
 const refVisible = ref(false)
 const refList = ref([])
 const fileInput = ref(null)
+const editingImgId = ref(null)
+const editingName = ref('')
+const replacingImg = ref(null)
+const replaceFileInput = ref(null)
 
 async function loadVersion() {
   const res = await getVersions()
@@ -169,6 +183,61 @@ function formatSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + 'MB'
 }
 
+function startEditName(img) {
+  if (editingImgId.value === img.id) {
+    saveImgName(img)
+  } else {
+    editingImgId.value = img.id
+    editingName.value = img.filename
+  }
+}
+
+async function saveImgName(img) {
+  if (editingImgId.value !== img.id) return
+  const newName = editingName.value.trim()
+  if (newName && newName !== img.filename) {
+    try {
+      await updateImage(img.id, { filename: newName })
+      img.filename = newName
+      ElMessage.success('名称已更新')
+    } catch (e) {
+      ElMessage.error(e?.response?.data?.message || '更新失败')
+    }
+  }
+  editingImgId.value = null
+}
+
+function replaceImage(img) {
+  replacingImg.value = img
+  replaceFileInput.value.click()
+}
+
+async function handleReplaceFile(e) {
+  const file = e.target.files[0]
+  if (!file || !replacingImg.value) return
+  const img = replacingImg.value
+  try {
+    const { value } = await ElMessageBox.prompt('请输入图片名称', '替换图片', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: img.filename,
+      inputPlaceholder: '请输入名称'
+    })
+    const displayName = value || img.filename
+    await uploadImage(file, selectedCategory.value, selectedDomain.value, selectedProduct.value, versionId.value, displayName)
+    await deleteImageApi(img.id)
+    ElMessage.success('替换成功')
+    loadImages()
+    loadTree()
+  } catch (err) {
+    if (err !== 'cancel' && err !== 'close') {
+      ElMessage.error(err?.response?.data?.message || '替换失败')
+    }
+  }
+  replacingImg.value = null
+  e.target.value = ''
+}
+
 onMounted(async () => {
   await loadVersion()
   await loadTree()
@@ -193,4 +262,5 @@ onMounted(async () => {
 .image-name { font-size: 12px; color: var(--si-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
 .image-size { font-size: 11px; color: var(--si-text-muted); }
 .image-actions { padding: 4px 8px 6px; display: flex; gap: 4px; justify-content: center; border-top: 1px solid var(--si-border-light); }
+.image-name-edit { font-size: 12px; width: 90px; border: 1px solid #409eff; border-radius: 3px; padding: 1px 4px; outline: none; }
 </style>
