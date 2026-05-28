@@ -170,7 +170,7 @@
     </RecycleScroller>
     </div>
 
-    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh" @click.capture="onEditDialogClick">
+    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh">
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
@@ -250,8 +250,11 @@
           <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" />
         </el-form-item>
         <el-form-item label="功能说明">
-          <div class="quill-wrapper">
-            <QuillEditor v-model:content="editForm.colFeatureDesc" content-type="html" :toolbar="quillToolbar" @ready="onQuillReady" />
+          <div class="feature-editor">
+            <div class="feature-editor-toolbar">
+              <el-button size="small" @click="showImagePicker = true"><el-icon><Plus /></el-icon>插入图片</el-button>
+            </div>
+            <div class="feature-editor-body" contenteditable="true" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick"></div>
           </div>
         </el-form-item>
         <el-row :gutter="16">
@@ -341,8 +344,6 @@ import { getOptions } from '../api/option'
 import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuillEditor } from '@vueup/vue-quill'
-import '@vueup/vue-quill/dist/vue-quill.snow.css'
 import ImagePicker from './ImagePicker.vue'
 
 const props = defineProps({
@@ -374,9 +375,7 @@ const selectedIds = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
-const quillToolbar = [
-  ['image']
-]
+const editorRef = ref(null)
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
 const appRoles = ref([])
@@ -390,8 +389,18 @@ const appRoleSelections = ref([])
  const expandedNodeIds = ref(new Set())
   const scrollerRef = ref(null)
   const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, ghostEl: null })
-  let dragMoveHandler = null
-  let dragUpHandler = null
+let dragMoveHandler = null
+let dragUpHandler = null
+
+watch(showEditDialog, (val) => {
+  if (val) {
+    nextTick(() => {
+      if (editorRef.value) {
+        editorRef.value.innerHTML = editForm.colFeatureDesc || ''
+      }
+    })
+  }
+})
 
  function rebuildDisplayData() {
    const result = []
@@ -727,81 +736,53 @@ async function handleApprove(row, action) {
   }
 }
 
-let quillInstance = null
+function onEditorInput() {
+  if (editorRef.value) {
+    editForm.colFeatureDesc = editorRef.value.innerHTML
+  }
+}
 
-function onQuillReady(quill) {
-  quillInstance = quill
-  const Parchment = quill.constructor.import('parchment')
-  const BlockEmbed = Parchment.query('block/embed')
+function onEditorPaste(e) {
+  e.preventDefault()
+  const text = e.clipboardData.getData('text/plain')
+  document.execCommand('insertText', false, text)
+}
 
-  class ImageCardBlot extends BlockEmbed {
-    static blotName = 'image-card'
-    static tagName = 'div'
-    static className = 'ql-image-card'
-    static create(value) {
-      const node = super.create()
-      node.setAttribute('contenteditable', 'false')
-      node.setAttribute('data-url', value.url || '')
-      node.setAttribute('data-filename', value.filename || '图片')
-      const img = document.createElement('img')
-      img.setAttribute('src', value.url || '')
-      img.setAttribute('alt', value.filename || '图片')
-      img.setAttribute('data-img-url', value.url || '')
-      const label = document.createElement('div')
-      label.className = 'ql-image-card-label'
-      label.textContent = value.filename || '图片'
-      node.appendChild(img)
-      node.appendChild(label)
-      node.addEventListener('click', () => {
-        imgPreviewUrl.value = value.url
-        imgPreviewVisible.value = true
-      })
-      return node
-    }
-    static value(node) {
-      return {
-        url: node.getAttribute('data-url') || '',
-        filename: node.getAttribute('data-filename') || ''
-      }
+function onEditorClick(e) {
+  const card = e.target.closest('.img-card')
+  if (card) {
+    e.preventDefault()
+    e.stopPropagation()
+    const url = card.getAttribute('data-url')
+    if (url) {
+      imgPreviewUrl.value = url
+      imgPreviewVisible.value = true
     }
   }
-
-  quill.constructor.register(ImageCardBlot)
-
-  const toolbar = quill.getModule('toolbar')
-  toolbar.addHandler('image', () => {
-    showImagePicker.value = true
-  })
 }
 
 function insertImage(img) {
-  if (quillInstance && img.url) {
-    const range = quillInstance.getSelection(true)
-    quillInstance.insertEmbed(range.index, 'image-card', { url: img.url, filename: img.filename || '图片' }, 'user')
-    quillInstance.setSelection(range.index + 1)
+  if (!editorRef.value || !img.url) return
+  const name = img.filename || '图片'
+  const card = document.createElement('div')
+  card.className = 'img-card'
+  card.setAttribute('contenteditable', 'false')
+  card.setAttribute('data-url', img.url)
+  card.setAttribute('data-filename', name)
+  card.innerHTML = `<div class="img-card-thumb"><img src="${img.url}" alt="${name}" /></div><div class="img-card-label">${name}</div>`
+  editorRef.value.focus()
+  const sel = window.getSelection()
+  if (sel.rangeCount) {
+    const range = sel.getRangeAt(0)
+    range.deleteContents()
+    range.insertNode(document.createElement('br'))
+    range.collapse(false)
+    range.insertNode(card)
+    range.collapse(false)
+  } else {
+    editorRef.value.appendChild(card)
   }
-}
-
-function onEditDialogClick(e) {
-  const card = e.target.closest('.ql-image-card')
-  if (card && card.closest('.ql-editor')) {
-    e.preventDefault()
-    e.stopPropagation()
-    const url = card.getAttribute('data-url') || card.getAttribute('data-img-url')
-    if (url) {
-      imgPreviewUrl.value = url
-      imgPreviewVisible.value = true
-    }
-  }
-  if (e.target.tagName === 'IMG' && e.target.closest('.ql-editor')) {
-    e.preventDefault()
-    e.stopPropagation()
-    const url = e.target.getAttribute('data-img-url') || e.target.getAttribute('src')
-    if (url) {
-      imgPreviewUrl.value = url
-      imgPreviewVisible.value = true
-    }
-  }
+  editForm.colFeatureDesc = editorRef.value.innerHTML
 }
 
 async function handleReject(row) {
@@ -1610,25 +1591,32 @@ watch(() => props.versionId, () => {
 .version-inline { display: flex; gap: 2px; white-space: nowrap; }
 .record-count { color: #8f959e; font-size: 12px; margin-left: auto; white-space: nowrap; flex-shrink: 0; padding-right: 4px; }
 .level-tag { margin: 0 6px; vertical-align: middle; }
-.quill-wrapper { width: 100%; }
-.quill-wrapper :deep(.ql-toolbar.ql-snow) { border-radius: 8px 8px 0 0; border-color: #dcdfe6; }
-.quill-wrapper :deep(.ql-container.ql-snow) { border-radius: 0 0 8px 8px; border-color: #dcdfe6; height: 250px; font-size: 14px; }
-.quill-wrapper :deep(.ql-editor) { min-height: 200px; }
-.quill-wrapper :deep(.ql-image-card) {
+.feature-editor { width: 100%; }
+.feature-editor-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.feature-editor-body {
+  min-height: 200px; max-height: 400px; overflow-y: auto;
+  border: 1px solid #dcdfe6; border-radius: 8px; padding: 12px;
+  font-size: 14px; line-height: 1.6; outline: none; white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.feature-editor-body:empty::before {
+  content: '请输入功能说明...'; color: #c0c4cc; pointer-events: none;
+}
+.feature-editor-body .img-card {
   display: inline-block; border: 1px solid #e2e8f0; border-radius: 8px;
   overflow: hidden; background: #fff; margin: 4px 8px 4px 0; cursor: pointer;
-  vertical-align: middle;
+  vertical-align: middle; user-select: none;
 }
-.quill-wrapper :deep(.ql-image-card img) {
-  display: block; max-width: 120px; max-height: 90px;
-  object-fit: contain; background: #f5f5f5;
+.feature-editor-body .img-card .img-card-thumb {
+  height: 90px; display: flex; align-items: center; justify-content: center; background: #f5f5f5;
 }
-.quill-wrapper :deep(.ql-image-card-label) {
+.feature-editor-body .img-card .img-card-thumb img {
+  max-width: 120px; max-height: 90px; object-fit: contain;
+}
+.feature-editor-body .img-card .img-card-label {
   padding: 3px 8px; font-size: 12px; color: #475569;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 120px; text-align: center; background: #fff;
 }
-.quill-wrapper :deep(.ql-editor img) {
-  cursor: pointer;
-}
+.feature-editor-body img { cursor: pointer; }
 </style>
