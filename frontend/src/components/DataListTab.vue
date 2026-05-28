@@ -136,12 +136,15 @@
             <el-checkbox :model-value="hasVer(row, 'C-驰系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'C-驰系列')" size="small">驰</el-checkbox>
           </div>
         </div>
-        <div class="vcol vcol-ops" style="width:160px;">
-          <template v-if="!row._isSeparator && props.isEditing">
-            <span class="op-btn op-edit" @click="editRow(row)">编辑</span>
-            <span class="op-btn op-add" @click="addChildRow(row)">添加</span>
-             <span v-if="props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>
-            <span v-else class="op-btn op-del" @click="deleteRow(row)">删除</span>
+        <div class="vcol vcol-ops" style="width:240px;">
+          <template v-if="!row._isSeparator">
+            <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
+            <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
+            <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
+            <span v-if="canEditRow(row) && props.isEditing" class="op-btn op-edit" @click="editRow(row)">编辑</span>
+            <span v-if="canEditRow(row) && props.isEditing && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
+            <span v-if="canEditRow(row) && props.isEditing && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>
+            <span v-if="canEditRow(row) && props.isEditing && !props.customTabId" class="op-btn op-del" @click="deleteRow(row)">删除</span>
           </template>
         </div>
       </div>
@@ -238,6 +241,11 @@
         </el-form-item>
       </el-form>
       <template #footer>
+        <span style="margin-right: auto;">
+          <el-button v-if="!isNew && canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交</el-button>
+          <el-button v-if="!isNew && canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">通过</el-button>
+          <el-button v-if="!isNew && canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
+        </span>
         <el-button @click="onDialogChange(false)">取消</el-button>
         <el-button type="primary" @click="saveEdit">保存</el-button>
       </template>
@@ -254,6 +262,7 @@ import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
 import { useAuthStore } from '../store/auth'
+import { approveEntry } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps({
@@ -261,7 +270,8 @@ const props = defineProps({
   selectedNode: Object,
   isEditing: Boolean,
   customTabId: { type: Number, default: null },
-  refreshTrigger: { type: Number, default: 0 }
+  refreshTrigger: { type: Number, default: 0 },
+  userRole: { type: String, default: 'USER' }
 })
 
 const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc'])
@@ -272,6 +282,7 @@ const totalEntryCount = ref(0)
 const showEditDialog = ref(false)
 const isNew = ref(false)
 const editingId = ref(null)
+const editingRow = ref(null)
 const selectedIds = ref([])
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
@@ -583,8 +594,69 @@ async function toggleVer(row, ver) {
    handleQuery(true)
 }
 
+const approvalRole = computed(() => {
+  const code = props.userRole || localStorage.getItem('roleCode') || 'USER'
+  if (code === 'ADMIN') return 'admin'
+  if (code === 'REVIEWER') return 'reviewer'
+  return 'editor'
+})
+
+function canEditRow(row) {
+  if (approvalRole.value === 'admin') return true
+  if (approvalRole.value === 'editor') {
+    const s = row.colStatus
+    return !s || s === '待提交' || s === '驳回'
+  }
+  return false
+}
+
+function canSubmit(row) {
+  const s = row.colStatus
+  return ['editor', 'admin'].includes(approvalRole.value) && (!s || s === '待提交' || s === '驳回')
+}
+
+function canApprove(row) {
+  return ['reviewer', 'admin'].includes(approvalRole.value) && row.colStatus === '待审核'
+}
+
+function canReject(row) {
+  return ['reviewer', 'admin'].includes(approvalRole.value) && (row.colStatus === '待审核' || row.colStatus === '审核通过')
+}
+
+async function handleApprove(row, action) {
+  try {
+    await approveEntry(row.id, action, '')
+    ElMessage.success(action === 'submit' ? '已提交' : '已通过')
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+async function handleReject(row) {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '驳回', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPlaceholder: '请输入驳回原因，可不填',
+      inputValidator: () => true
+    })
+    await approveEntry(row.id, 'reject', value || '')
+    ElMessage.success('已驳回')
+    handleQuery(true)
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e?.response?.data?.message || '驳回失败')
+    }
+  }
+}
+
 function statusTagType(status) {
   if (!status) return ''
+  if (status === '待提交') return 'primary'
+  if (status === '待审核') return 'warning'
+  if (status === '审核通过') return 'success'
+  if (status === '驳回') return 'danger'
   if (status.includes('可交付')) return 'success'
   if (status.includes('立项')) return 'warning'
   if (status.includes('演示')) return 'primary'
@@ -667,7 +739,7 @@ const editForm = reactive({
   colAppRole: '',
   colBidParamDesc: '',
   colFeatureDesc: '',
-  colStatus: '',
+  colStatus: '待提交',
   colBizCategory: '',
   colBizDomain: '',
   colVersionDivision: '',
@@ -699,7 +771,7 @@ const productLabel = computed(() => {
 
 const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
-  colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
+  colStatus: '待提交', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
   colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colAssetType: '', colRemark: '',
   colYao: '', colYuan: '', colChi: ''
 })
@@ -977,6 +1049,7 @@ function buildTree(entries) {
 function editRow(row) {
   isNew.value = false
   editingId.value = row.id
+  editingRow.value = row
   parentRow.value = null
   Object.assign(editForm, row)
   syncVersionFromForm()

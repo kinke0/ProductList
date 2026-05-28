@@ -72,6 +72,7 @@
                 :version-id="selectedVersion.id"
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
+                user-role="admin"
                 @insert-to-list="onInsertToList"
               />
             </el-tab-pane>
