@@ -32,7 +32,9 @@
                 <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" />
               </template>
               <template v-else>
-                <span class="image-name" :title="img.filename">{{ img.filename }}</span>
+                <el-tooltip :content="img.filename" placement="top" :show-after="300">
+                  <span class="image-name">{{ img.filename }}</span>
+                </el-tooltip>
               </template>
               <span class="image-size">{{ formatSize(img.size) }}</span>
             </div>
@@ -261,6 +263,7 @@ onMounted(async () => {
 .image-info { padding: 6px 8px; display: flex; align-items: center; overflow: hidden; }
 .image-name { font-size: 12px; color: var(--si-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .image-size { font-size: 11px; color: var(--si-text-muted); flex-shrink: 0; margin-left: 4px; }
+.image-actions { padding: 4px 8px 6px; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; border-top: 1px solid #e2e8f0; }
 
 .image-name-edit { font-size: 12px; width: 70px; border: 1px solid #409eff; border-radius: 3px; padding: 0 3px; outline: none; height: 20px; line-height: 20px; }
 </style>

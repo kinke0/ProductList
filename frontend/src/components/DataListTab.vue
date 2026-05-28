@@ -350,6 +350,7 @@ import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImagePicker from './ImagePicker.vue'
+import { updateImage } from '../api/image'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -760,6 +761,7 @@ function onEditorClick(e) {
   const card = e.target.closest('.image-card')
   if (card && card.closest('.feature-editor-body')) {
     e.preventDefault()
+    e.stopPropagation()
     const actionBtn = e.target.closest('[data-action]')
     if (actionBtn) {
       const action = actionBtn.getAttribute('data-action')
@@ -777,11 +779,12 @@ function onEditorClick(e) {
           const input = document.createElement('input')
           input.type = 'text'
           input.value = oldName
-          input.style.cssText = 'width:60px;font-size:12px;border:1px solid #409eff;border-radius:3px;padding:0 3px;outline:none;height:20px;line-height:20px;vertical-align:middle;'
+          input.style.cssText = 'width:60px;font-size:12px;border:1px solid #409eff;border-radius:3px;padding:0 3px;outline:none;height:18px;line-height:18px;vertical-align:middle;box-sizing:border-box;'
           nameEl.textContent = ''
           nameEl.appendChild(input)
           input.focus()
           input.select()
+          const imgId = card.getAttribute('data-id')
           actionBtn.textContent = '✓'
           actionBtn.setAttribute('data-action', 'save-name')
           const doSave = () => {
@@ -792,14 +795,26 @@ function onEditorClick(e) {
             actionBtn.textContent = '编辑'
             actionBtn.setAttribute('data-action', 'edit-name')
             editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+            if (imgId) {
+              updateImage(Number(imgId), { filename: newName }).then(() => {
+                ElMessage.success('名称已更新')
+              }).catch(() => {})
+            }
           }
-          input.addEventListener('blur', doSave)
-          input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); input.blur() } })
+          let blurTimeout = null
+          input.addEventListener('blur', () => {
+            clearTimeout(blurTimeout)
+            blurTimeout = setTimeout(doSave, 150)
+          })
+          input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); clearTimeout(blurTimeout); doSave() } })
         }
       } else if (action === 'save-name') {
         const nameEl = card.querySelector('.image-name')
         const input = nameEl?.querySelector('input')
-        if (input) { input.blur() }
+        if (input) {
+          const blurEvent = new Event('blur')
+          input.dispatchEvent(blurEvent)
+        }
       } else if (action === 'replace') {
         replacingCard.value = card
         showReplacePicker.value = true
@@ -1725,6 +1740,12 @@ watch(() => props.versionId, () => {
 .feature-editor :deep(.image-name) {
   font-size: 12px; color: var(--si-text-primary); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+  position: relative;
+}
+.feature-editor :deep(.image-name:hover) {
+  overflow: visible; white-space: normal; position: relative; z-index: 10;
+  background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); padding: 2px 4px;
+  border-radius: 3px; max-width: none;
 }
 .feature-editor :deep(.image-size) {
   font-size: 11px; color: var(--si-text-muted); flex-shrink: 0; margin-left: 4px;
@@ -1735,7 +1756,7 @@ watch(() => props.versionId, () => {
 }
 .feature-editor :deep(.image-actions) {
   display: flex; flex-wrap: wrap; gap: 2px; justify-content: center;
-  padding: 4px 6px 6px; border-top: 1px solid var(--si-border-light);
+  padding: 4px 6px 6px; border-top: 1px solid #e2e8f0;
 }
 .feature-editor :deep(.image-action-btn) {
   font-size: 12px; border: none; background: none; cursor: pointer; padding: 2px 6px;
