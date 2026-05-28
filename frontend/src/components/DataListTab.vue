@@ -132,9 +132,19 @@
         </div>
         <div class="vcol vcol-ops" style="width:240px;">
           <template v-if="!row._isSeparator">
-            <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
-            <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
-            <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
+             <template v-if="row.colStatus === '可交付'">
+               <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
+               <span v-else class="op-btn op-add invisible">提交</span>
+               <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
+               <span v-else class="op-btn op-add invisible">通过</span>
+               <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
+               <span v-else class="op-btn op-del invisible">驳回</span>
+             </template>
+             <template v-else>
+               <span class="op-btn op-add invisible">提交</span>
+               <span class="op-btn op-add invisible">通过</span>
+               <span class="op-btn op-del invisible">驳回</span>
+             </template>
             <template v-if="props.isEditing">
               <span v-if="canEditRow(row)" class="op-btn op-edit" @click="editRow(row)">编辑</span>
               <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
@@ -151,7 +161,7 @@
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
-          <div v-if="!isNew && editingRow" style="display:flex;align-items:center;">
+          <div v-if="!isNew && editingRow && editForm.colStatus === '可交付'" style="display:flex;align-items:center;">
             <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
             <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:14px;">原因：{{ lastRejectReason }}</span>
           </div>
@@ -248,9 +258,11 @@
       <template #footer>
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
           <div style="margin-left:120px;">
-            <el-button v-if="!isNew && canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
-            <el-button v-if="!isNew && canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
-            <el-button v-if="!isNew && canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
+            <template v-if="!isNew && editForm.colStatus === '可交付'">
+              <el-button v-if="canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
+              <el-button v-if="canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
+              <el-button v-if="canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
+            </template>
           </div>
           <div>
             <el-button @click="onDialogChange(false)">取消</el-button>
@@ -1344,7 +1356,8 @@ watch(() => props.versionId, () => {
 .vcol-name { overflow: visible !important; }
 .vcol-ellipsis span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vcol-ops { overflow: visible !important; }
-.op-btn { cursor: pointer; font-size: 12px; margin-right: 8px; user-select: none; }
+ .op-btn { cursor: pointer; font-size: 12px; margin-right: 8px; user-select: none; }
+.op-btn.invisible { visibility: hidden; pointer-events: none; }
 .op-edit { color: var(--si-primary); }
 .op-add { color: var(--color-success); }
 .op-del { color: var(--si-danger); }

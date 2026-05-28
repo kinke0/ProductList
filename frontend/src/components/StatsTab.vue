@@ -229,9 +229,9 @@ function renderPmStackBar(pmMap) {
   pmStackBarInstance.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     legend: { data: statuses, top: 0 },
-    grid: { left: 100, right: 30, top: 30, bottom: 10 },
-    xAxis: { type: 'value' },
-    yAxis: { type: 'category', data: managers, axisLabel: { fontSize: 12 } },
+    grid: { left: 50, right: 30, top: 30, bottom: 80 },
+    xAxis: { type: 'category', data: managers, axisLabel: { fontSize: 11, rotate: 30 } },
+    yAxis: { type: 'value' },
     series: statuses.map((s, i) => ({
       name: s,
       type: 'bar',
