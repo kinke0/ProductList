@@ -22,29 +22,29 @@
       <div class="gallery-content">
         <div v-if="currentImages.length === 0" class="empty-tip">请选择左侧目录查看图片，或上传图片</div>
         <div v-else class="image-grid">
-          <div v-for="img in currentImages" :key="img.id" class="image-card">
-            <div class="image-thumb" @click="previewImage(img)">
-              <img :src="img.url" :alt="img.filename" />
-            </div>
-            <div class="image-info">
-              <el-button size="small" type="primary" link @click="startEditName(img)">{{ editingImgId === img.id ? '保存' : '编辑' }}</el-button>
-              <template v-if="editingImgId === img.id">
-                <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" />
-              </template>
-              <template v-else>
-                <el-tooltip :content="img.filename" placement="top" :show-after="300" :hide-after="0">
+          <el-tooltip v-for="img in currentImages" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
+            <div class="image-card">
+              <div class="image-thumb" @click="previewImage(img)">
+                <img :src="img.url" :alt="img.filename" />
+              </div>
+              <div class="image-info">
+                <el-button size="small" type="primary" link @click.stop="startEditName(img)">{{ editingImgId === img.id ? '保存' : '编辑' }}</el-button>
+                <template v-if="editingImgId === img.id">
+                  <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" @click.stop />
+                </template>
+                <template v-else>
                   <span class="image-name">{{ img.filename }}</span>
-                </el-tooltip>
-              </template>
-              <span class="image-size">{{ formatSize(img.size) }}</span>
+                </template>
+                <span class="image-size">{{ formatSize(img.size) }}</span>
+              </div>
+              <div class="image-actions" @click.stop>
+                <el-button size="small" type="primary" link @click="copyUrl(img)">复制URL</el-button>
+                <el-button size="small" link @click="showReferences(img)">引用</el-button>
+                <el-button size="small" link @click="replaceImage(img)">替换</el-button>
+                <el-button size="small" type="danger" link @click="handleDelete(img)">删除</el-button>
+              </div>
             </div>
-            <div class="image-actions">
-              <el-button size="small" type="primary" link @click="copyUrl(img)">复制URL</el-button>
-              <el-button size="small" link @click="showReferences(img)">引用</el-button>
-              <el-button size="small" link @click="replaceImage(img)">替换</el-button>
-              <el-button size="small" type="danger" link @click="handleDelete(img)">删除</el-button>
-            </div>
-          </div>
+          </el-tooltip>
         </div>
       </div>
     </div>
