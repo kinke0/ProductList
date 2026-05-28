@@ -144,8 +144,9 @@
                <span class="op-btn op-add invisible">提交</span>
                <span class="op-btn op-add invisible">通过</span>
                <span class="op-btn op-del invisible">驳回</span>
-             </template>
-            <template v-if="props.isEditing">
+              </template>
+             <span style="display:inline-block;width:1px;height:14px;background:#d0d0d0;margin:0 4px;vertical-align:middle;"></span>
+             <template v-if="props.isEditing">
               <span v-if="canEditRow(row)" class="op-btn op-edit" @click="editRow(row)">编辑</span>
               <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
               <span v-if="canEditRow(row) && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>

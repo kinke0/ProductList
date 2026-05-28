@@ -52,7 +52,7 @@ import { ref, onMounted, watch, nextTick } from 'vue'
 import { queryEntries } from '../api/data'
 import * as echarts from 'echarts'
 
-const props = defineProps({ versionId: [Number, String] })
+const props = defineProps({ versionId: [Number, String], refreshTrigger: [Number, String] })
 
 const stats = ref({
   productCount: 0,
@@ -244,6 +244,7 @@ function renderPmStackBar(pmMap) {
 }
 
 watch(() => props.versionId, loadStats)
+watch(() => props.refreshTrigger, loadStats)
 onMounted(loadStats)
 </script>
 

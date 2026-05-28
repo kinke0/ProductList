@@ -65,7 +65,7 @@
         <div class="tabs-wrapper">
           <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
             <el-tab-pane label="统计视图" name="stats">
-              <StatsTab :version-id="selectedVersion.id" />
+              <StatsTab :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
             </el-tab-pane>
             <el-tab-pane label="数据清单" name="list">
               <DataListTab
@@ -238,6 +238,7 @@ const customTabs = ref([])
 const showInsertDialog = ref(false)
 const insertEntryIds = ref([])
 const customTabRefresh = ref(0)
+const statsRefreshTrigger = ref(0)
 const activeGenRecordId = ref(null)
 const showAddListDialog = ref(false)
 const addListLoading = ref(false)
@@ -456,7 +457,11 @@ async function onRenameTab(tab) {
   }
 }
 
-function onTabClick() {}
+function onTabClick(tab) {
+  if (tab.paneName === 'stats') {
+    statsRefreshTrigger.value = Date.now()
+  }
+}
 
 function onInsertToList(entryIds) {
   if (!entryIds || entryIds.length === 0) {
