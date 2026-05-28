@@ -44,7 +44,18 @@ public class DocumentService {
     private static final double PORTRAIT_RATIO = 1.2;
     private static final int IMAGE_LANDSCAPE_WIDTH_PX = 500;
     private static final int IMAGE_PORTRAIT_HEIGHT_PX = 300;
-    private static final Pattern URL_PATTERN = Pattern.compile("<([^<>]+)>");
+    private static final Pattern URL_PATTERN = Pattern.compile("\\[([^\\[\\]]+)\\]");
+    private static final Pattern IMAGE_CARD_PATTERN = Pattern.compile(
+            "<(?:span|div)[^>]+class=\"(?:image-card|img-card)\"[^>]*>",
+            Pattern.DOTALL);
+    private static final Pattern IMAGE_CARD_END_PATTERN = Pattern.compile(
+            "</(?:span|div)>(?:\\s*<br\\s*/?>)?",
+            Pattern.DOTALL);
+    private static final Pattern URL_ATTR_PATTERN = Pattern.compile(
+            "data-url=\"([^\"]+)\"");
+    private static final Pattern FILENAME_ATTR_PATTERN = Pattern.compile(
+            "data-filename=\"([^\"]+)\"");
+    private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
 
     private final DataEntryRepository entryRepository;
     private final DocGenRecordRepository genRecordRepository;
@@ -141,10 +152,6 @@ public class DocumentService {
             }
         } else {
             entries = new ArrayList<>(entryRepository.findAllById(entryIds));
-            List<Long> allIds = new ArrayList<>(entries.stream().map(DataEntry::getId).toList());
-            List<DataEntry> children = entryRepository.findByVersionId(versionId);
-            collectDescendants(allIds, children);
-            entries = entryRepository.findAllById(allIds);
         }
         int totalSize = entries.size();
         genRecordRepository.findById(recordId).ifPresent(r -> {
@@ -338,18 +345,19 @@ public class DocumentService {
     }
 
     private void processDescriptionWithImages(XWPFDocument doc, String description) {
+        String normalized = normalizeImageCards(description);
         List<String> parts = new ArrayList<>();
-        Matcher matcher = URL_PATTERN.matcher(description);
+        Matcher matcher = URL_PATTERN.matcher(normalized);
         int lastEnd = 0;
         while (matcher.find()) {
             if (matcher.start() > lastEnd) {
-                parts.add(description.substring(lastEnd, matcher.start()));
+                parts.add(normalized.substring(lastEnd, matcher.start()));
             }
             parts.add(matcher.group(1));
             lastEnd = matcher.end();
         }
-        if (lastEnd < description.length()) {
-            parts.add(description.substring(lastEnd));
+        if (lastEnd < normalized.length()) {
+            parts.add(normalized.substring(lastEnd));
         }
 
         int i = 0;
@@ -361,8 +369,13 @@ public class DocumentService {
             }
 
             if (part.startsWith("http://") || part.startsWith("https://")) {
+                String urlForDownload = part;
+                int hashIdx = urlForDownload.indexOf('#');
+                if (hashIdx > 0) {
+                    urlForDownload = urlForDownload.substring(0, hashIdx);
+                }
                 List<String> consecutiveUrls = new ArrayList<>();
-                consecutiveUrls.add(part);
+                consecutiveUrls.add(urlForDownload);
                 int j = i + 1;
                 while (j < parts.size()) {
                     String nextPart = parts.get(j).trim();
@@ -371,7 +384,10 @@ public class DocumentService {
                         continue;
                     }
                     if (nextPart.startsWith("http://") || nextPart.startsWith("https://")) {
-                        consecutiveUrls.add(nextPart);
+                        String nextForDownload = nextPart;
+                        int nextHash = nextForDownload.indexOf('#');
+                        if (nextHash > 0) nextForDownload = nextForDownload.substring(0, nextHash);
+                        consecutiveUrls.add(nextForDownload);
                         j++;
                     } else {
                         break;
@@ -453,10 +469,88 @@ public class DocumentService {
         }
     }
 
+    private String normalizeImageCards(String html) {
+        String result = html;
+        Matcher m = IMAGE_CARD_PATTERN.matcher(result);
+        int cardCount = 0;
+        while (m.find()) {
+            int start = m.start();
+            String openingTag = m.group(0);
+            Matcher urlMatcher = URL_ATTR_PATTERN.matcher(openingTag);
+            if (!urlMatcher.find()) continue;
+            String dataUrl = urlMatcher.group(1);
+            String fullUrl = dataUrl;
+            if (dataUrl.startsWith("/api/images/file/")) {
+                fullUrl = "http://localhost:8080" + dataUrl;
+            }
+            String filename = null;
+            Matcher fnMatcher = FILENAME_ATTR_PATTERN.matcher(openingTag);
+            if (fnMatcher.find()) {
+                filename = fnMatcher.group(1);
+            }
+            String tagName = openingTag.startsWith("<div") ? "div" : "span";
+            String openTagRegex = "<" + tagName + "[\\s>]";
+            String closeTagStr = "</" + tagName + ">";
+            int pos = m.end();
+            int depth = 1;
+            int contentEnd = -1;
+            while (pos < result.length() && depth > 0) {
+                int nextOpen = result.indexOf("<" + tagName, pos);
+                if (nextOpen != -1 && nextOpen < result.length() - tagName.length() - 1) {
+                    char afterOpen = result.charAt(nextOpen + 1 + tagName.length());
+                    if (Character.isWhitespace(afterOpen) || afterOpen == '>') {
+                        // valid opening tag
+                    } else {
+                        nextOpen = -1;
+                    }
+                }
+                int nextClose = result.indexOf(closeTagStr, pos);
+                if (nextClose == -1) break;
+                if (nextOpen != -1 && nextOpen < nextClose) {
+                    depth++;
+                    pos = nextOpen + 1;
+                } else {
+                    depth--;
+                    if (depth == 0) {
+                        contentEnd = nextClose + closeTagStr.length();
+                    }
+                    pos = nextClose + closeTagStr.length();
+                }
+            }
+            if (contentEnd == -1) {
+                cardCount++;
+                String replacement = "[" + fullUrl + "]";
+                result = result.substring(0, start) + replacement + result.substring(m.end());
+                m = IMAGE_CARD_PATTERN.matcher(result);
+                continue;
+            }
+            String after = result.substring(contentEnd);
+            int afterLen = after.length();
+            String trimmed = after.replaceAll("^(\\s*<br\\s*/?>)+", "");
+            if (trimmed.length() < afterLen) {
+                contentEnd = contentEnd + (afterLen - trimmed.length());
+            }
+            String replacement = "[" + fullUrl;
+            if (filename != null && !filename.isEmpty()) {
+                replacement += "#" + filename;
+            }
+            replacement += "]";
+            result = result.substring(0, start) + replacement + result.substring(contentEnd);
+            cardCount++;
+            m = IMAGE_CARD_PATTERN.matcher(result);
+        }
+        String cleaned = HTML_TAG_PATTERN.matcher(result).replaceAll("");
+        System.out.println("[DocGen] normalizeImageCards: found " + cardCount + " cards");
+        System.out.println("[DocGen] normalizeImageCards result preview: " + cleaned.substring(0, Math.min(500, cleaned.length())));
+        return cleaned;
+    }
+
     private ImageData downloadAndProcessImage(String rawUrl) {
         String[] candidates = buildUrlCandidates(rawUrl);
+        System.out.println("[DocGen] downloadImage: rawUrl=" + rawUrl + ", candidates=" + candidates.length);
         for (String url : candidates) {
             try {
+                System.out.println("[DocGen] trying URL: " + url);
                 HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                 conn.setRequestProperty("User-Agent",
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
@@ -519,22 +613,43 @@ public class DocumentService {
         List<String> candidates = new ArrayList<>();
         candidates.add(rawUrl);
         try {
-            URL parsedUrl = new URL(rawUrl);
-            String path = parsedUrl.getPath();
-            String[] segments = path.split("/", -1);
-            StringBuilder encodedPath = new StringBuilder();
-            for (int s = 0; s < segments.length; s++) {
-                if (s > 0) encodedPath.append("/");
-                encodedPath.append(URLEncoder.encode(segments[s], "UTF-8").replace("+", "%20"));
+            String encodedUrl;
+            boolean hasChineseOrSpecial = rawUrl.matches(".*[\\u4e00-\\u9fff()（）\\s].*");
+            boolean hasPct = rawUrl.matches(".*%[0-9A-Fa-f]{2}.*");
+            if (hasChineseOrSpecial || !hasPct) {
+                int schemeEnd = rawUrl.indexOf("://");
+                if (schemeEnd < 0) { return candidates.toArray(new String[0]); }
+                String scheme = rawUrl.substring(0, schemeEnd);
+                String rest = rawUrl.substring(schemeEnd + 3);
+                int pathStart = rest.indexOf('/');
+                String hostPort = pathStart >= 0 ? rest.substring(0, pathStart) : rest;
+                String pathQuery = pathStart >= 0 ? rest.substring(pathStart) : "";
+                String path;
+                String query = "";
+                int qIdx = pathQuery.indexOf('?');
+                if (qIdx >= 0) {
+                    path = pathQuery.substring(0, qIdx);
+                    query = pathQuery.substring(qIdx);
+                } else {
+                    path = pathQuery;
+                }
+                String[] segments = path.split("/", -1);
+                StringBuilder sb = new StringBuilder();
+                for (String seg : segments) {
+                    if (seg.isEmpty()) continue;
+                    try {
+                        String decoded = java.net.URLDecoder.decode(seg, "UTF-8");
+                        sb.append("/").append(java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20"));
+                    } catch (Exception e) {
+                        sb.append("/").append(java.net.URLEncoder.encode(seg, "UTF-8").replace("+", "%20"));
+                    }
+                }
+                encodedUrl = scheme + "://" + hostPort + sb + query;
+            } else {
+                encodedUrl = rawUrl;
             }
-            String encoded = parsedUrl.getProtocol() + "://" + parsedUrl.getHost()
-                    + (parsedUrl.getPort() != -1 ? ":" + parsedUrl.getPort() : "")
-                    + encodedPath.toString();
-            if (parsedUrl.getQuery() != null) {
-                encoded += "?" + parsedUrl.getQuery();
-            }
-            if (!encoded.equals(rawUrl)) {
-                candidates.add(encoded);
+            if (!encodedUrl.equals(rawUrl)) {
+                candidates.add(encodedUrl);
             }
         } catch (Exception ignored) {}
         return candidates.toArray(new String[0]);
@@ -678,6 +793,11 @@ public class DocumentService {
 
     private String extractFilenameFromUrl(String url) {
         try {
+            int hashIdx = url.indexOf('#');
+            if (hashIdx >= 0) {
+                String name = URLDecoder.decode(url.substring(hashIdx + 1), "UTF-8").trim();
+                if (!name.isEmpty()) return name;
+            }
             String path = new URL(url).getPath();
             String decoded = URLDecoder.decode(path, "UTF-8");
             String filename = decoded.substring(decoded.lastIndexOf('/') + 1);

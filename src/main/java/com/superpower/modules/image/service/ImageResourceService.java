@@ -60,7 +60,10 @@ public class ImageResourceService {
 
         String originalFilename = file.getOriginalFilename();
         String ext = getExtension(originalFilename, contentType);
-        String storedName = UUID.randomUUID() + "." + ext;
+        String effectiveName = (displayName != null && !displayName.isEmpty()) ? displayName : originalFilename;
+        String sanitizedBase = sanitizePath(effectiveName);
+        if (sanitizedBase.isEmpty()) sanitizedBase = UUID.randomUUID().toString();
+        String storedName = sanitizedBase + "." + ext;
 
         String subPath = buildSubPath(category, domain, product);
         Path dirPath = Paths.get(storagePath, subPath);
@@ -82,6 +85,12 @@ public class ImageResourceService {
         }
 
         Path filePath = dirPath.resolve(storedName);
+        int dup = 1;
+        while (Files.exists(filePath)) {
+            storedName = sanitizedBase + "_" + dup + "." + ext;
+            filePath = dirPath.resolve(storedName);
+            dup++;
+        }
         try {
             Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
