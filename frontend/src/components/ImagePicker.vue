@@ -41,7 +41,12 @@ import { getImages, uploadImage, getImageTree } from '../api/image'
 import { getVersions } from '../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-const props = defineProps({ modelValue: Boolean })
+const props = defineProps({
+  modelValue: Boolean,
+  defaultCategory: { type: String, default: null },
+  defaultDomain: { type: String, default: null },
+  defaultProduct: { type: String, default: null }
+})
 const emit = defineEmits(['update:modelValue', 'select', 'close'])
 
 const visible = ref(false)
@@ -127,7 +132,10 @@ async function handleFileUpload(e) {
       inputPlaceholder: '请输入名称'
     })
     const displayName = value || defaultName
-    await uploadImage(file, curCategory.value, curDomain.value, curProduct.value, versionId.value, displayName)
+    const uploadCategory = curCategory.value || props.defaultCategory
+    const uploadDomain = curDomain.value || props.defaultDomain
+    const uploadProduct = curProduct.value || props.defaultProduct
+    await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
     ElMessage.success('上传成功')
     loadImages()
     loadTree()

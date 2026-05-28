@@ -328,8 +328,8 @@
          <el-button type="primary" @click="confirmBatchManager">确定</el-button>
        </template>
 </el-dialog>
-     <ImagePicker v-model="showImagePicker" @select="insertImage" />
-      <ImagePicker v-model="showReplacePicker" @select="replaceImageCard" />
+     <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="editForm.colProductSystem" @select="insertImage" />
+      <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="editForm.colProductSystem" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
