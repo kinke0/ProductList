@@ -73,6 +73,7 @@
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
                 :user-role="currentUserRole"
+                :refresh-trigger="listRefreshTrigger"
                 @insert-to-list="onInsertToList"
               />
             </el-tab-pane>
@@ -239,6 +240,7 @@ const showInsertDialog = ref(false)
 const insertEntryIds = ref([])
 const customTabRefresh = ref(0)
 const statsRefreshTrigger = ref(0)
+const listRefreshTrigger = ref(0)
 const activeGenRecordId = ref(null)
 const showAddListDialog = ref(false)
 const addListLoading = ref(false)
@@ -457,11 +459,15 @@ async function onRenameTab(tab) {
   }
 }
 
-function onTabClick(tab) {
+ function onTabClick(tab) {
   if (tab.paneName === 'stats') {
     statsRefreshTrigger.value = Date.now()
+  } else if (tab.paneName === 'list') {
+    listRefreshTrigger.value = Date.now()
+  } else if (tab.paneName?.startsWith('custom-')) {
+    customTabRefresh.value++
   }
-}
+ }
 
 function onInsertToList(entryIds) {
   if (!entryIds || entryIds.length === 0) {
