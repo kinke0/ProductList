@@ -1433,7 +1433,9 @@ watch(() => props.versionId, () => {
    align-items: center;
    margin-bottom: 8px;
  }
-.toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-right: 16px; }
+.toolbar-right .el-button { margin-left: 0; }
+.toolbar-right .el-dropdown { margin-left: 0; }
 .table-body {
   flex: 1;
   display: flex;

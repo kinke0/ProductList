@@ -1,14 +1,18 @@
 <template>
   <div class="si-layout">
-    <div class="si-sidebar">
+    <div class="si-sidebar" :class="{ 'is-collapsed': isCollapsed }">
       <div class="sidebar-logo">
         <span class="logo-text">添翼</span>
         <span class="logo-sub">PRO</span>
+        <span class="collapse-btn" @click="isCollapsed = !isCollapsed">
+          <el-icon><Fold v-if="!isCollapsed" /><Expand v-else /></el-icon>
+        </span>
       </div>
       <el-menu
         :default-active="route.path"
         router
         class="si-menu"
+        :collapse="isCollapsed"
         background="transparent"
         text-color="#94A3B8"
         active-text-color="#FFFFFF"
@@ -87,13 +91,14 @@
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import { ref } from 'vue'
-import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown } from '@element-plus/icons-vue'
+import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const nickname = ref(authStore.user?.nickname || localStorage.getItem('nickname') || '用户')
+const isCollapsed = ref(false)
 
 function handleCommand(command) {
   if (command === 'logout') {
@@ -118,6 +123,10 @@ function handleCommand(command) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.3s ease;
+}
+.si-sidebar.is-collapsed {
+  width: 64px;
 }
 
 .sidebar-logo {
@@ -127,6 +136,33 @@ function handleCommand(command) {
   padding: 0 16px;
   flex-shrink: 0;
   border-bottom: 1px solid rgba(255,255,255,0.06);
+  position: relative;
+}
+.sidebar-logo .logo-text,
+.sidebar-logo .logo-sub {
+  transition: opacity 0.2s;
+}
+.si-sidebar.is-collapsed .logo-text,
+.si-sidebar.is-collapsed .logo-sub {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+.collapse-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  color: #94A3B8;
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.2s, background 0.2s;
+}
+.collapse-btn:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.08);
 }
 .logo-text {
   font-size: 16px;
