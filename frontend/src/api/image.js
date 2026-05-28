@@ -1,12 +1,13 @@
 import request from '../utils/request'
 
-export function uploadImage(file, category, domain, product, versionId) {
+export function uploadImage(file, category, domain, product, versionId, filename) {
   const formData = new FormData()
   formData.append('file', file)
   if (category) formData.append('category', category)
   if (domain) formData.append('domain', domain)
   if (product) formData.append('product', product)
   if (versionId) formData.append('versionId', versionId)
+  if (filename) formData.append('filename', filename)
   return request.post('/images/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 30000

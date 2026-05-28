@@ -111,13 +111,23 @@ function triggerUpload() {
 async function handleFileUpload(e) {
   const file = e.target.files[0]
   if (!file) return
+  const defaultName = file.name.replace(/\.[^.]+$/, '')
   try {
-    await uploadImage(file, selectedCategory.value, selectedDomain.value, selectedProduct.value, versionId.value)
+    const { value } = await ElMessageBox.prompt('请输入图片名称', '上传图片', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: defaultName,
+      inputPlaceholder: '请输入名称'
+    })
+    const displayName = value || defaultName
+    await uploadImage(file, selectedCategory.value, selectedDomain.value, selectedProduct.value, versionId.value, displayName)
     ElMessage.success('上传成功')
     loadImages()
     loadTree()
   } catch (err) {
-    ElMessage.error(err?.response?.data?.message || '上传失败')
+    if (err !== 'cancel' && err !== 'close') {
+      ElMessage.error(err?.response?.data?.message || '上传失败')
+    }
   }
   e.target.value = ''
 }

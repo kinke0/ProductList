@@ -40,7 +40,7 @@ public class ImageResourceService {
 
     @Transactional
     public ImageResource upload(MultipartFile file, String category, String domain, String product,
-                                Long versionId, String username) {
+                                Long versionId, String username, String displayName) {
         if (file.isEmpty()) {
             throw new BusinessException("上传文件不能为空");
         }
@@ -74,7 +74,7 @@ public class ImageResourceService {
         String urlPath = "/api/images/file/" + subPath + "/" + storedName;
 
         ImageResource image = new ImageResource();
-        image.setFilename(originalFilename);
+        image.setFilename(displayName != null && !displayName.isEmpty() ? displayName : originalFilename);
         image.setStoredName(storedName);
         image.setPath(filePath.toString());
         image.setCategory(category);

@@ -27,9 +27,10 @@ public class ImageResourceController {
             @RequestParam(value = "category", required = false) String category,
             @RequestParam(value = "domain", required = false) String domain,
             @RequestParam(value = "product", required = false) String product,
-            @RequestParam(value = "versionId", required = false) Long versionId) {
+            @RequestParam(value = "versionId", required = false) Long versionId,
+            @RequestParam(value = "filename", required = false) String filename) {
         String username = imageResourceService.getCurrentUsername();
-        return Result.success(imageResourceService.upload(file, category, domain, product, versionId, username));
+        return Result.success(imageResourceService.upload(file, category, domain, product, versionId, username, filename));
     }
 
     @GetMapping("/tree")

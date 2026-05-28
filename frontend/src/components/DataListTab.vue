@@ -370,11 +370,7 @@ const batchManagerValue = ref('')
 const selectedIds = ref([])
 const showImagePicker = ref(false)
 const quillToolbar = [
-  [{ header: [1, 2, 3, false] }],
-  ['bold', 'italic', 'underline', 'strike'],
-  [{ list: 'ordered' }, { list: 'bullet' }],
-  ['image', 'link'],
-  ['clean']
+  ['image']
 ]
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
