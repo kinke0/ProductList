@@ -252,7 +252,9 @@
         <el-form-item label="功能说明">
           <div class="feature-editor">
             <div class="feature-editor-toolbar">
-              <el-button size="small" @click="showImagePicker = true"><el-icon><Plus /></el-icon>插入图片</el-button>
+              <button type="button" class="fe-btn" title="插入图片" @click="showImagePicker = true">
+                <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+              </button>
             </div>
             <div class="feature-editor-body" contenteditable="true" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick"></div>
           </div>
@@ -752,12 +754,39 @@ function onEditorClick(e) {
   const card = e.target.closest('.img-card')
   if (card) {
     e.preventDefault()
-    e.stopPropagation()
     const url = card.getAttribute('data-url')
+    const actionBtn = e.target.closest('.img-card-action')
+    if (actionBtn) {
+      const action = actionBtn.getAttribute('data-action')
+      if (action === 'preview' && url) {
+        imgPreviewUrl.value = url
+        imgPreviewVisible.value = true
+      } else if (action === 'delete') {
+        card.remove()
+        editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+      }
+      return
+    }
     if (url) {
       imgPreviewUrl.value = url
       imgPreviewVisible.value = true
     }
+  }
+}
+
+function removeImgCard(btn) {
+  const card = btn.closest('.img-card')
+  if (card) {
+    card.remove()
+    editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+  }
+}
+
+function previewImgCard(card) {
+  const url = card.getAttribute('data-url')
+  if (url) {
+    imgPreviewUrl.value = url
+    imgPreviewVisible.value = true
   }
 }
 
@@ -769,7 +798,7 @@ function insertImage(img) {
   card.setAttribute('contenteditable', 'false')
   card.setAttribute('data-url', img.url)
   card.setAttribute('data-filename', name)
-  card.innerHTML = `<div class="img-card-thumb"><img src="${img.url}" alt="${name}" /></div><div class="img-card-label">${name}</div>`
+  card.innerHTML = `<div class="img-card-thumb"><img src="${img.url}" alt="${name}" /></div><div class="img-card-label">${name}</div><div class="img-card-actions"><button type="button" class="img-card-action" data-action="preview">预览</button><button type="button" class="img-card-action img-card-action-danger" data-action="delete">删除</button></div>`
   editorRef.value.focus()
   const sel = window.getSelection()
   if (sel.rangeCount) {
@@ -1592,31 +1621,57 @@ watch(() => props.versionId, () => {
 .record-count { color: #8f959e; font-size: 12px; margin-left: auto; white-space: nowrap; flex-shrink: 0; padding-right: 4px; }
 .level-tag { margin: 0 6px; vertical-align: middle; }
 .feature-editor { width: 100%; }
-.feature-editor-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.feature-editor-toolbar {
+  display: flex; align-items: center; gap: 4px; padding: 8px 12px;
+  border: 1px solid #dcdfe6; border-bottom: none; border-radius: 8px 8px 0 0;
+  background: #fafafa;
+}
+.fe-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border: none; background: transparent;
+  border-radius: 4px; cursor: pointer; color: #444; padding: 0;
+  transition: background 0.2s, color 0.2s;
+}
+.fe-btn:hover { background: #e8e8e8; color: #1a1a1a; }
+.fe-btn svg { display: block; }
 .feature-editor-body {
   min-height: 200px; max-height: 400px; overflow-y: auto;
-  border: 1px solid #dcdfe6; border-radius: 8px; padding: 12px;
+  border: 1px solid #dcdfe6; border-radius: 0 0 8px 8px; padding: 12px 15px;
   font-size: 14px; line-height: 1.6; outline: none; white-space: pre-wrap;
-  word-wrap: break-word;
+  word-wrap: break-word; background: #fff;
 }
 .feature-editor-body:empty::before {
   content: '请输入功能说明...'; color: #c0c4cc; pointer-events: none;
 }
 .feature-editor-body .img-card {
-  display: inline-block; border: 1px solid #e2e8f0; border-radius: 8px;
-  overflow: hidden; background: #fff; margin: 4px 8px 4px 0; cursor: pointer;
-  vertical-align: middle; user-select: none;
+  display: inline-block; border: 1px solid var(--si-border, #e2e8f0);
+  border-radius: var(--si-radius-md, 6px); overflow: hidden; background: #fff;
+  margin: 4px 8px 4px 0; vertical-align: middle; user-select: none;
+  transition: box-shadow 0.2s;
 }
+.feature-editor-body .img-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
 .feature-editor-body .img-card .img-card-thumb {
-  height: 90px; display: flex; align-items: center; justify-content: center; background: #f5f5f5;
+  height: 140px; display: flex; align-items: center; justify-content: center;
+  background: #f5f5f5; cursor: pointer; overflow: hidden;
 }
 .feature-editor-body .img-card .img-card-thumb img {
-  max-width: 120px; max-height: 90px; object-fit: contain;
+  max-width: 100%; max-height: 100%; object-fit: contain;
 }
 .feature-editor-body .img-card .img-card-label {
-  padding: 3px 8px; font-size: 12px; color: #475569;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 120px; text-align: center; background: #fff;
+  padding: 6px 8px; font-size: 12px; color: var(--si-text-primary, #475569);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 180px; display: flex; justify-content: space-between; align-items: center;
 }
-.feature-editor-body img { cursor: pointer; }
+.feature-editor-body .img-card .img-card-label .image-size { font-size: 11px; color: var(--si-text-muted, #999); }
+.feature-editor-body .img-card .img-card-actions {
+  padding: 4px 8px 6px; display: flex; gap: 4px; justify-content: center;
+  border-top: 1px solid var(--si-border-light, #f0f0f0);
+}
+.feature-editor-body .img-card .img-card-actions .img-card-action {
+  font-size: 12px; border: none; background: none; cursor: pointer; padding: 2px 6px;
+  color: var(--si-primary, #409eff); border-radius: 3px;
+}
+.feature-editor-body .img-card .img-card-actions .img-card-action:hover { background: #ecf5ff; }
+.feature-editor-body .img-card .img-card-actions .img-card-action-danger { color: #f56c6c; }
+.feature-editor-body .img-card .img-card-actions .img-card-action-danger:hover { background: #fef0f0; }
 </style>
