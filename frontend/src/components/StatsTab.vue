@@ -33,6 +33,10 @@
         <h4 class="chart-title">可交付功能审批完成度</h4>
         <div ref="approvalPie" style="height: 280px;"></div>
       </div>
+      <div class="chart-container" style="flex: 1;">
+        <h4 class="chart-title">各审批状态数量</h4>
+        <div ref="approvalBar" style="height: 280px;"></div>
+      </div>
     </div>
   </div>
 </template>
@@ -54,9 +58,11 @@ const stats = ref({
 const pieChart = ref(null)
 const barChart = ref(null)
 const approvalPie = ref(null)
+const approvalBar = ref(null)
 let pieInstance = null
 let barInstance = null
 let approvalPieInstance = null
+let approvalBarInstance = null
 
 async function loadStats() {
   if (!props.versionId) return
@@ -84,6 +90,13 @@ async function loadStats() {
   const approvedCount = deliverableEntries.filter(e => e.approvalStatus === '审核通过').length
   const notApprovedCount = deliverableEntries.length - approvedCount
   renderApprovalPie(approvedCount, notApprovedCount)
+
+  const approvalMap = {}
+  entries.forEach(e => {
+    const s = e.approvalStatus || '待提交'
+    approvalMap[s] = (approvalMap[s] || 0) + 1
+  })
+  renderApprovalBar(Object.entries(approvalMap).map(([name, value]) => ({ name, value })))
 }
 
 function renderPie(data) {
@@ -153,6 +166,31 @@ function renderApprovalPie(approvedCount, notApprovedCount) {
       },
       itemStyle: { borderColor: 'rgba(0,0,0,0.1)', borderWidth: 2 },
       emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } }
+    }]
+  })
+}
+
+function renderApprovalBar(data) {
+  if (!approvalBar.value) return
+  if (!approvalBarInstance) approvalBarInstance = echarts.init(approvalBar.value)
+  if (approvalBar.value.clientWidth === 0 || approvalBar.value.clientHeight === 0) {
+    nextTick(() => renderApprovalBar(data))
+    return
+  }
+  const colorMap = { '待提交': '#409EFF', '待审核': '#E6A23C', '审核通过': '#67C23A', '驳回': '#F56C6C' }
+  approvalBarInstance.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: 80, right: 30, top: 10, bottom: 20 },
+    xAxis: { type: 'value' },
+    yAxis: { type: 'category', data: data.map(d => d.name), axisLabel: { fontSize: 13 } },
+    series: [{
+      type: 'bar',
+      data: data.map(d => ({
+        value: d.value,
+        itemStyle: { color: colorMap[d.name] || '#909399' }
+      })),
+      barWidth: 24,
+      label: { show: true, position: 'right', formatter: '{c}', color: '#606266', fontSize: 13 }
     }]
   })
 }
