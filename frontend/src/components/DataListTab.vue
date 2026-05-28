@@ -31,45 +31,30 @@
     </div>
 
     <div class="table-toolbar">
-      <div class="toolbar-left">
-        <span class="toolbar-title">查询结果</span>
+      <div class="toolbar-left" style="padding-left:12px;display:flex;align-items:center;">
+        <span class="toolbar-title" style="margin-right:24px;">查询结果</span>
+        <span style="color:var(--el-color-primary);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:4px;" @click="expandAll"><el-icon><Expand /></el-icon>全部展开</span>
+        <span style="margin:0 16px;color:#d0d0d0;">|</span>
+        <span style="color:var(--el-color-primary);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:4px;" @click="collapseAll"><el-icon><Fold /></el-icon>全部折叠</span>
       </div>
       <div class="toolbar-right">
-        <el-button size="small" text @click="expandAll">全部展开</el-button>
-        <el-button size="small" text @click="collapseAll">全部折叠</el-button>
-        <el-button v-if="props.isEditing && !props.customTabId" type="warning" size="small" plain @click="handleReorder">
-          按编号重排序
-        </el-button>
-        <el-dropdown v-if="props.isEditing && !props.customTabId" @command="handleDedupCommand">
-          <el-button type="danger" size="small" plain>
-            去除重复<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="exact">精确去重（同名+同级+同父）</el-dropdown-item>
-              <el-dropdown-item command="deep">深度去重（忽略编号，按名称核心匹配）</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
         <template v-if="props.customTabId">
           <el-button type="danger" size="small" :disabled="!props.isEditing || selectedIds.length === 0" @click="onRemoveClick">
-            移除
+            <el-icon><Delete /></el-icon>移除
           </el-button>
           <el-button type="success" size="small" @click="emit('generateDoc', selectedIds, props.customTabId)">
-            生成文档
+            <el-icon><Document /></el-icon>生成文档
           </el-button>
         </template>
          <template v-else>
-           <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog">新建</el-button>
+           <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
            <el-button type="success" size="small" @click="onInsertClick">
-             插入待生成清单
+             <el-icon><Upload /></el-icon>插入待生成清单
            </el-button>
          </template>
-         <template v-if="selectedIds.length > 0">
-           <el-button type="primary" size="small" plain @click="batchApprove('submit')">批量提交</el-button>
-           <el-button type="success" size="small" plain @click="batchApprove('approve')">批量通过</el-button>
-           <el-button type="danger" size="small" plain @click="batchReject">批量驳回</el-button>
-         </template>
+         <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+           <el-button type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+           <el-button type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
       </div>
     </div>
 
@@ -163,6 +148,10 @@
     </div>
 
     <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" :title="editDialogTitle" width="80%" top="5vh">
+      <div v-if="!isNew && editingRow" style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:12px;">
+        <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="default">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
+        <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:13px;">原因：{{ lastRejectReason }}</span>
+      </div>
       <el-form :model="editForm" label-width="120px" size="small">
         <el-row :gutter="16">
           <el-col :span="12">
@@ -272,12 +261,12 @@
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
 import { useAuthStore } from '../store/auth'
-import { approveEntry } from '../api/approval'
+import { approveEntry, getApprovalLogs } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps({
@@ -298,6 +287,7 @@ const showEditDialog = ref(false)
 const isNew = ref(false)
 const editingId = ref(null)
 const editingRow = ref(null)
+const lastRejectReason = ref('')
 const selectedIds = ref([])
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
@@ -1157,15 +1147,24 @@ function buildTree(entries) {
   return roots
 }
 
-function editRow(row) {
-  isNew.value = false
-  editingId.value = row.id
-  editingRow.value = row
-  parentRow.value = null
-  Object.assign(editForm, row)
-  syncVersionFromForm()
-  showEditDialog.value = true
-}
+ async function editRow(row) {
+   isNew.value = false
+   editingId.value = row.id
+   editingRow.value = row
+   parentRow.value = null
+   Object.assign(editForm, row)
+   syncVersionFromForm()
+   lastRejectReason.value = ''
+   if (row.approvalStatus === '驳回') {
+     try {
+       const res = await getApprovalLogs(row.id)
+       const logs = res.data || res || []
+       const rejectLog = logs.find(l => l.action === 'reject')
+       if (rejectLog) lastRejectReason.value = rejectLog.comment || ''
+     } catch (e) { /* ignore */ }
+   }
+   showEditDialog.value = true
+ }
 
 function addChildRow(row) {
   isNew.value = true
@@ -1240,7 +1239,10 @@ watch(() => props.versionId, () => {
   })
  </script>
 
-<style scoped>
+ <style scoped>
+.toolbar-right .el-button .el-icon + span,
+.toolbar-right .el-button .el-icon { margin-right: 4px; }
+.toolbar-right .el-button { --el-button-icon-space: 4px; }
 .data-list-tab {
   display: flex;
   flex-direction: column;
