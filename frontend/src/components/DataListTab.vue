@@ -728,9 +728,11 @@ async function handleApprove(row, action) {
 }
 
 let quillInstance = null
+let QuillModule = null
 
 function onQuillReady(quill) {
   quillInstance = quill
+  QuillModule = quill.constructor
   const toolbar = quill.getModule('toolbar')
   toolbar.addHandler('image', () => {
     showImagePicker.value = true
@@ -738,17 +740,17 @@ function onQuillReady(quill) {
 }
 
 function insertImage(img) {
-  if (quillInstance && img.url) {
+  if (quillInstance && QuillModule && img.url) {
     const range = quillInstance.getSelection(true)
-    const html = `<div class="img-thumb-block" contenteditable="false" style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;margin:4px 0;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;cursor:pointer;" data-img-url="${img.url}"><img src="${img.url}" style="max-width:60px;max-height:40px;object-fit:contain;border-radius:4px;" /><span style="font-size:13px;color:#475569;">${img.filename || '图片'}</span></div>`
-    quillInstance.clipboard.dangerouslyPasteHTML(range.index, html)
+    quillInstance.insertEmbed(range.index, 'image', img.url, 'user')
+    quillInstance.setSelection(range.index + 1)
   }
 }
 
 function onEditDialogClick(e) {
-  const target = e.target.closest('.img-thumb-block')
-  if (target) {
-    const url = target.getAttribute('data-img-url')
+  const target = e.target
+  if (target.tagName === 'IMG' && target.closest('.ql-editor')) {
+    const url = target.getAttribute('src')
     if (url) {
       imgPreviewUrl.value = url
       imgPreviewVisible.value = true
@@ -1566,4 +1568,16 @@ watch(() => props.versionId, () => {
 .quill-wrapper :deep(.ql-toolbar.ql-snow) { border-radius: 8px 8px 0 0; border-color: #dcdfe6; }
 .quill-wrapper :deep(.ql-container.ql-snow) { border-radius: 0 0 8px 8px; border-color: #dcdfe6; height: 250px; font-size: 14px; }
 .quill-wrapper :deep(.ql-editor) { min-height: 200px; }
+.quill-wrapper :deep(.ql-editor img) {
+  max-width: 80px;
+  max-height: 60px;
+  object-fit: contain;
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  padding: 2px;
+  background: #f8fafc;
+  vertical-align: middle;
+  margin: 4px 4px 4px 0;
+}
 </style>
