@@ -52,9 +52,10 @@
              <el-icon><Upload /></el-icon>插入待生成清单
            </el-button>
          </template>
-         <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
-           <el-button type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
-           <el-button type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+          <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+            <el-button type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+            <el-button type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+            <el-button type="warning" size="small" plain @click="batchChangeStatus"><el-icon><Edit /></el-icon>状态修改</el-button>
       </div>
     </div>
 
@@ -279,7 +280,7 @@
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
@@ -764,6 +765,40 @@ async function batchReject() {
   }
   ElMessage.success(`成功驳回 ${successCount} 条`)
   handleQuery(true)
+ }
+
+async function batchChangeStatus() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要操作的条目')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的功能状态', '批量修改功能状态', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPlaceholder: '如：可交付、立项中、缺失等',
+      inputValidator: (v) => (v && v.trim()) ? true : '状态不能为空'
+    })
+    const newStatus = value.trim()
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) {
+          await updateEntry(id, { ...row, colStatus: newStatus })
+          successCount++
+        }
+      } catch (e) {
+        console.error(`修改状态失败 id=${id}:`, e)
+      }
+    }
+    ElMessage.success(`成功修改 ${successCount} 条功能状态`)
+    handleQuery(true)
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error('操作失败')
+    }
+  }
 }
 
 function statusTagType(status) {
