@@ -247,13 +247,17 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <span style="margin-right: auto;">
-          <el-button v-if="!isNew && canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交</el-button>
-          <el-button v-if="!isNew && canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">通过</el-button>
-          <el-button v-if="!isNew && canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
-        </span>
-        <el-button @click="onDialogChange(false)">取消</el-button>
-        <el-button type="primary" @click="saveEdit">保存</el-button>
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+          <div>
+            <el-button v-if="!isNew && canSubmit(editingRow)" type="primary" size="small" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
+            <el-button v-if="!isNew && canApprove(editingRow)" type="success" size="small" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
+            <el-button v-if="!isNew && canReject(editingRow)" type="danger" size="small" @click="handleReject(editingRow)">驳回</el-button>
+          </div>
+          <div>
+            <el-button size="small" @click="onDialogChange(false)">取消</el-button>
+            <el-button type="primary" size="small" @click="saveEdit">保存</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
   </div>
