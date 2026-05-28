@@ -27,6 +27,7 @@
               <img :src="img.url" :alt="img.filename" />
             </div>
             <div class="image-info">
+              <el-button size="small" type="primary" link @click="startEditName(img)">{{ editingImgId === img.id ? '保存' : '编辑' }}</el-button>
               <template v-if="editingImgId === img.id">
                 <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" />
               </template>
@@ -36,7 +37,6 @@
               <span class="image-size">{{ formatSize(img.size) }}</span>
             </div>
             <div class="image-actions">
-              <el-button size="small" type="primary" link @click="startEditName(img)">{{ editingImgId === img.id ? '保存' : '编辑' }}</el-button>
               <el-button size="small" type="primary" link @click="copyUrl(img)">复制URL</el-button>
               <el-button size="small" link @click="showReferences(img)">引用</el-button>
               <el-button size="small" link @click="replaceImage(img)">替换</el-button>
@@ -46,9 +46,9 @@
         </div>
       </div>
     </div>
-    <el-dialog v-model="previewVisible" title="图片预览" width="auto" :style="{ maxWidth: '90vw' }">
-      <div style="max-width:85vw;max-height:75vh;display:flex;align-items:center;justify-content:center;">
-        <img v-if="previewUrl" :src="previewUrl" style="max-width:85vw;max-height:75vh;object-fit:contain;" />
+    <el-dialog v-model="previewVisible" title="图片预览" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
+      <div style="display:flex;align-items:center;justify-content:center;">
+        <img v-if="previewUrl" :src="previewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
       </div>
     </el-dialog>
     <el-dialog v-model="refVisible" title="引用列表" width="60%">
