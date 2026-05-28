@@ -256,7 +256,7 @@
                 <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
               </button>
             </div>
-            <div class="feature-editor-body" contenteditable="true" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick"></div>
+            <div class="feature-editor-body" contenteditable="true" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
           </div>
         </el-form-item>
         <el-row :gutter="16">
@@ -334,8 +334,9 @@
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
         </div>
-      </el-dialog>
-     </div>
+</el-dialog>
+      <div v-if="editorTooltip" class="editor-tooltip" :style="{ left: editorTooltip.x + 'px', top: editorTooltip.y + 'px' }">{{ editorTooltip.text }}</div>
+      </div>
 </template>
 
 <script setup>
@@ -756,6 +757,8 @@ function onEditorPaste(e) {
 
 const replacingCard = ref(null)
 const showReplacePicker = ref(false)
+const editorTooltip = ref(null)
+let tooltipTimer = null
 
 function onEditorClick(e) {
   const card = e.target.closest('.image-card')
@@ -837,6 +840,31 @@ function onEditorClick(e) {
       imgPreviewUrl.value = url
       imgPreviewVisible.value = true
     }
+  }
+}
+
+function onEditorMouseEnter() {}
+
+function onEditorMouseLeave() {
+  clearTimeout(tooltipTimer)
+  editorTooltip.value = null
+}
+
+function onEditorMouseMove(e) {
+  const card = e.target.closest('.image-card')
+  if (card && card.closest('.feature-editor-body')) {
+    const name = card.getAttribute('data-filename') || card.getAttribute('data-url')
+    if (!editorTooltip.value || editorTooltip.value.text !== name) {
+      clearTimeout(tooltipTimer)
+      tooltipTimer = setTimeout(() => {
+        editorTooltip.value = { text: name, x: e.clientX + 12, y: e.clientY - 30 }
+      }, 300)
+    } else {
+      editorTooltip.value = { text: name, x: e.clientX + 12, y: e.clientY - 30 }
+    }
+  } else {
+    clearTimeout(tooltipTimer)
+    editorTooltip.value = null
   }
 }
 
@@ -1766,4 +1794,9 @@ watch(() => props.versionId, () => {
 .feature-editor :deep(.image-action-btn:hover) { background: #ecf5ff; }
 .feature-editor :deep(.image-action-danger) { color: #f56c6c; }
 .feature-editor :deep(.image-action-danger:hover) { background: #fef0f0; }
+.editor-tooltip {
+  position: fixed; z-index: 9999; background: #303133; color: #fff;
+  font-size: 12px; padding: 4px 8px; border-radius: 4px; white-space: nowrap;
+  line-height: 1.4; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
 </style>

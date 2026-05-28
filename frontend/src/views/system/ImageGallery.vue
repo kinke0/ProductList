@@ -32,7 +32,7 @@
                 <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(img)" @blur="saveImgName(img)" />
               </template>
               <template v-else>
-                <el-tooltip :content="img.filename" placement="top" :show-after="300">
+                <el-tooltip :content="img.filename" placement="top" :show-after="300" :hide-after="0">
                   <span class="image-name">{{ img.filename }}</span>
                 </el-tooltip>
               </template>
