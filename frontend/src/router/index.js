@@ -58,6 +58,12 @@ const routes = [
         name: 'StatusManage',
         component: () => import('../views/system/OptionManage.vue'),
         meta: { title: '功能状态维护', type: 'status', roles: ['ADMIN'] }
+      },
+      {
+        path: 'image-gallery',
+        name: 'ImageGallery',
+        component: () => import('../views/system/ImageGallery.vue'),
+        meta: { title: '图床管理', roles: ['ADMIN'] }
       }
     ]
   }

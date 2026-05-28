@@ -250,7 +250,7 @@
           <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" />
         </el-form-item>
         <el-form-item label="功能说明">
-          <el-input v-model="editForm.colFeatureDesc" type="textarea" :rows="10" />
+          <QuillEditor v-model:content="editForm.colFeatureDesc" content-type="html" :toolbar="quillToolbar" style="height:300px;" @ready="onQuillReady" />
         </el-form-item>
         <el-row :gutter="16">
           <el-col :span="12">
@@ -320,8 +320,9 @@
          <el-button @click="showBatchManagerDialog = false">取消</el-button>
          <el-button type="primary" @click="confirmBatchManager">确定</el-button>
        </template>
-     </el-dialog>
-    </div>
+</el-dialog>
+     <ImagePicker v-model="showImagePicker" @select="insertImage" />
+     </div>
 </template>
 
 <script setup>
@@ -335,6 +336,9 @@ import { getOptions } from '../api/option'
 import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuillEditor } from '@vueup/vue-quill'
+import '@vueup/vue-quill/dist/vue-quill.snow.css'
+import ImagePicker from './ImagePicker.vue'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -362,6 +366,14 @@ const batchSolutionValue = ref('')
 const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
 const selectedIds = ref([])
+const showImagePicker = ref(false)
+const quillToolbar = [
+  [{ header: [1, 2, 3, false] }],
+  ['bold', 'italic', 'underline', 'strike'],
+  [{ list: 'ordered' }, { list: 'bullet' }],
+  ['image', 'link'],
+  ['clean']
+]
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
 const appRoles = ref([])
@@ -709,6 +721,24 @@ async function handleApprove(row, action) {
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+let quillInstance = null
+
+function onQuillReady(quill) {
+  quillInstance = quill
+  const toolbar = quill.getModule('toolbar')
+  toolbar.addHandler('image', () => {
+    showImagePicker.value = true
+  })
+}
+
+function insertImage(img) {
+  if (quillInstance && img.url) {
+    const range = quillInstance.getSelection(true)
+    quillInstance.insertEmbed(range.index, 'image', img.url)
+    quillInstance.setSelection(range.index + 1)
   }
 }
 

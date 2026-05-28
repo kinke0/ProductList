@@ -61,6 +61,10 @@
             </el-menu-item>
           </el-sub-menu>
         </el-sub-menu>
+        <el-menu-item v-if="authStore.isAdmin()" index="/image-gallery">
+          <el-icon><Picture /></el-icon>
+          <span>图床管理</span>
+        </el-menu-item>
       </el-menu>
     </div>
 
@@ -91,7 +95,7 @@
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import { ref } from 'vue'
-import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand } from '@element-plus/icons-vue'
+import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
