@@ -1740,12 +1740,13 @@ watch(() => props.versionId, () => {
 .feature-editor :deep(.image-name) {
   font-size: 12px; color: var(--si-text-primary); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
-  position: relative;
+  position: relative; cursor: default;
 }
-.feature-editor :deep(.image-name:hover) {
-  overflow: visible; white-space: normal; position: relative; z-index: 10;
-  background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); padding: 2px 4px;
-  border-radius: 3px; max-width: none;
+.feature-editor :deep(.image-name:hover::after) {
+  content: attr(title); position: absolute; left: 0; top: 100%; z-index: 1000;
+  background: #303133; color: #fff; font-size: 12px; padding: 4px 8px;
+  border-radius: 4px; white-space: nowrap; line-height: 1.4;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2); pointer-events: none;
 }
 .feature-editor :deep(.image-size) {
   font-size: 11px; color: var(--si-text-muted); flex-shrink: 0; margin-left: 4px;
