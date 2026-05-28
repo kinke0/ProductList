@@ -894,7 +894,8 @@ function insertImage(img) {
   card.setAttribute('data-url', img.url)
   card.setAttribute('data-filename', name)
   card.setAttribute('data-id', img.id || '')
-  card.title = name = `<span class="image-thumb"><img src="${img.url}" alt="${name}" /></span><span class="image-info"><button type="button" class="image-action-btn image-edit-name-btn" data-action="edit-name">编辑</button><span class="image-name">${name}</span><span class="image-size">${formatSize(img.size)}</span></span><span class="image-actions"><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button><button type="button" class="image-action-btn" data-action="replace">替换</button></span>`
+  card.title = name
+  card.innerHTML = `<span class="image-thumb"><img src="${img.url}" alt="${name}" /></span><span class="image-info"><button type="button" class="image-action-btn image-edit-name-btn" data-action="edit-name">编辑</button><span class="image-name">${name}</span><span class="image-size">${formatSize(img.size)}</span></span><span class="image-actions"><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button><button type="button" class="image-action-btn" data-action="replace">替换</button></span>`
   const after = document.createElement('br')
   editorRef.value.focus()
   const sel = window.getSelection()
