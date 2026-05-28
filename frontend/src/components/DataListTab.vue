@@ -1735,18 +1735,18 @@ watch(() => props.versionId, () => {
   max-width: 100%; max-height: 100%; object-fit: contain;
 }
 .feature-editor :deep(.image-info) {
-  display: flex; padding: 6px 8px; justify-content: space-between; align-items: center; overflow: hidden;
+  display: flex; padding: 6px 8px; justify-content: space-between; align-items: center;
 }
 .feature-editor :deep(.image-name) {
   font-size: 12px; color: var(--si-text-primary); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
-  position: relative; cursor: default;
+  cursor: default;
 }
-.feature-editor :deep(.image-name:hover::after) {
-  content: attr(title); position: absolute; left: 0; top: 100%; z-index: 1000;
-  background: #303133; color: #fff; font-size: 12px; padding: 4px 8px;
-  border-radius: 4px; white-space: nowrap; line-height: 1.4;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2); pointer-events: none;
+.feature-editor :deep(.image-card:hover > .image-tooltip) {
+  display: none;
+}
+.feature-editor :deep(.image-tooltip) {
+  display: none;
 }
 .feature-editor :deep(.image-size) {
   font-size: 11px; color: var(--si-text-muted); flex-shrink: 0; margin-left: 4px;
