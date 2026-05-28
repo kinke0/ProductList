@@ -258,9 +258,9 @@ onMounted(async () => {
 .image-card:hover { box-shadow: var(--si-shadow-md); }
 .image-thumb { height: 140px; overflow: hidden; cursor: pointer; display: flex; align-items: center; justify-content: center; background: #f5f5f5; }
 .image-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.image-info { padding: 6px 8px; display: flex; justify-content: space-between; align-items: center; }
-.image-name { font-size: 12px; color: var(--si-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
-.image-size { font-size: 11px; color: var(--si-text-muted); }
-.image-actions { padding: 4px 8px 6px; display: flex; gap: 4px; justify-content: center; border-top: 1px solid var(--si-border-light); }
-.image-name-edit { font-size: 12px; width: 90px; border: 1px solid #409eff; border-radius: 3px; padding: 1px 4px; outline: none; }
+.image-info { padding: 6px 8px; display: flex; align-items: center; overflow: hidden; }
+.image-name { font-size: 12px; color: var(--si-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.image-size { font-size: 11px; color: var(--si-text-muted); flex-shrink: 0; margin-left: 4px; }
+
+.image-name-edit { font-size: 12px; width: 70px; border: 1px solid #409eff; border-radius: 3px; padding: 0 3px; outline: none; height: 20px; line-height: 20px; }
 </style>

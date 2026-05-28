@@ -760,10 +760,10 @@ function onEditorClick(e) {
   const card = e.target.closest('.image-card')
   if (card && card.closest('.feature-editor-body')) {
     e.preventDefault()
-    const url = card.getAttribute('data-url')
     const actionBtn = e.target.closest('[data-action]')
     if (actionBtn) {
       const action = actionBtn.getAttribute('data-action')
+      const url = card.getAttribute('data-url')
       if (action === 'preview' && url) {
         imgPreviewUrl.value = url
         imgPreviewVisible.value = true
@@ -777,12 +777,12 @@ function onEditorClick(e) {
           const input = document.createElement('input')
           input.type = 'text'
           input.value = oldName
-          input.style.cssText = 'width:80px;font-size:12px;border:1px solid #409eff;border-radius:3px;padding:1px 4px;outline:none;'
+          input.style.cssText = 'width:60px;font-size:12px;border:1px solid #409eff;border-radius:3px;padding:0 3px;outline:none;height:20px;line-height:20px;vertical-align:middle;'
           nameEl.textContent = ''
           nameEl.appendChild(input)
           input.focus()
           input.select()
-          actionBtn.textContent = '保存'
+          actionBtn.textContent = '✓'
           actionBtn.setAttribute('data-action', 'save-name')
           const doSave = () => {
             const newName = input.value.trim() || oldName
@@ -806,9 +806,12 @@ function onEditorClick(e) {
       }
       return
     }
-    if (url) {
-      imgPreviewUrl.value = url
-      imgPreviewVisible.value = true
+    if (e.target.closest('.image-thumb')) {
+      const url = card.getAttribute('data-url')
+      if (url) {
+        imgPreviewUrl.value = url
+        imgPreviewVisible.value = true
+      }
     }
     return
   }
@@ -848,7 +851,7 @@ function insertImage(img) {
   card.setAttribute('data-url', img.url)
   card.setAttribute('data-filename', name)
   card.setAttribute('data-id', img.id || '')
-  card.innerHTML = `<span class="image-thumb"><img src="${img.url}" alt="${name}" /></span><span class="image-info"><button type="button" class="image-action-btn" data-action="edit-name">编辑</button><span class="image-name" title="${name}">${name}</span><span class="image-size">${formatSize(img.size)}</span></span><span class="image-actions"><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button><button type="button" class="image-action-btn" data-action="replace">替换</button></span>`
+  card.innerHTML = `<span class="image-thumb"><img src="${img.url}" alt="${name}" /></span><span class="image-info"><button type="button" class="image-action-btn image-edit-name-btn" data-action="edit-name">编辑</button><span class="image-name" title="${name}">${name}</span><span class="image-size">${formatSize(img.size)}</span></span><span class="image-actions"><button type="button" class="image-action-btn" data-action="preview">预览</button><button type="button" class="image-action-btn image-action-danger" data-action="delete">删除</button><button type="button" class="image-action-btn" data-action="replace">替换</button></span>`
   const after = document.createElement('br')
   editorRef.value.focus()
   const sel = window.getSelection()
@@ -1717,14 +1720,18 @@ watch(() => props.versionId, () => {
   max-width: 100%; max-height: 100%; object-fit: contain;
 }
 .feature-editor :deep(.image-info) {
-  display: flex; padding: 6px 8px; justify-content: space-between; align-items: center;
+  display: flex; padding: 6px 8px; justify-content: space-between; align-items: center; overflow: hidden;
 }
 .feature-editor :deep(.image-name) {
   font-size: 12px; color: var(--si-text-primary); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; max-width: 120px;
+  text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
 }
 .feature-editor :deep(.image-size) {
-  font-size: 11px; color: var(--si-text-muted);
+  font-size: 11px; color: var(--si-text-muted); flex-shrink: 0; margin-left: 4px;
+}
+.feature-editor :deep(.image-edit-name-btn) {
+  flex-shrink: 0; margin-right: 2px; min-width: auto; padding: 0 3px; font-size: 10px; line-height: 1.2;
+  height: 18px;
 }
 .feature-editor :deep(.image-actions) {
   display: flex; flex-wrap: wrap; gap: 2px; justify-content: center;
