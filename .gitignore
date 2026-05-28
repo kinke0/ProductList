@@ -15,6 +15,9 @@ generated-docs/
 frontend/node_modules/
 frontend/dist/
 
+# Template files
+src/main/resources/templates/word/*.docx
+
 # IDE
 .idea/
 *.iml
