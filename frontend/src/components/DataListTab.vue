@@ -728,11 +728,46 @@ async function handleApprove(row, action) {
 }
 
 let quillInstance = null
-let QuillModule = null
 
 function onQuillReady(quill) {
   quillInstance = quill
-  QuillModule = quill.constructor
+  const Parchment = quill.constructor.import('parchment')
+  const BlockEmbed = Parchment.query('block/embed')
+
+  class ImageCardBlot extends BlockEmbed {
+    static blotName = 'image-card'
+    static tagName = 'div'
+    static className = 'ql-image-card'
+    static create(value) {
+      const node = super.create()
+      node.setAttribute('contenteditable', 'false')
+      node.setAttribute('data-url', value.url || '')
+      node.setAttribute('data-filename', value.filename || '图片')
+      const img = document.createElement('img')
+      img.setAttribute('src', value.url || '')
+      img.setAttribute('alt', value.filename || '图片')
+      img.setAttribute('data-img-url', value.url || '')
+      const label = document.createElement('div')
+      label.className = 'ql-image-card-label'
+      label.textContent = value.filename || '图片'
+      node.appendChild(img)
+      node.appendChild(label)
+      node.addEventListener('click', () => {
+        imgPreviewUrl.value = value.url
+        imgPreviewVisible.value = true
+      })
+      return node
+    }
+    static value(node) {
+      return {
+        url: node.getAttribute('data-url') || '',
+        filename: node.getAttribute('data-filename') || ''
+      }
+    }
+  }
+
+  quill.constructor.register(ImageCardBlot)
+
   const toolbar = quill.getModule('toolbar')
   toolbar.addHandler('image', () => {
     showImagePicker.value = true
@@ -742,18 +777,26 @@ function onQuillReady(quill) {
 function insertImage(img) {
   if (quillInstance && img.url) {
     const range = quillInstance.getSelection(true)
-    const name = img.filename || '图片'
-    const html = `<div style="display:inline-block;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff;margin:4px;cursor:pointer;" contenteditable="false"><div style="height:90px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;"><img src="${img.url}" style="max-width:120px;max-height:90px;object-fit:contain;" /></div><div style="padding:4px 8px;font-size:12px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:center;">${name}</div></div>`
-    quillInstance.clipboard.dangerouslyPasteHTML(range.index, html)
+    quillInstance.insertEmbed(range.index, 'image-card', { url: img.url, filename: img.filename || '图片' }, 'user')
+    quillInstance.setSelection(range.index + 1)
   }
 }
 
 function onEditDialogClick(e) {
-  const target = e.target
-  if (target.tagName === 'IMG' && target.closest('.ql-editor')) {
+  const card = e.target.closest('.ql-image-card')
+  if (card && card.closest('.ql-editor')) {
     e.preventDefault()
     e.stopPropagation()
-    const url = target.getAttribute('src')
+    const url = card.getAttribute('data-url') || card.getAttribute('data-img-url')
+    if (url) {
+      imgPreviewUrl.value = url
+      imgPreviewVisible.value = true
+    }
+  }
+  if (e.target.tagName === 'IMG' && e.target.closest('.ql-editor')) {
+    e.preventDefault()
+    e.stopPropagation()
+    const url = e.target.getAttribute('data-img-url') || e.target.getAttribute('src')
     if (url) {
       imgPreviewUrl.value = url
       imgPreviewVisible.value = true
@@ -1571,6 +1614,20 @@ watch(() => props.versionId, () => {
 .quill-wrapper :deep(.ql-toolbar.ql-snow) { border-radius: 8px 8px 0 0; border-color: #dcdfe6; }
 .quill-wrapper :deep(.ql-container.ql-snow) { border-radius: 0 0 8px 8px; border-color: #dcdfe6; height: 250px; font-size: 14px; }
 .quill-wrapper :deep(.ql-editor) { min-height: 200px; }
+.quill-wrapper :deep(.ql-image-card) {
+  display: inline-block; border: 1px solid #e2e8f0; border-radius: 8px;
+  overflow: hidden; background: #fff; margin: 4px 8px 4px 0; cursor: pointer;
+  vertical-align: middle;
+}
+.quill-wrapper :deep(.ql-image-card img) {
+  display: block; max-width: 120px; max-height: 90px;
+  object-fit: contain; background: #f5f5f5;
+}
+.quill-wrapper :deep(.ql-image-card-label) {
+  padding: 3px 8px; font-size: 12px; color: #475569;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 120px; text-align: center; background: #fff;
+}
 .quill-wrapper :deep(.ql-editor img) {
   cursor: pointer;
 }
