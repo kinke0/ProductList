@@ -273,6 +273,19 @@
         </div>
       </template>
     </el-dialog>
+    <el-dialog v-model="showBatchStatusDialog" title="批量修改功能状态" width="400px">
+      <el-form label-width="80px">
+        <el-form-item label="功能状态">
+          <el-select v-model="batchStatusValue" placeholder="请选择" style="width:100%;">
+            <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBatchStatusDialog = false">取消</el-button>
+        <el-button type="primary" @click="confirmBatchStatus">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -307,6 +320,8 @@ const isNew = ref(false)
 const editingId = ref(null)
 const editingRow = ref(null)
 const lastRejectReason = ref('')
+const showBatchStatusDialog = ref(false)
+const batchStatusValue = ref('')
 const selectedIds = ref([])
 const manuallySelectedIds = ref(new Set())
 const parentRow = ref(null)
@@ -767,38 +782,35 @@ async function batchReject() {
   handleQuery(true)
  }
 
-async function batchChangeStatus() {
+ function batchChangeStatus() {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先选择要操作的条目')
     return
   }
-  try {
-    const { value } = await ElMessageBox.prompt('请输入新的功能状态', '批量修改功能状态', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPlaceholder: '如：可交付、立项中、缺失等',
-      inputValidator: (v) => (v && v.trim()) ? true : '状态不能为空'
-    })
-    const newStatus = value.trim()
-    let successCount = 0
-    for (const id of selectedIds.value) {
-      try {
-        const row = findRowById(id, tableData.value)
-        if (row) {
-          await updateEntry(id, { ...row, colStatus: newStatus })
-          successCount++
-        }
-      } catch (e) {
-        console.error(`修改状态失败 id=${id}:`, e)
+  batchStatusValue.value = ''
+  showBatchStatusDialog.value = true
+}
+
+async function confirmBatchStatus() {
+  if (!batchStatusValue.value) {
+    ElMessage.warning('请选择功能状态')
+    return
+  }
+  let successCount = 0
+  for (const id of selectedIds.value) {
+    try {
+      const row = findRowById(id, tableData.value)
+      if (row) {
+        await updateEntry(id, { ...row, colStatus: batchStatusValue.value })
+        successCount++
       }
-    }
-    ElMessage.success(`成功修改 ${successCount} 条功能状态`)
-    handleQuery(true)
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') {
-      ElMessage.error('操作失败')
+    } catch (e) {
+      console.error(`修改状态失败 id=${id}:`, e)
     }
   }
+  showBatchStatusDialog.value = false
+  ElMessage.success(`成功修改 ${successCount} 条功能状态`)
+  handleQuery(true)
 }
 
 function statusTagType(status) {
