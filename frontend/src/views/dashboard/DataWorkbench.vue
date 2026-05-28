@@ -90,6 +90,7 @@
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
                 :custom-tab-id="tab.id"
+                :user-role="currentUserRole"
                 :refresh-trigger="customTabRefresh"
                 @insert-to-list="onInsertToList"
                 @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
