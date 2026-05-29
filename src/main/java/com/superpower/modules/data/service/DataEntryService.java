@@ -1,6 +1,8 @@
 package com.superpower.modules.data.service;
 
 import com.superpower.common.BusinessException;
+import com.superpower.modules.approval.entity.ApprovalLog;
+import com.superpower.modules.approval.repository.ApprovalLogRepository;
 import com.superpower.modules.data.dto.DataEntryDTO;
 import com.superpower.modules.data.dto.ExcelImportResult;
 import com.superpower.modules.data.dto.TreeNodeDTO;
@@ -18,10 +20,9 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class DataEntryService {
@@ -29,12 +30,15 @@ public class DataEntryService {
     private final DataEntryRepository entryRepository;
     private final DataVersionRepository dataVersionRepository;
     private final CustomTabEntryRepository customTabEntryRepository;
+    private final ApprovalLogRepository approvalLogRepository;
 
     public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
-                            CustomTabEntryRepository customTabEntryRepository) {
+                            CustomTabEntryRepository customTabEntryRepository,
+                            ApprovalLogRepository approvalLogRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
         this.customTabEntryRepository = customTabEntryRepository;
+        this.approvalLogRepository = approvalLogRepository;
     }
 
     public List<TreeNodeDTO> getTree(Long versionId, String name, String status, String productManager,
@@ -752,5 +756,266 @@ public class DataEntryService {
         if (val != null && !val.isEmpty()) {
             try { setter.accept(e, Integer.parseInt(val)); } catch (NumberFormatException ignored) {}
         }
+    }
+
+    public String getPreviewHtml(Long entryId) {
+        DataEntry l3 = entryRepository.findById(entryId)
+                .orElseThrow(() -> new BusinessException("条目不存在"));
+        List<DataEntry> all = collectL3AndDescendants(l3);
+        Map<Long, String> rejectReasons = new HashMap<>();
+        for (DataEntry e : all) {
+            if ("驳回".equals(e.getApprovalStatus())) {
+                List<ApprovalLog> logs = approvalLogRepository.findByEntryIdOrderByCreatedAtDesc(e.getId());
+                for (ApprovalLog log : logs) {
+                    if ("reject".equals(log.getAction())) {
+                        rejectReasons.put(e.getId(), log.getComment());
+                        break;
+                    }
+                }
+            }
+        }
+
+        StringBuilder nav = new StringBuilder();
+        StringBuilder body = new StringBuilder();
+        Map<Long, List<DataEntry>> childrenMap = new HashMap<>();
+        for (DataEntry e : all) {
+            if (!e.getId().equals(l3.getId())) {
+                childrenMap.computeIfAbsent(e.getParentId() != null ? e.getParentId() : l3.getId(), k -> new ArrayList<>()).add(e);
+            }
+        }
+        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons);
+
+        return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+            + "*{margin:0;padding:0;box-sizing:border-box;}"
+            + ".layout{display:flex;height:100vh;}"
+            + ".sidebar{width:260px;flex-shrink:0;overflow-y:auto;border-right:1px solid #e2e8f0;background:#f8fafc;padding:12px 0;font-family:'Microsoft YaHei',sans-serif;}"
+            + ".sidebar a{display:block;padding:6px 12px 6px 16px;color:#334155;text-decoration:none;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}"
+            + ".sidebar a:hover{background:#e2e8f0;color:#1e293b;}"
+            + ".sidebar a.active{background:#dbeafe;color:#2563eb;font-weight:600;}"
+            + ".sidebar .lvl0{padding-left:8px;font-weight:600;}"
+            + ".sidebar .lvl1{padding-left:24px;}"
+            + ".sidebar .lvl2{padding-left:40px;}"
+            + ".sidebar .lvl3{padding-left:56px;}"
+            + ".sidebar .lvl4{padding-left:72px;}"
+            + ".content{flex:1;overflow-y:auto;padding:36px 48px;}"
+            + "body{font-family:'SimSun','宋体',serif;font-size:10.5pt;line-height:1.5;color:#000;}"
+            + "h3{font-size:16pt;font-weight:bold;margin:12pt 0 6pt;line-height:1.5;scroll-margin-top:12px;display:flex;align-items:center;}"
+            + ".p{text-indent:2em;margin:0;line-height:1.5;font-size:10.5pt;}"
+            + ".img-wrap{text-align:center;margin:6pt 0;}"
+            + ".img-wrap img{max-width:100%;max-height:400px;}"
+            + ".img-caption{text-align:center;font-size:9pt;color:#666;margin-top:2pt;}"
+            + ".toggle{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;cursor:pointer;margin-right:2px;user-select:none;font-size:10px;background:#e2e8f0;border-radius:3px;color:#475569;font-weight:bold;}"
+            + "</style></head><body><div class='layout'>"
+            + "<div class='sidebar' id='sidebar'>" + nav + "</div>"
+            + "<div class='content' id='content'>" + body + "</div>"
+            + "</div><script>"
+            + "function scrollToAnchor(id){document.getElementById(id).scrollIntoView({behavior:'smooth'});}"
+            + "document.querySelectorAll('.toggle').forEach(t=>{t.onclick=function(e){e.preventDefault();e.stopPropagation();var p=t.parentElement;var ch=p.parentElement.querySelector('div');if(ch){ch.style.display=ch.style.display==='none'?'block':'none';t.textContent=ch.style.display==='none'?'+':'-'}}});"
+            + "</script></body></html>";
+    }
+
+    private void buildNavAndBody(DataEntry node, Map<Long, List<DataEntry>> childrenMap,
+                                  StringBuilder nav, StringBuilder body, int depth,
+                                  Map<Long, String> rejectReasons) {
+        String nodeId = "e" + node.getId();
+        String label = node.getColProductSystem() != null ? node.getColProductSystem() : "";
+        List<DataEntry> children = childrenMap.getOrDefault(node.getId(), new ArrayList<>());
+        children.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+        boolean hasChildren = !children.isEmpty();
+        nav.append("<div>");
+        if (hasChildren) {
+            nav.append("<a href='javascript:void(0)' onclick=\"scrollToAnchor('").append(nodeId).append("')\" class='lvl").append(depth).append("'><span class='toggle'>-</span>").append(label).append("</a>");
+        } else {
+            nav.append("<a href='javascript:void(0)' onclick=\"scrollToAnchor('").append(nodeId).append("')\" class='lvl").append(depth).append("' style='padding-left:").append(8 + depth * 16).append("px'>").append(label).append("</a>");
+        }
+        body.append("<h3 id='").append(nodeId).append("' style='display:flex;align-items:center;'>")
+            .append("<span>").append(label).append("</span>");
+        String approvalStatus = node.getApprovalStatus();
+        if (approvalStatus != null && !approvalStatus.isEmpty()) {
+            body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
+            if ("驳回".equals(approvalStatus)) {
+                String reason = rejectReasons.get(node.getId());
+                if (reason != null && !reason.isEmpty()) {
+                    body.append("<span style='color:#f56c6c;font-size:10pt;margin-left:6px;'>原因：").append(reason).append("</span>");
+                }
+            }
+        }
+        body.append("</h3>");
+        String desc = node.getColFeatureDesc();
+        if (desc != null && !desc.isBlank()) {
+            body.append(toPreviewParagraphs(desc));
+        }
+        if (hasChildren) {
+            nav.append("<div>");
+            for (DataEntry child : children) {
+                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons);
+            }
+            nav.append("</div>");
+        }
+        nav.append("</div>");
+    }
+
+    private String toPreviewParagraphs(String desc) {
+        String cleaned = cleanImageCardsToText(desc);
+        cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
+        StringBuilder sb = new StringBuilder();
+        for (String line : cleaned.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                String url = trimmed;
+                String caption = "";
+                int pipeIdx = url.indexOf('|');
+                if (pipeIdx > 0) { caption = url.substring(pipeIdx + 1); url = url.substring(0, pipeIdx); }
+                String enc = encodeUrl(url);
+                sb.append("<div class='img-wrap'><img src='").append(enc).append("' />");
+                if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption).append("</div>");
+                sb.append("</div>");
+            } else {
+                sb.append("<p class='p'>").append(trimmed.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+            }
+        }
+        return sb.toString();
+    }
+
+    private void appendTextLines(StringBuilder sb, String text) {
+        for (String line : text.split("\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                sb.append("<p class='p'>").append(trimmed.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+            }
+        }
+    }
+
+    private String cleanImageCardsToText(String html) {
+        Pattern cardPattern = Pattern.compile("<(?:span|div)\\s+class=\"(?:image-card|img-card)\"[^>]*>", Pattern.DOTALL);
+        Pattern urlPattern = Pattern.compile("data-url=\"([^\"]+)\"");
+        StringBuilder result = new StringBuilder();
+        Matcher cm = cardPattern.matcher(html);
+        int lastEnd = 0;
+        Pattern namePattern = Pattern.compile("data-filename=\"([^\"]*)\"");
+        while (cm.find()) {
+            int cardStart = cm.start();
+            result.append(html, lastEnd, cardStart);
+            String openTag = cm.group();
+            String url = null;
+            Matcher um = urlPattern.matcher(openTag);
+            if (um.find()) url = um.group(1);
+            if (url == null) { result.append(openTag); lastEnd = cm.end(); continue; }
+            String filename = null;
+            Matcher nm = namePattern.matcher(openTag);
+            if (nm.find()) filename = nm.group(1);
+            if (url.startsWith("/api/images/file/")) url = "http://localhost:8080" + url;
+            String tagName = openTag.startsWith("<div") ? "div" : "span";
+            int depth = 1, pos = cm.end(), contentEnd = pos;
+            while (pos < html.length() && depth > 0) {
+                int nextOpen = html.indexOf("<" + tagName, pos);
+                if (nextOpen >= 0 && nextOpen < html.length() - tagName.length() - 1) {
+                    char after = html.charAt(nextOpen + 1 + tagName.length());
+                    if (!(Character.isWhitespace(after) || after == '>')) nextOpen = -1;
+                }
+                int nextClose = html.indexOf("</" + tagName + ">", pos);
+                if (nextClose < 0) break;
+                if (nextOpen >= 0 && nextOpen < nextClose) { depth++; pos = nextOpen + 1; }
+                else { depth--; pos = nextClose + tagName.length() + 3; if (depth == 0) contentEnd = pos; }
+            }
+            result.append(url);
+            if (filename != null && !filename.isEmpty()) result.append("|").append(filename);
+            lastEnd = contentEnd;
+        }
+        result.append(html, lastEnd, html.length());
+        return result.toString().replaceAll("<[^>]+>", "");
+    }
+
+    private String encodeUrl(String url) {
+        int schemeEnd = url.indexOf("://");
+        if (schemeEnd < 0) return url;
+        String scheme = url.substring(0, schemeEnd);
+        String rest = url.substring(schemeEnd + 3);
+        int pathStart = rest.indexOf('/');
+        if (pathStart < 0) return url;
+        String hostPort = rest.substring(0, pathStart);
+        String pathQuery = rest.substring(pathStart);
+        try {
+            String[] segments = pathQuery.split("/", -1);
+            StringBuilder sb = new StringBuilder();
+            for (String seg : segments) {
+                if (seg.isEmpty()) continue;
+                String decoded;
+                try {
+                    decoded = java.net.URLDecoder.decode(seg, "UTF-8");
+                } catch (Exception e) {
+                    decoded = seg;
+                }
+                sb.append("/").append(java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20"));
+            }
+            return scheme + "://" + hostPort + sb;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    private List<DataEntry> collectL3AndDescendants(DataEntry l3) {
+        List<DataEntry> result = new ArrayList<>();
+        addNodeAndChildren(l3, result);
+        return result;
+    }
+
+    private String getApprovalTagStyle(String status) {
+        String color = switch (status) {
+            case "待提交" -> "#409eff";
+            case "待审核" -> "#e6a23c";
+            case "审核通过" -> "#67c23a";
+            case "驳回" -> "#f56c6c";
+            default -> "#909399";
+        };
+        return "display:inline-block;font-size:10pt;vertical-align:baseline;margin-left:8px;padding:2px 8px;border-radius:3px;background:" + color + "22;color:" + color + ";border:1px solid " + color + "44;line-height:1;position:relative;top:-1px;";
+    }
+
+    private void addNodeAndChildren(DataEntry node, List<DataEntry> result) {
+        result.add(node);
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(node.getVersionId(), node.getId());
+        children.sort(Comparator.<DataEntry, Integer>comparing(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+        for (DataEntry child : children) {
+            addNodeAndChildren(child, result);
+        }
+    }
+
+    public List<Long> collectL3AndDescendantIds(Long l3Id) {
+        DataEntry l3 = entryRepository.findById(l3Id).orElse(null);
+        if (l3 == null) return List.of();
+        List<Long> ids = new ArrayList<>();
+        ids.add(l3Id);
+        collectDescendantIds(l3.getVersionId(), l3Id, ids);
+        return ids;
+    }
+
+    private String cleanToText(String html) {
+        Pattern cardPattern = Pattern.compile("<(?:span|div)[^>]+class=\"(?:image-card|img-card)\"[^>]*>", Pattern.DOTALL);
+        Pattern urlPattern = Pattern.compile("data-url=\"([^\"]+)\"");
+        Matcher cm = cardPattern.matcher(html);
+        StringBuffer sb = new StringBuffer();
+        while (cm.find()) {
+            String openTag = cm.group();
+            String url = null;
+            Matcher um = urlPattern.matcher(openTag);
+            if (um.find()) url = um.group(1);
+            if (url == null) continue;
+            int depth = 1, pos = cm.end(), contentEnd = -1;
+            String tagName = openTag.startsWith("<div") ? "div" : "span";
+            while (pos < html.length() && depth > 0) {
+                int no = html.indexOf("<" + tagName, pos);
+                int nc = html.indexOf("</" + tagName + ">", pos);
+                if (nc < 0) break;
+                if (no >= 0 && no < nc) { depth++; pos = no + 1; }
+                else { depth--; if (depth == 0) contentEnd = nc + tagName.length() + 3; pos = nc + tagName.length() + 3; }
+            }
+            String replacement = "<div style='text-align:center;margin:8px 0;'><img src='" + url + "' style='max-width:100%;max-height:400px;border:1px solid #e2e8f0;border-radius:4px;' /></div>";
+            if (contentEnd > 0) {
+                cm.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            }
+        }
+        cm.appendTail(sb);
+        return sb.toString().replaceAll("<[^>]+>", "");
     }
 }

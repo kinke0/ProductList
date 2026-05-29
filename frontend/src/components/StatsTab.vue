@@ -76,15 +76,16 @@ async function loadStats() {
   if (!props.versionId) return
   const res = await queryEntries(props.versionId, {})
   const entries = res.data || []
+  const deliverable = entries.filter(e => e.colStatus === '可交付')
 
-  stats.value.productCount = entries.filter(e => e.level === 3).length
-  stats.value.moduleCount = entries.filter(e => e.level === 4).length
-  stats.value.featureCount = entries.filter(e => e.level === 5).length
-  stats.value.subFeatureCount = entries.filter(e => e.level === 6).length
+  stats.value.productCount = deliverable.filter(e => e.level === 3).length
+  stats.value.moduleCount = deliverable.filter(e => e.level === 4).length
+  stats.value.featureCount = deliverable.filter(e => e.level === 5).length
+  stats.value.subFeatureCount = deliverable.filter(e => e.level === 6).length
 
   const domainMap = {}
   const statusMap = {}
-  entries.filter(e => e.level === 3).forEach(e => {
+  deliverable.filter(e => e.level === 3).forEach(e => {
     const domain = e.colBizDomain || '未分类'
     domainMap[domain] = (domainMap[domain] || 0) + 1
     const status = e.colStatus || '未知'
@@ -94,13 +95,12 @@ async function loadStats() {
   renderPie(Object.entries(domainMap).map(([name, value]) => ({ name, value })))
   renderBar(Object.entries(statusMap).map(([name, value]) => ({ name, value })))
 
-  const deliverableEntries = entries.filter(e => e.colStatus === '可交付')
-  const approvedCount = deliverableEntries.filter(e => e.approvalStatus === '审核通过').length
-  const notApprovedCount = deliverableEntries.length - approvedCount
+  const approvedCount = deliverable.filter(e => e.approvalStatus === '审核通过').length
+  const notApprovedCount = deliverable.length - approvedCount
   renderApprovalPie(approvedCount, notApprovedCount)
 
   const approvalMap = {}
-  entries.forEach(e => {
+  deliverable.forEach(e => {
     const s = e.approvalStatus || '待提交'
     approvalMap[s] = (approvalMap[s] || 0) + 1
   })

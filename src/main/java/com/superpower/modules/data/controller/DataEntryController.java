@@ -6,7 +6,11 @@ import com.superpower.modules.data.dto.ExcelImportResult;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.service.DataEntryService;
+import com.superpower.modules.document.service.DocumentService;
 import com.superpower.modules.version.service.VersionService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -20,10 +24,13 @@ public class DataEntryController {
 
     private final DataEntryService dataEntryService;
     private final VersionService versionService;
+    private final DocumentService documentService;
 
-    public DataEntryController(DataEntryService dataEntryService, VersionService versionService) {
+    public DataEntryController(DataEntryService dataEntryService, VersionService versionService,
+                               DocumentService documentService) {
         this.dataEntryService = dataEntryService;
         this.versionService = versionService;
+        this.documentService = documentService;
     }
 
     private void checkVersionEditPermission(Long versionId) {
@@ -58,6 +65,23 @@ public class DataEntryController {
     @GetMapping("/{id}")
     public Result<DataEntry> getById(@PathVariable Long id) {
         return Result.success(dataEntryService.getById(id));
+    }
+
+    @GetMapping(value = "/{id}/preview", produces = "text/html;charset=UTF-8")
+    public String preview(@PathVariable Long id) {
+        return dataEntryService.getPreviewHtml(id);
+    }
+
+    @GetMapping("/{id}/preview-download")
+    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id) throws Exception {
+        DataEntry entry = dataEntryService.getById(id);
+        List<Long> ids = dataEntryService.collectL3AndDescendantIds(id);
+        byte[] data = documentService.generateDocument("feature", "word", ids);
+        String filename = (entry.getColProductSystem() != null ? entry.getColProductSystem() : "预览") + ".docx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + java.net.URLEncoder.encode(filename, "UTF-8") + "\"")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(data);
     }
 
     @GetMapping("/query/{versionId}")

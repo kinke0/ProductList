@@ -52,9 +52,9 @@
               <el-icon><FolderOpened /></el-icon>导入本地Excel
             </el-button>
           </template>
-          <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
-            <el-button type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
-            <el-button type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+           <el-button v-if="props.isEditing" type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+            <el-button v-if="props.isEditing" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+            <el-button v-if="props.isEditing" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
              <el-dropdown @command="onBatchCommand">
               <el-button type="warning" size="small" plain>
                 <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -152,27 +152,29 @@
           </div>
         </div>
         <div class="vcol vcol-ops" style="width:240px;">
-          <template v-if="!row._isSeparator">
-             <template v-if="row.colStatus === '可交付'">
-               <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
-               <span v-else class="op-btn op-add invisible">提交</span>
-               <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
-               <span v-else class="op-btn op-add invisible">通过</span>
-               <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
-               <span v-else class="op-btn op-del invisible">驳回</span>
-             </template>
+           <template v-if="!row._isSeparator">
+              <template v-if="row.colStatus === '可交付' && props.isEditing">
+                <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
+                <span v-else class="op-btn op-add invisible">提交</span>
+                <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
+                <span v-else class="op-btn op-add invisible">通过</span>
+                <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
+                <span v-else class="op-btn op-del invisible">驳回</span>
+              </template>
              <template v-else>
                <span class="op-btn op-add invisible">提交</span>
                <span class="op-btn op-add invisible">通过</span>
                <span class="op-btn op-del invisible">驳回</span>
               </template>
              <span style="display:inline-block;width:1px;height:14px;background:#d0d0d0;margin:0 4px;vertical-align:middle;"></span>
-             <template v-if="props.isEditing">
-              <span v-if="canEditRow(row)" class="op-btn op-edit" @click="editRow(row)">编辑</span>
-              <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
-              <span v-if="canEditRow(row) && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>
-              <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-del" @click="deleteRow(row)">删除</span>
-            </template>
+              <span v-if="!props.isEditing" class="op-btn op-edit" @click="viewRow(row)">查看</span>
+              <span v-if="row.level === 3" class="op-btn op-add" @click="previewRow(row)">预览</span>
+              <template v-if="props.isEditing">
+               <span v-if="canEditRow(row)" class="op-btn op-edit" @click="editRow(row)">编辑</span>
+               <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-add" @click="addChildRow(row)">添加</span>
+               <span v-if="canEditRow(row) && props.customTabId" class="op-btn op-del" @click="emit('removeFromList', collectSelfAndDescendants(row))">移除</span>
+               <span v-if="canEditRow(row) && !props.customTabId" class="op-btn op-del" @click="deleteRow(row)">删除</span>
+             </template>
           </template>
         </div>
       </div>
@@ -193,12 +195,12 @@
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item :label="productLabel">
-              <el-input v-model="editForm.colProductSystem" />
+              <el-input v-model="editForm.colProductSystem" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="应用角色">
-              <el-select v-model="appRoleSelections" multiple size="small" style="width:100%;">
+              <el-select v-model="appRoleSelections" multiple size="small" style="width:100%;" :disabled="!props.isEditing">
                 <el-option v-for="r in appRoles" :key="r" :label="r" :value="r" />
               </el-select>
             </el-form-item>
@@ -217,7 +219,7 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="状态">
-              <el-select v-model="editForm.colStatus" style="width: 100%">
+              <el-select v-model="editForm.colStatus" style="width: 100%" :disabled="!props.isEditing">
                 <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
               </el-select>
             </el-form-item>
@@ -228,66 +230,66 @@
             <el-form-item label="版本划分">
               <div class="version-options">
                 <div class="version-row">
-                  <el-checkbox v-model="verYao" size="small">A-曜系列</el-checkbox>
-                  <el-checkbox v-if="verYao" v-model="minYao" size="small" style="margin-left:12px;">最小集</el-checkbox>
+                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing">A-曜系列</el-checkbox>
+                  <el-checkbox v-if="verYao" v-model="minYao" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
-                  <el-checkbox v-model="verYuan" size="small">B-远系列</el-checkbox>
-                  <el-checkbox v-if="verYuan" v-model="minYuan" size="small" style="margin-left:12px;">最小集</el-checkbox>
+                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing">B-远系列</el-checkbox>
+                  <el-checkbox v-if="verYuan" v-model="minYuan" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
-                  <el-checkbox v-model="verChi" size="small">C-驰系列</el-checkbox>
-                  <el-checkbox v-if="verChi" v-model="minChi" size="small" style="margin-left:12px;">最小集</el-checkbox>
+                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing">C-驰系列</el-checkbox>
+                  <el-checkbox v-if="verChi" v-model="minChi" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
               </div>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="产品经理">
-              <el-input v-model="editForm.colProductManager" />
+              <el-input v-model="editForm.colProductManager" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="解决方案">
               <el-checkbox-group v-model="solutionSelections">
-                <el-checkbox v-for="s in solutions" :key="s" :value="s" size="small">{{ s }}</el-checkbox>
+                <el-checkbox v-for="s in solutions" :key="s" :value="s" size="small" :disabled="!props.isEditing">{{ s }}</el-checkbox>
               </el-checkbox-group>
             </el-form-item>
           </el-col>
         </el-row>
         <el-form-item label="招标参数">
-          <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" />
+          <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" :disabled="!props.isEditing" />
         </el-form-item>
         <el-form-item label="功能说明">
           <div class="feature-editor">
-            <div class="feature-editor-toolbar">
+            <div class="feature-editor-toolbar" v-if="props.isEditing">
               <button type="button" class="fe-btn" title="插入图片" @click="saveSelectionAndShowPicker">
                 <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
               </button>
             </div>
-            <div class="feature-editor-body" contenteditable="true" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
+            <div class="feature-editor-body" :contenteditable="props.isEditing ? 'true' : 'false'" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
           </div>
         </el-form-item>
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="软著">
-              <el-input v-model="editForm.colCopyright" />
+              <el-input v-model="editForm.colCopyright" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="资产类型">
-              <el-input v-model="editForm.colAssetType" />
+              <el-input v-model="editForm.colAssetType" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-form-item label="备注">
-          <el-input v-model="editForm.colRemark" type="textarea" :rows="6" />
+          <el-input v-model="editForm.colRemark" type="textarea" :rows="6" :disabled="!props.isEditing" />
         </el-form-item>
       </el-form>
       <template #footer>
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
           <div style="margin-left:120px;">
-            <template v-if="!isNew && editForm.colStatus === '可交付'">
+            <template v-if="props.isEditing && !isNew && editForm.colStatus === '可交付'">
               <el-button v-if="canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
               <el-button v-if="canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
               <el-button v-if="canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
@@ -295,10 +297,25 @@
           </div>
           <div>
             <el-button @click="onDialogChange(false)">取消</el-button>
-            <el-button type="primary" @click="saveEdit">保存</el-button>
+            <el-button v-if="props.isEditing" type="primary" @click="saveEdit">保存</el-button>
           </div>
         </div>
       </template>
+    </el-dialog>
+    <el-dialog v-model="previewVisible" title="预览" width="80%" top="5vh" :close-on-click-modal="true">
+      <template #header>
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+          <span>预览</span>
+          <el-button type="primary" size="small" :loading="downloadLoading" @click="downloadPreview">下载Word</el-button>
+        </div>
+      </template>
+      <div style="position:relative;">
+        <iframe :srcdoc="previewHtml" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
+        <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
+          <el-progress :percentage="downloadPercent" :stroke-width="8" style="width:300px;" />
+          <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档... {{ downloadPercent }}%</span>
+        </div>
+      </div>
     </el-dialog>
      <el-dialog v-model="showBatchStatusDialog" title="批量修改功能状态" width="400px">
        <el-form label-width="80px">
@@ -395,6 +412,11 @@ const fileInput = ref(null)
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
+const previewVisible = ref(false)
+const previewHtml = ref('')
+const previewEntryId = ref(null)
+const downloadLoading = ref(false)
+const downloadPercent = ref(0)
 const editorRef = ref(null)
 const manuallySelectedIds = ref(new Set())
 const pendingImageUpdates = ref([])
@@ -1704,24 +1726,91 @@ function buildTree(entries) {
   return roots
 }
 
- async function editRow(row) {
-   isNew.value = false
-   editingId.value = row.id
-   editingRow.value = row
-   parentRow.value = null
-   Object.assign(editForm, row)
-   syncVersionFromForm()
-   lastRejectReason.value = ''
-   if (row.approvalStatus === '驳回') {
-     try {
-       const res = await getApprovalLogs(row.id)
-       const logs = res.data || res || []
-       const rejectLog = logs.find(l => l.action === 'reject')
-       if (rejectLog) lastRejectReason.value = rejectLog.comment || ''
-     } catch (e) { /* ignore */ }
-   }
-   showEditDialog.value = true
- }
+  async function editRow(row) {
+    isNew.value = false
+    editingId.value = row.id
+    editingRow.value = row
+    parentRow.value = null
+    Object.assign(editForm, row)
+    syncVersionFromForm()
+    lastRejectReason.value = ''
+    if (row.approvalStatus === '驳回') {
+      try {
+        const res = await getApprovalLogs(row.id)
+        const logs = res.data || res || []
+        const rejectLog = logs.find(l => l.action === 'reject')
+        if (rejectLog) lastRejectReason.value = rejectLog.comment || ''
+      } catch (e) { /* ignore */ }
+    }
+    showEditDialog.value = true
+  }
+
+  function viewRow(row) {
+    isNew.value = false
+    editingId.value = row.id
+    editingRow.value = row
+    parentRow.value = null
+    Object.assign(editForm, row)
+    syncVersionFromForm()
+    lastRejectReason.value = ''
+    showEditDialog.value = true
+  }
+
+  async function previewRow(row) {
+    try {
+      previewHtml.value = ''
+      previewEntryId.value = row.id
+      previewVisible.value = true
+      const token = localStorage.getItem('token')
+      const resp = await fetch(`/api/data/${row.id}/preview`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (resp.ok) {
+        previewHtml.value = await resp.text()
+      } else {
+        previewHtml.value = '<p>加载预览失败</p>'
+      }
+    } catch {
+      previewHtml.value = '<p>加载预览失败</p>'
+    }
+  }
+
+  async function downloadPreview() {
+    if (!previewEntryId.value || downloadLoading.value) return
+    downloadLoading.value = true
+    downloadPercent.value = 0
+    try {
+      const token = localStorage.getItem('token')
+      const genRes = await fetch('/api/documents/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ versionId: props.versionId, docType: 'feature', format: 'word', dataScope: 'selected', entryIds: [previewEntryId.value] })
+      }).then(r => r.json())
+      const recordId = genRes?.data?.id || genRes?.id
+      if (!recordId) { ElMessage.error('生成失败'); return }
+      let pollTimer = setInterval(async () => {
+        const progressRes = await fetch(`/api/documents/records/${recordId}/progress`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json())
+        const progress = progressRes?.data || progressRes
+        downloadPercent.value = progress?.percent || 0
+        if (progress?.status === 'completed' || progress?.status === 'success') {
+          clearInterval(pollTimer)
+          const blob = await fetch(`/api/documents/records/${recordId}/download`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.blob())
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url; a.download = '预览文档.docx'; a.click()
+          URL.revokeObjectURL(url)
+          downloadLoading.value = false
+        } else if (progress?.status === 'error') {
+          clearInterval(pollTimer)
+          ElMessage.error('文档生成失败')
+          downloadLoading.value = false
+        }
+      }, 2000)
+    } catch (e) {
+      ElMessage.error('下载失败')
+      downloadLoading.value = false
+    }
+  }
 
 function addChildRow(row) {
   isNew.value = true
@@ -1980,6 +2069,9 @@ watch(() => props.versionId, () => {
 .feature-editor :deep(.image-action-btn:hover) { background: #ecf5ff; }
 .feature-editor :deep(.image-action-danger) { color: #f56c6c; }
 .feature-editor :deep(.image-action-danger:hover) { background: #fef0f0; }
+.feature-editor-body[contenteditable="false"] :deep(.image-actions) { display: none !important; }
+.feature-editor-body[contenteditable="false"] :deep(.image-edit-name-btn) { display: none !important; }
+.feature-editor-body[contenteditable="false"] :deep(.image-card) { pointer-events: none; }
 .editor-tooltip {
   position: fixed; z-index: 9999; background: #303133; color: #fff;
   font-size: 12px; padding: 4px 8px; border-radius: 4px; white-space: nowrap;

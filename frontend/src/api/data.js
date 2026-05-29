@@ -65,3 +65,7 @@ export function importExcel(file, versionId) {
 export function batchDelete(versionId, ids) {
   return request.post(`/data/batch-delete?versionId=${versionId}`, ids)
 }
+
+export function updateCategorySort(versionId, sortList) {
+  return request.put(`/category/sort?versionId=${versionId}`, sortList)
+}

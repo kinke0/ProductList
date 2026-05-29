@@ -7,7 +7,11 @@
       <div class="table-wrapper">
         <div class="table-header">
           <strong>业务分类 (L1)</strong>
-          <el-button size="small" type="primary" @click="openL1Dialog()" :disabled="versionStatus === 'released'">新增</el-button>
+          <div>
+            <el-button size="small" type="primary" @click="openL1Dialog()" :disabled="versionStatus === 'released'">新增</el-button>
+            <el-button size="small" @click="moveUp('l1')" :disabled="versionStatus === 'released'||!selectedL1" style="margin-left:4px;">↑</el-button>
+            <el-button size="small" @click="moveDown('l1')" :disabled="versionStatus === 'released'||!selectedL1">↓</el-button>
+          </div>
         </div>
         <el-table
           :data="l1List"
@@ -40,6 +44,8 @@
               当前: {{ selectedL1.colBizCategory }}
             </span>
             <el-button size="small" type="primary" :disabled="!selectedL1 || versionStatus === 'released'" @click="openL2Dialog()">新增</el-button>
+            <el-button size="small" @click="moveUp('l2')" :disabled="versionStatus === 'released'||!selectedL2" style="margin-left:4px;">↑</el-button>
+            <el-button size="small" @click="moveDown('l2')" :disabled="versionStatus === 'released'||!selectedL2">↓</el-button>
           </div>
         </div>
         <el-table
@@ -48,6 +54,8 @@
           border
           stripe
           size="small"
+          highlight-current-row
+          @current-change="onL2Select"
         >
           <el-table-column label="名称" min-width="160">
             <template #default="{ row }">
@@ -95,13 +103,14 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getTree, getChildren, createEntry, updateEntry, deleteEntry } from '../../api/data'
+import { getTree, getChildren, createEntry, updateEntry, deleteEntry, updateCategorySort } from '../../api/data'
 import { getVersions } from '../../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const l1List = ref([])
 const l2List = ref([])
 const selectedL1 = ref(null)
+const selectedL2 = ref(null)
 const l1Dialog = ref(false)
 const l2Dialog = ref(false)
 const isNewL1 = ref(false)
@@ -133,7 +142,46 @@ async function loadL2(l1Id) {
 
 function onL1Select(row) {
   selectedL1.value = row
+  selectedL2.value = null
   if (row) loadL2(row.id)
+}
+
+function onL2Select(row) {
+  selectedL2.value = row
+}
+
+async function moveUp(type) {
+  const list = type === 'l1' ? l1List : l2List
+  const selected = type === 'l1' ? selectedL1 : selectedL2
+  const idx = list.value.findIndex(r => r.id === selected.value.id)
+  if (idx <= 0) return
+  const idType = type === 'l1' ? 'category' : 'domain'
+  const itemA = list.value[idx]
+  const itemB = list.value[idx - 1]
+  await updateCategorySort(versionId, [
+    { type: idType, id: itemA.id, sortOrder: idx - 1 },
+    { type: idType, id: itemB.id, sortOrder: idx }
+  ])
+  if (type === 'l1') await loadL1()
+  else await loadL2(selectedL1.value.id)
+  selectedL2.value = null
+}
+
+async function moveDown(type) {
+  const list = type === 'l1' ? l1List : l2List
+  const selected = type === 'l1' ? selectedL1 : selectedL2
+  const idx = list.value.findIndex(r => r.id === selected.value.id)
+  if (idx < 0 || idx >= list.value.length - 1) return
+  const idType = type === 'l1' ? 'category' : 'domain'
+  const itemA = list.value[idx]
+  const itemB = list.value[idx + 1]
+  await updateCategorySort(versionId, [
+    { type: idType, id: itemA.id, sortOrder: idx + 1 },
+    { type: idType, id: itemB.id, sortOrder: idx }
+  ])
+  if (type === 'l1') await loadL1()
+  else await loadL2(selectedL1.value.id)
+  selectedL2.value = null
 }
 
 function openL1Dialog(row) {

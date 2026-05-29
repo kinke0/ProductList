@@ -1,5 +1,6 @@
 package com.superpower.modules.category.service;
 
+import com.superpower.common.BusinessException;
 import com.superpower.modules.category.entity.BaseCategory;
 import com.superpower.modules.category.entity.BaseDomain;
 import com.superpower.modules.category.repository.BaseCategoryRepository;
@@ -50,6 +51,26 @@ public class CategoryService {
             result.add(node);
         }
         return result;
+    }
+
+    @Transactional
+    public void updateSortOrders(Long versionId, List<Map<String, Object>> sortList) {
+        for (Map<String, Object> item : sortList) {
+            String type = (String) item.get("type");
+            Long id = Long.valueOf(item.get("id").toString());
+            Integer sortOrder = Integer.valueOf(item.get("sortOrder").toString());
+            if ("category".equals(type)) {
+                BaseCategory cat = categoryRepository.findById(id)
+                    .orElseThrow(() -> new BusinessException("分类不存在"));
+                cat.setSortOrder(sortOrder);
+                categoryRepository.save(cat);
+            } else if ("domain".equals(type)) {
+                BaseDomain dom = domainRepository.findById(id)
+                    .orElseThrow(() -> new BusinessException("业务域不存在"));
+                dom.setSortOrder(sortOrder);
+                domainRepository.save(dom);
+            }
+        }
     }
 
     @Transactional

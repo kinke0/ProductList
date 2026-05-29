@@ -68,7 +68,7 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND (:versionDivision IS NULL OR e.colVersionDivision LIKE %:versionDivision%) " +
            "AND (:bizCategory IS NULL OR e.colBizCategory = :bizCategory) " +
            "AND (:bizDomain IS NULL OR e.colBizDomain = :bizDomain) " +
-            "ORDER BY e.level, e.parentId, e.sortOrder")
+            "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
     List<DataEntry> queryEntries(@Param("versionId") Long versionId,
                                  @Param("customTabId") Long customTabId,
                                  @Param("name") String name,
@@ -81,13 +81,13 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
 
     @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId " +
            "AND e.level >= 3 " +
-           "ORDER BY e.level, e.parentId, e.sortOrder")
+            "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
     List<DataEntry> findAllEntries(@Param("versionId") Long versionId);
 
     @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId " +
            "AND e.level >= 3 " +
            "AND e.id IN (SELECT ce.entryId FROM CustomTabEntry ce WHERE ce.customTabId = :customTabId) " +
-           "ORDER BY e.level, e.parentId, e.sortOrder")
+           "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
     List<DataEntry> findEntriesByTab(@Param("versionId") Long versionId,
                                      @Param("customTabId") Long customTabId);
 
@@ -95,7 +95,7 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND e.level >= 3 " +
            "AND (:bizCategory IS NULL OR e.colBizCategory = :bizCategory) " +
            "AND (:bizDomain IS NULL OR e.colBizDomain = :bizDomain) " +
-           "ORDER BY e.level, e.parentId, e.sortOrder")
+            "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
     List<DataEntry> findEntriesByDomain(@Param("versionId") Long versionId,
                                         @Param("bizCategory") String bizCategory,
                                         @Param("bizDomain") String bizDomain);
