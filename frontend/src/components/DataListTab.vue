@@ -312,8 +312,8 @@
       <div style="position:relative;">
         <iframe :srcdoc="previewHtml" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
         <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
-          <el-progress :percentage="downloadPercent" :stroke-width="8" style="width:300px;" />
-          <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档... {{ downloadPercent }}%</span>
+          <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
+          <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档...</span>
         </div>
       </div>
     </el-dialog>
@@ -370,7 +370,7 @@
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
@@ -416,7 +416,6 @@ const previewVisible = ref(false)
 const previewHtml = ref('')
 const previewEntryId = ref(null)
 const downloadLoading = ref(false)
-const downloadPercent = ref(0)
 const editorRef = ref(null)
 const manuallySelectedIds = ref(new Set())
 const pendingImageUpdates = ref([])
@@ -1778,36 +1777,24 @@ function buildTree(entries) {
   async function downloadPreview() {
     if (!previewEntryId.value || downloadLoading.value) return
     downloadLoading.value = true
-    downloadPercent.value = 0
     try {
       const token = localStorage.getItem('token')
-      const genRes = await fetch('/api/documents/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ versionId: props.versionId, docType: 'feature', format: 'word', dataScope: 'selected', entryIds: [previewEntryId.value] })
-      }).then(r => r.json())
-      const recordId = genRes?.data?.id || genRes?.id
-      if (!recordId) { ElMessage.error('生成失败'); return }
-      let pollTimer = setInterval(async () => {
-        const progressRes = await fetch(`/api/documents/records/${recordId}/progress`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json())
-        const progress = progressRes?.data || progressRes
-        downloadPercent.value = progress?.percent || 0
-        if (progress?.status === 'completed' || progress?.status === 'success') {
-          clearInterval(pollTimer)
-          const blob = await fetch(`/api/documents/records/${recordId}/download`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.blob())
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url; a.download = '预览文档.docx'; a.click()
-          URL.revokeObjectURL(url)
-          downloadLoading.value = false
-        } else if (progress?.status === 'error') {
-          clearInterval(pollTimer)
-          ElMessage.error('文档生成失败')
-          downloadLoading.value = false
-        }
-      }, 2000)
+      const resp = await fetch(`/api/data/${previewEntryId.value}/preview-download`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!resp.ok) {
+        ElMessage.error('生成失败')
+        downloadLoading.value = false
+        return
+      }
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = '预览文档.docx'; a.click()
+      URL.revokeObjectURL(url)
     } catch (e) {
       ElMessage.error('下载失败')
+    } finally {
       downloadLoading.value = false
     }
   }
