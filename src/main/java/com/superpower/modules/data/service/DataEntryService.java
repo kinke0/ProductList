@@ -830,6 +830,10 @@ public class DataEntryService {
         }
         body.append("<h3 id='").append(nodeId).append("' style='display:flex;align-items:center;'>")
             .append("<span>").append(label).append("</span>");
+        String productManager = node.getColProductManager();
+        if (productManager != null && !productManager.isEmpty()) {
+            body.append("<span style='font-size:10pt;color:#909399;margin-left:8px;'>（").append(productManager).append("）</span>");
+        }
         String approvalStatus = node.getApprovalStatus();
         if (approvalStatus != null && !approvalStatus.isEmpty()) {
             body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
