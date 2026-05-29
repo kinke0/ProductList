@@ -11,6 +11,7 @@ import com.superpower.modules.version.service.VersionService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -68,8 +69,10 @@ public class DataEntryController {
     }
 
     @GetMapping(value = "/{id}/preview", produces = "text/html;charset=UTF-8")
-    public String preview(@PathVariable Long id) {
-        return dataEntryService.getPreviewHtml(id);
+    public String preview(@PathVariable Long id, Authentication auth) {
+        boolean isEditing = versionService.isEditable(dataEntryService.getById(id).getVersionId());
+        String roleCode = auth != null ? auth.getName() : null;
+        return dataEntryService.getPreviewHtml(id, isEditing, roleCode);
     }
 
     @GetMapping("/{id}/preview-download")

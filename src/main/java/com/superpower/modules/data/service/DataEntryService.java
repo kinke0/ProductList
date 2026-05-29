@@ -10,6 +10,8 @@ import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
 import com.superpower.modules.customtab.entity.CustomTabEntry;
+import com.superpower.modules.system.entity.SysUser;
+import com.superpower.modules.system.repository.SysUserRepository;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
 import org.apache.poi.ss.usermodel.*;
@@ -31,14 +33,17 @@ public class DataEntryService {
     private final DataVersionRepository dataVersionRepository;
     private final CustomTabEntryRepository customTabEntryRepository;
     private final ApprovalLogRepository approvalLogRepository;
+    private final SysUserRepository sysUserRepository;
 
     public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
                             CustomTabEntryRepository customTabEntryRepository,
-                            ApprovalLogRepository approvalLogRepository) {
+                            ApprovalLogRepository approvalLogRepository,
+                            SysUserRepository sysUserRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
         this.customTabEntryRepository = customTabEntryRepository;
         this.approvalLogRepository = approvalLogRepository;
+        this.sysUserRepository = sysUserRepository;
     }
 
     public List<TreeNodeDTO> getTree(Long versionId, String name, String status, String productManager,
@@ -119,7 +124,13 @@ public class DataEntryService {
         entry.setVersionId(dto.getVersionId());
         entry.setParentId(dto.getParentId());
         entry.setLevel(dto.getLevel());
-        entry.setSortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0);
+        if (dto.getSortOrder() != null) {
+            entry.setSortOrder(dto.getSortOrder());
+        } else {
+            List<DataEntry> siblings = entryRepository.findByVersionIdAndParentId(dto.getVersionId(), dto.getParentId());
+            int maxSort = siblings.stream().mapToInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0).max().orElse(-1);
+            entry.setSortOrder(maxSort + 1);
+        }
         entry.setIsLeaf(true);
 
         if (dto.getParentId() != null) {
@@ -140,20 +151,21 @@ public class DataEntryService {
         String oldBizCategory = entry.getColBizCategory();
         String oldBizDomain = entry.getColBizDomain();
         copyFields(entry, dto);
-        DataEntry saved = entryRepository.save(entry);
 
-        if (entry.getLevel() != null && entry.getLevel() <= 2) {
+        if (entry.getLevel() != null && entry.getLevel() >= 1 && entry.getLevel() <= 3) {
             cascadeLabelUpdate(entry, oldBizCategory, oldBizDomain);
         }
 
-        return saved;
+        return entryRepository.save(entry);
     }
 
     private void cascadeLabelUpdate(DataEntry entry, String oldBizCategory, String oldBizDomain) {
         String newCategory = entry.getColBizCategory();
         String newDomain = entry.getColBizDomain();
+        boolean catChanged = newCategory != null && !newCategory.equals(oldBizCategory);
+        boolean domChanged = newDomain != null && !newDomain.equals(oldBizDomain);
 
-        if (entry.getLevel() == 1 && newCategory != null && !newCategory.equals(oldBizCategory)) {
+        if (entry.getLevel() == 1 && catChanged) {
             List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
             for (DataEntry d : descendants) {
                 d.setColBizCategory(newCategory);
@@ -161,10 +173,19 @@ public class DataEntryService {
             }
         }
 
-        if (entry.getLevel() == 2 && newDomain != null && !newDomain.equals(oldBizDomain)) {
+        if (entry.getLevel() == 2 && domChanged) {
             List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
             for (DataEntry d : descendants) {
                 d.setColBizDomain(newDomain);
+                entryRepository.save(d);
+            }
+        }
+
+        if (entry.getLevel() == 3 && (catChanged || domChanged)) {
+            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            for (DataEntry d : descendants) {
+                if (catChanged) d.setColBizCategory(newCategory);
+                if (domChanged) d.setColBizDomain(newDomain);
                 entryRepository.save(d);
             }
         }
@@ -758,7 +779,7 @@ public class DataEntryService {
         }
     }
 
-    public String getPreviewHtml(Long entryId) {
+    public String getPreviewHtml(Long entryId, boolean isEditing, String username) {
         DataEntry l3 = entryRepository.findById(entryId)
                 .orElseThrow(() -> new BusinessException("条目不存在"));
         List<DataEntry> all = collectL3AndDescendants(l3);
@@ -775,6 +796,17 @@ public class DataEntryService {
             }
         }
 
+        // Determine user role
+        String roleCode = "USER";
+        if (username != null) {
+            com.superpower.modules.system.entity.SysUser user = null;
+            try {
+                user = findUserByUsername(username);
+            } catch (Exception ignored) {}
+            if (user != null && user.getRole() != null) roleCode = user.getRole().getCode();
+        }
+        String role = mapRoleCode(roleCode);
+
         StringBuilder nav = new StringBuilder();
         StringBuilder body = new StringBuilder();
         Map<Long, List<DataEntry>> childrenMap = new HashMap<>();
@@ -783,7 +815,10 @@ public class DataEntryService {
                 childrenMap.computeIfAbsent(e.getParentId() != null ? e.getParentId() : l3.getId(), k -> new ArrayList<>()).add(e);
             }
         }
-        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons);
+        for (List<DataEntry> list : childrenMap.values()) {
+            list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+        }
+        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role);
 
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
             + "*{margin:0;padding:0;box-sizing:border-box;}"
@@ -805,37 +840,59 @@ public class DataEntryService {
             + ".img-wrap img{max-width:100%;max-height:400px;}"
             + ".img-caption{text-align:center;font-size:9pt;color:#666;margin-top:2pt;}"
             + ".toggle{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;cursor:pointer;margin-right:2px;user-select:none;font-size:10px;background:#e2e8f0;border-radius:3px;color:#475569;font-weight:bold;}"
+            + ".toggle-empty{visibility:hidden;cursor:default;}"
+            + ".entry-actions{padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:#fafbfc;}"
+            + ".ea-label{font-size:9pt;color:#94a3b8;margin-right:2px;white-space:nowrap;}"
+            + ".ea-btn{font-size:10pt;color:#409eff;text-decoration:none;cursor:pointer;padding:3px 10px;border:1px solid #d9ecff;border-radius:4px;background:#ecf5ff;}"
+            + ".ea-btn:hover{background:#d9ecff;}"
+            + ".ea-btn-success{color:#67c23a;border-color:#e1f3d8;background:#f0f9eb;}"
+            + ".ea-btn-success:hover{background:#e1f3d8;}"
+            + ".ea-btn-warning{color:#e6a23c;border-color:#faecd8;background:#fdf6ec;}"
+            + ".ea-btn-warning:hover{background:#faecd8;}"
+            + ".ea-btn-danger{color:#f56c6c;border-color:#fde2e2;background:#fef0f0;}"
+            + ".ea-btn-danger:hover{background:#fde2e2;}"
+            + "@keyframes highlightFlash{0%{background-color:#d4edda;box-shadow:0 0 12px rgba(103,194,58,0.3)}30%{background-color:#d4edda}100%{background-color:transparent;box-shadow:none}}"
             + "</style></head><body><div class='layout'>"
             + "<div class='sidebar' id='sidebar'>" + nav + "</div>"
             + "<div class='content' id='content'>" + body + "</div>"
             + "</div><script>"
-            + "function scrollToAnchor(id){document.getElementById(id).scrollIntoView({behavior:'smooth'});}"
+            + "function scrollToAnchor(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'instant',block:'start'});}"
             + "document.querySelectorAll('.toggle').forEach(t=>{t.onclick=function(e){e.preventDefault();e.stopPropagation();var p=t.parentElement;var ch=p.parentElement.querySelector('div');if(ch){ch.style.display=ch.style.display==='none'?'block':'none';t.textContent=ch.style.display==='none'?'+':'-'}}});"
+            + "window.addEventListener('message',function(e){"
+            + "var m=e.data;if(m.action!=='highlightEntry')return;"
+            + "var h3=document.getElementById('e'+m.entryId);if(!h3)return;"
+            + "h3.scrollIntoView({behavior:'smooth',block:'center'});"
+            + "h3.style.animation='highlightFlash 3s ease-out';"
+            + "setTimeout(function(){h3.style.animation=''},3000);"
+            + "});"
             + "</script></body></html>";
     }
 
     private void buildNavAndBody(DataEntry node, Map<Long, List<DataEntry>> childrenMap,
                                   StringBuilder nav, StringBuilder body, int depth,
-                                  Map<Long, String> rejectReasons) {
+                                  Map<Long, String> rejectReasons, boolean isEditing, String role) {
         String nodeId = "e" + node.getId();
         String label = node.getColProductSystem() != null ? node.getColProductSystem() : "";
         List<DataEntry> children = childrenMap.getOrDefault(node.getId(), new ArrayList<>());
         children.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
         boolean hasChildren = !children.isEmpty();
         nav.append("<div>");
+        nav.append("<a href='javascript:void(0)' onclick=\"scrollToAnchor('").append(nodeId).append("')\" class='lvl").append(depth).append("'>");
         if (hasChildren) {
-            nav.append("<a href='javascript:void(0)' onclick=\"scrollToAnchor('").append(nodeId).append("')\" class='lvl").append(depth).append("'><span class='toggle'>-</span>").append(label).append("</a>");
+            nav.append("<span class='toggle'>-</span>");
         } else {
-            nav.append("<a href='javascript:void(0)' onclick=\"scrollToAnchor('").append(nodeId).append("')\" class='lvl").append(depth).append("' style='padding-left:").append(8 + depth * 16).append("px'>").append(label).append("</a>");
+            nav.append("<span class='toggle toggle-empty'></span>");
         }
+        nav.append(label).append("</a>");
         body.append("<h3 id='").append(nodeId).append("' style='display:flex;align-items:center;'>")
             .append("<span>").append(label).append("</span>");
         String productManager = node.getColProductManager();
         if (productManager != null && !productManager.isEmpty()) {
             body.append("<span style='font-size:10pt;color:#909399;margin-left:8px;'>（").append(productManager).append("）</span>");
         }
+        String colStatus = node.getColStatus();
         String approvalStatus = node.getApprovalStatus();
-        if (approvalStatus != null && !approvalStatus.isEmpty()) {
+        if (approvalStatus != null && !approvalStatus.isEmpty() && "可交付".equals(colStatus)) {
             body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
             if ("驳回".equals(approvalStatus)) {
                 String reason = rejectReasons.get(node.getId());
@@ -849,10 +906,37 @@ public class DataEntryService {
         if (desc != null && !desc.isBlank()) {
             body.append(toPreviewParagraphs(desc));
         }
+        if (isEditing) {
+            body.append("<div class='entry-actions' data-entry-id='").append(node.getId()).append("'>");
+            body.append("<div class='ea-label'>数据操作：</div>");
+            body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'edit',entryId:").append(node.getId()).append("},'*')\">编辑</a>");
+            if (node.getLevel() != null && node.getLevel() >= 3) {
+                body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'addChild',entryId:").append(node.getId()).append("},'*')\">添加</a>");
+            }
+            body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'delete',entryId:").append(node.getId()).append(",entryName:'").append(label.replace("'", "\\'")).append("'},'*')\">删除</a>");
+            String apprStatus = node.getApprovalStatus();
+            boolean showApproval = isEditing && "可交付".equals(colStatus);
+            if (showApproval) {
+                body.append("<div class='ea-label' style='margin-left:16px;'>流程操作：</div>");
+                boolean canSubmit = (apprStatus == null || apprStatus.isEmpty() || "待提交".equals(apprStatus) || "驳回".equals(apprStatus));
+                boolean canApprove = "待审核".equals(apprStatus);
+                boolean canReject = "待审核".equals(apprStatus) || "审核通过".equals(apprStatus);
+                if (("editor".equals(role) || "admin".equals(role)) && canSubmit) {
+                    body.append("<a class='ea-btn ea-btn-warning' onclick=\"parent.postMessage({action:'submit',entryId:").append(node.getId()).append("},'*')\">提交</a>");
+                }
+                if (("reviewer".equals(role) || "admin".equals(role)) && canApprove) {
+                    body.append("<a class='ea-btn ea-btn-success' onclick=\"parent.postMessage({action:'approve',entryId:").append(node.getId()).append("},'*')\">通过</a>");
+                }
+                if (("reviewer".equals(role) || "admin".equals(role)) && canReject) {
+                    body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'reject',entryId:").append(node.getId()).append("},'*')\">驳回</a>");
+                }
+            }
+            body.append("</div>");
+        }
         if (hasChildren) {
             nav.append("<div>");
             for (DataEntry child : children) {
-                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons);
+                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role);
             }
             nav.append("</div>");
         }
@@ -974,6 +1058,16 @@ public class DataEntryService {
             default -> "#909399";
         };
         return "display:inline-block;font-size:10pt;vertical-align:baseline;margin-left:8px;padding:2px 8px;border-radius:3px;background:" + color + "22;color:" + color + ";border:1px solid " + color + "44;line-height:1;position:relative;top:-1px;";
+    }
+
+    private SysUser findUserByUsername(String username) {
+        return sysUserRepository.findByUsername(username).orElse(null);
+    }
+
+    private String mapRoleCode(String code) {
+        if ("ADMIN".equals(code)) return "admin";
+        if ("REVIEWER".equals(code)) return "reviewer";
+        return "editor";
     }
 
     private void addNodeAndChildren(DataEntry node, List<DataEntry> result) {

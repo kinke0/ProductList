@@ -102,7 +102,7 @@
       v-slot="{ item: row }"
     >
       <div
-        :class="['vrow', row._isSeparator ? 'sep-row' : (displayData.indexOf(row) % 2 === 0 ? 'vrow-even' : 'vrow-odd'), 'row-id-' + row.id, 'row-level-' + (row.level || 0), 'row-parent-' + (row.parentId || 0)]"
+        :class="['vrow', row._isSeparator ? 'sep-row' : (displayData.indexOf(row) % 2 === 0 ? 'vrow-even' : 'vrow-odd'), 'row-id-' + row.id, 'row-level-' + (row.level || 0), 'row-parent-' + (row.parentId || 0), { 'row-just-added': newlyCreatedIds.has(row.id) }]"
       >
         <div class="vcol vcol-num" style="width:50px;">
           <template v-if="row._isSeparator">
@@ -136,7 +136,7 @@
           </span>
          </div>
          <div class="vcol" style="width:80px;">
-           <el-tag v-if="!row._isSeparator && row.approvalStatus" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
+            <el-tag v-if="!row._isSeparator && row.approvalStatus && row.colStatus === '可交付'" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
          </div>
          <div class="vcol" style="width:80px;">
            <el-tag v-if="!row._isSeparator && row.colStatus" :type="statusTagType(row.colStatus)" size="small">{{ row.colStatus }}</el-tag>
@@ -209,12 +209,26 @@
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="业务分类">
-              <el-input :model-value="editForm.colBizCategory" disabled />
+              <template v-if="props.isEditing && editingRow?.level === 3">
+                <el-select v-model="editForm.colBizCategory" style="width:100%;" @change="onL1Change">
+                  <el-option v-for="cat in l1Options" :key="cat" :label="cat" :value="cat" />
+                </el-select>
+              </template>
+              <template v-else>
+                <el-input :model-value="editForm.colBizCategory" disabled />
+              </template>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="业务域">
-              <el-input :model-value="editForm.colBizDomain" disabled />
+              <template v-if="props.isEditing && editingRow?.level === 3">
+                <el-select v-model="editForm.colBizDomain" style="width:100%;">
+                  <el-option v-for="d in l2Options" :key="d" :label="d" :value="d" />
+                </el-select>
+              </template>
+              <template v-else>
+                <el-input :model-value="editForm.colBizDomain" disabled />
+              </template>
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -310,7 +324,7 @@
         </div>
       </template>
       <div style="position:relative;">
-        <iframe :srcdoc="previewHtml" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
+        <iframe ref="previewFrame" :srcdoc="previewHtml" @load="onPreviewLoad" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
         <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
           <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
           <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档...</span>
@@ -368,7 +382,7 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, getTree } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -409,6 +423,9 @@ const selectedIds = ref([])
 const migrating = ref(false)
 const importing = ref(false)
 const fileInput = ref(null)
+const newlyCreatedIds = reactive(new Map())
+const l1Options = ref([])
+const l2Options = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
@@ -416,7 +433,90 @@ const previewVisible = ref(false)
 const previewHtml = ref('')
 const previewEntryId = ref(null)
 const downloadLoading = ref(false)
+const previewFrame = ref(null)
+let pendingScrollTop = 0
+let pendingHighlightId = null
 const editorRef = ref(null)
+
+onMounted(() => {
+  window.addEventListener('message', onPreviewMessage)
+})
+
+async function onPreviewMessage(e) {
+  if (!previewVisible.value) return
+  const msg = e.data
+  if (msg?.action === 'edit') {
+    const row = findEntryById(msg.entryId)
+    if (row) editRow(row)
+  } else if (msg?.action === 'addChild') {
+    const row = findEntryById(msg.entryId)
+    if (row) addChildRow(row)
+  } else if (msg?.action === 'submit') {
+    const row = findEntryById(msg.entryId)
+    if (row) { await handleApprove(row, 'submit'); reloadPreviewAfterApproval() }
+  } else if (msg?.action === 'approve') {
+    const row = findEntryById(msg.entryId)
+    if (row) { await handleApprove(row, 'approve'); reloadPreviewAfterApproval() }
+  } else if (msg?.action === 'reject') {
+    const row = findEntryById(msg.entryId)
+    if (row) { await handleReject(row); reloadPreviewAfterApproval() }
+  } else if (msg?.action === 'delete') {
+    const row = findEntryById(msg.entryId)
+    if (row) { await deleteRow(row); if (previewVisible.value) reloadPreviewAfterApproval() }
+  }
+}
+
+async function reloadPreviewAfterApproval(highlightEntryId) {
+  if (!previewEntryId.value) return
+  const frame = previewFrame.value
+  try { pendingScrollTop = frame?.contentWindow?.document?.querySelector?.('.content')?.scrollTop || 0 } catch {}
+  pendingHighlightId = highlightEntryId || null
+  const token = localStorage.getItem('token')
+  const resp = await fetch(`/api/data/${previewEntryId.value}/preview?_t=${Date.now()}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (resp.ok) {
+    previewHtml.value = await resp.text()
+  }
+}
+
+function onPreviewLoad() {
+  if (pendingScrollTop > 0) {
+    const frame = previewFrame.value
+    try { frame?.contentWindow?.document?.querySelector?.('.content')?.scrollTo(0, pendingScrollTop) } catch {}
+    pendingScrollTop = 0
+  }
+  if (pendingHighlightId) {
+    const frame = previewFrame.value
+    frame?.contentWindow?.postMessage({ action: 'highlightEntry', entryId: pendingHighlightId }, '*')
+    pendingHighlightId = null
+  }
+}
+
+function notifyPreviewUpdate(row) {
+  const frame = previewFrame.value
+  if (!frame?.contentWindow) return
+  const role = approvalRole.value
+  frame.contentWindow.postMessage({
+    action: 'updateEntry',
+    entryId: row.id,
+    approvalStatus: row.approvalStatus || '',
+    colStatus: row.colStatus || '',
+    isEditing: props.isEditing,
+    role: role
+  }, '*')
+}
+
+function findEntryById(id) {
+  function search(nodes) {
+    for (const n of nodes) {
+      if (n.id === id) return n
+      if (n.children) { const r = search(n.children); if (r) return r }
+    }
+    return null
+  }
+  return search(tableData.value)
+}
 const manuallySelectedIds = ref(new Set())
 const pendingImageUpdates = ref([])
 const parentRow = ref(null)
@@ -1381,6 +1481,31 @@ function fillCategoryAndDomain() {
 function initEditForm() {
   Object.assign(editForm, initialFormState())
   fillCategoryAndDomain()
+  loadCategoryTree()
+}
+
+async function loadCategoryTree() {
+  if (!props.versionId) return
+  try {
+    const res = await getTree(props.versionId)
+    const data = res.data || []
+    l1Options.value = data.map(d => d.label).filter(Boolean)
+    const currentL1 = editForm.colBizCategory
+    if (currentL1) {
+      const matched = data.find(d => d.label === currentL1)
+      l2Options.value = matched?.children?.map(c => c.label).filter(Boolean) || []
+    } else {
+      l2Options.value = []
+    }
+  } catch { l1Options.value = []; l2Options.value = [] }
+}
+
+function onL1Change(val) {
+  loadCategoryTree().then(() => {
+    if (!l2Options.value.includes(editForm.colBizDomain)) {
+      editForm.colBizDomain = l2Options.value[0] || ''
+    }
+  })
 }
 
   function collectDescendantIds(row) {
@@ -1804,6 +1929,8 @@ function addChildRow(row) {
   editingId.value = null
   parentRow.value = row
   initEditForm()
+  editForm.colBizCategory = row.colBizCategory || editForm.colBizCategory
+  editForm.colBizDomain = row.colBizDomain || editForm.colBizDomain
   editForm.colProductManager = row.colProductManager || ''
   editForm.colVersionDivision = row.colVersionDivision || ''
   syncVersionFromForm()
@@ -1828,16 +1955,18 @@ watch(() => props.selectedNode, () => {
   }
 }, { deep: true })
 
-function deleteRow(row) {
-  ElMessageBox.confirm('确认删除该记录？', '提示', { type: 'warning' }).then(async () => {
-     await deleteEntry(row.id)
-     ElMessage.success('删除成功')
-     handleQuery(true)
-  }).catch(() => {})
+async function deleteRow(row) {
+  try {
+    await ElMessageBox.confirm('确认删除该记录？', '提示', { type: 'warning' })
+  } catch { return }
+  await deleteEntry(row.id)
+  ElMessage.success('删除成功')
+  handleQuery(true)
 }
 
 async function saveEdit() {
   syncVersionToForm()
+  let savedId = null
   if (isNew.value) {
     const data = {
       ...editForm,
@@ -1845,16 +1974,27 @@ async function saveEdit() {
       level: parentRow.value ? parentRow.value.level + 1 : 3,
       parentId: parentRow.value ? parentRow.value.id : undefined
     }
-    await createEntry(data)
+    const res = await createEntry(data)
+    savedId = res?.data?.id
+    if (savedId) {
+      newlyCreatedIds.set(savedId, Date.now())
+      setTimeout(() => newlyCreatedIds.delete(savedId), 2000)
+    }
     ElMessage.success('创建成功')
     parentRow.value = null
   } else {
     await updateEntry(editingId.value, editForm)
+    savedId = editingId.value
+    newlyCreatedIds.set(savedId, Date.now())
+    setTimeout(() => newlyCreatedIds.delete(savedId), 2000)
     ElMessage.success('保存成功')
   }
   flushPendingImageUpdates()
   showEditDialog.value = false
   handleQuery(true)
+  if (previewVisible.value && savedId) {
+    reloadPreviewAfterApproval(savedId)
+  }
 }
 
 watch(() => props.versionId, () => {
@@ -1934,6 +2074,12 @@ watch(() => props.versionId, () => {
 .vrow:hover { background-color: var(--si-bg-hover); }
 .vrow-even { background: #fff; }
 .vrow-odd { background: var(--si-bg-secondary); }
+.row-just-added { animation: highlightFlash 2s ease-out; }
+@keyframes highlightFlash {
+  0% { background-color: #d4edda; }
+  30% { background-color: #d4edda; }
+  100% { background-color: inherit; }
+}
 .vrow.sep-row {
   background: rgba(37, 99, 235, 0.08) !important;
   border-bottom: 2px solid rgba(37, 99, 235, 0.15);
