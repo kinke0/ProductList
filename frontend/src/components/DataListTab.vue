@@ -39,19 +39,19 @@
       </div>
       <div class="toolbar-right">
         <template v-if="props.customTabId">
-          <el-button type="danger" size="small" :disabled="!props.isEditing || selectedIds.length === 0" @click="onRemoveClick">
-            <el-icon><Delete /></el-icon>移除
-          </el-button>
           <el-button type="success" size="small" @click="emit('generateDoc', selectedIds, props.customTabId)">
             <el-icon><Document /></el-icon>生成文档
           </el-button>
         </template>
-         <template v-else>
-           <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
-           <el-button type="success" size="small" @click="onInsertClick">
-             <el-icon><Upload /></el-icon>插入待生成清单
-           </el-button>
-         </template>
+          <template v-else>
+            <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
+            <el-button type="success" size="small" @click="onInsertClick">
+              <el-icon><Upload /></el-icon>插入待生成清单
+            </el-button>
+            <el-button type="info" size="small" :disabled="!props.isEditing" :loading="importing" @click="onImportExcelClick">
+              <el-icon><FolderOpened /></el-icon>导入本地Excel
+            </el-button>
+          </template>
           <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
             <el-button type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
             <el-button type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
@@ -64,6 +64,7 @@
                   <el-dropdown-item command="status">状态修改</el-dropdown-item>
                   <el-dropdown-item command="solution">解决方案</el-dropdown-item>
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>{{ props.customTabId ? '批量移除' : '批量删除' }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -344,14 +345,15 @@
         </div>
 </el-dialog>
       <div v-if="editorTooltip" class="editor-tooltip" :style="{ left: editorTooltip.x + 'px', top: editorTooltip.y + 'px' }">{{ editorTooltip.text }}</div>
+      <input ref="fileInput" type="file" accept=".xlsx,.xls" style="display:none" @change="onFileSelected" />
       </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
@@ -388,6 +390,8 @@ const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
 const selectedIds = ref([])
 const migrating = ref(false)
+const importing = ref(false)
+const fileInput = ref(null)
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
@@ -1115,7 +1119,31 @@ async function batchReject() {
   } else if (cmd === 'manager') {
     batchManagerValue.value = ''
     showBatchManagerDialog.value = true
+  } else if (cmd === 'delete') {
+    if (props.customTabId) {
+      onRemoveClick()
+    } else {
+      onBatchDelete()
+    }
   }
+}
+
+async function onBatchDelete() {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${selectedIds.value.length} 条记录及其所有子节点？此操作不可恢复。`,
+      '批量删除',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  try {
+    const res = await batchDelete(props.versionId, [...selectedIds.value])
+    if (res.code === 200) {
+      ElMessage.success('批量删除成功')
+      selectedIds.value = []
+      handleQuery()
+    }
+  } catch {}
 }
 
 function batchChangeStatus() {
@@ -1444,6 +1472,8 @@ function onRemoveClick() {
     return
   }
   const ids = collectSelectedWithDescendants()
+  selectedIds.value = []
+  manuallySelectedIds.value = new Set()
   emit('removeFromList', ids)
 }
 
@@ -1488,6 +1518,44 @@ async function onMigrateImages() {
   } catch {
   } finally {
     migrating.value = false
+  }
+}
+
+function onImportExcelClick() {
+  fileInput.value?.click()
+}
+
+async function onFileSelected(e) {
+  const file = e.target?.files?.[0]
+  if (!file) return
+  importing.value = true
+  const formData = new FormData()
+  formData.append('file', file)
+  try {
+    const res = await importExcel(file, props.versionId)
+    if (res.code === 200) {
+      const data = res.data
+      let html = `<div style="line-height:2;"><b>导入完成</b></div>`
+      html += `<div style="margin:4px 0;">总行数：${data.totalRows}</div>`
+      html += `<div style="margin:4px 0;color:#67c23a;">成功：${data.successRows} 行（其中更新 ${data.updateRows} 行）</div>`
+      html += `<div style="margin:4px 0;color:#f56c6c;">失败：${data.failRows} 行</div>`
+      if (data.errors && data.errors.length > 0) {
+        html += `<div style="margin-top:8px;font-weight:bold;color:#f56c6c;">错误详情：</div>`
+        data.errors.slice(0, 20).forEach(err => {
+          html += `<div style="font-size:12px;color:#909399;">${err}</div>`
+        })
+        if (data.errors.length > 20) html += `<div style="font-size:12px;color:#909399;">...还有 ${data.errors.length - 20} 条错误</div>`
+      }
+      ElMessageBox.alert(html, '导入结果', {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '确定'
+      })
+      handleQuery()
+    }
+  } catch {
+  } finally {
+    importing.value = false
+    if (fileInput.value) fileInput.value.value = ''
   }
 }
 

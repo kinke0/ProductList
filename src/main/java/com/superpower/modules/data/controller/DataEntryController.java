@@ -2,11 +2,13 @@ package com.superpower.modules.data.controller;
 
 import com.superpower.common.Result;
 import com.superpower.modules.data.dto.DataEntryDTO;
+import com.superpower.modules.data.dto.ExcelImportResult;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.service.DataEntryService;
 import com.superpower.modules.version.service.VersionService;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -78,6 +80,14 @@ public class DataEntryController {
         checkVersionEditPermission(dto.getVersionId());
 
         return Result.success(dataEntryService.create(dto));
+    }
+
+    @PostMapping("/import-excel")
+    public Result<ExcelImportResult> importExcel(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("versionId") Long versionId) {
+        checkVersionEditPermission(versionId);
+        return Result.success(dataEntryService.importFromExcel(file, versionId));
     }
 
     @PutMapping("/{id}")
@@ -166,6 +176,13 @@ public class DataEntryController {
         checkVersionEditPermission(entry.getVersionId());
 
         dataEntryService.delete(id);
+        return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    public Result<Void> batchDelete(@RequestParam Long versionId, @RequestBody List<Long> ids) {
+        checkVersionEditPermission(versionId);
+        dataEntryService.batchDelete(ids);
         return Result.success();
     }
 }

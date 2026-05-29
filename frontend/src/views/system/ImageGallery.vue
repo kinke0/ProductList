@@ -2,9 +2,14 @@
   <div class="page gallery-page">
     <div class="page-header">
       <h3>图床管理</h3>
-      <el-button type="primary" size="small" :disabled="!selectedNode" @click="triggerUpload">
-        <el-icon><Upload /></el-icon>上传图片
-      </el-button>
+      <div class="header-actions">
+        <el-button type="primary" size="small" :disabled="!selectedNode" @click="triggerUpload">
+          <el-icon><Upload /></el-icon>上传图片
+        </el-button>
+        <el-button type="danger" size="small" :disabled="selectedIds.length === 0" @click="batchDelete">
+          <el-icon><Delete /></el-icon>批量删除 ({{ selectedIds.length }})
+        </el-button>
+      </div>
       <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" @change="handleFileUpload" />
     </div>
     <div class="gallery-body">
@@ -20,10 +25,15 @@
         />
       </div>
       <div class="gallery-content">
-        <div v-if="currentImages.length === 0" class="empty-tip">请选择左侧目录查看图片，或上传图片</div>
+        <div v-if="currentImages.length > 0" class="gallery-toolbar">
+          <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll">全选</el-checkbox>
+          <el-input v-model="searchText" placeholder="搜索图片名称..." size="small" clearable style="width:200px;margin-left:12px;" />
+        </div>
+        <div v-if="filteredImages.length === 0" class="empty-tip">{{ currentImages.length > 0 ? '未找到匹配的图片' : '请选择左侧目录查看图片，或上传图片' }}</div>
         <div v-else class="image-grid">
-          <el-tooltip v-for="img in currentImages" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
-            <div class="image-card">
+          <el-tooltip v-for="img in filteredImages" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
+            <div class="image-card" :class="{ selected: selectedIds.includes(img.id) }">
+              <el-checkbox class="img-checkbox" :model-value="selectedIds.includes(img.id)" @change="toggleSelect(img)" @click.stop />
               <div class="image-thumb" @click="previewImage(img)">
                 <img :src="img.url" :alt="img.filename" />
               </div>
@@ -68,10 +78,11 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, updateImage } from '../../api/image'
+import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, updateImage, batchDeleteImages } from '../../api/image'
 import { getVersions } from '../../api/version'
-import { Upload } from '@element-plus/icons-vue'
+import { Upload, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed } from 'vue'
 
 const treeData = ref([])
 const currentImages = ref([])
@@ -79,6 +90,8 @@ const selectedNode = ref(null)
 const selectedCategory = ref(null)
 const selectedDomain = ref(null)
 const selectedProduct = ref(null)
+const selectedIds = ref([])
+const searchText = ref('')
 const versionId = ref(null)
 const previewVisible = ref(false)
 const previewUrl = ref('')
@@ -198,7 +211,70 @@ async function handleDelete(img) {
     ElMessage.success('删除成功')
     loadImages()
     loadTree()
+    selectedIds.value = selectedIds.value.filter(id => id !== img.id)
   } catch (e) { /* cancel */ }
+}
+
+const filteredImages = computed(() => {
+  if (!searchText.value) return currentImages.value
+  const keyword = searchText.value.toLowerCase()
+  return currentImages.value.filter(img => (img.filename || '').toLowerCase().includes(keyword))
+})
+const isIndeterminate = computed(() => {
+  const count = filteredImages.value.filter(img => selectedIds.value.includes(img.id)).length
+  return count > 0 && count < filteredImages.value.length
+})
+
+function toggleSelect(img) {
+  const idx = selectedIds.value.indexOf(img.id)
+  if (idx >= 0) selectedIds.value.splice(idx, 1)
+  else selectedIds.value.push(img.id)
+}
+
+function toggleSelectAll(checked) {
+  if (checked) selectedIds.value = filteredImages.value.map(img => img.id)
+  else selectedIds.value = []
+}
+
+async function batchDelete() {
+  if (selectedIds.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 张图片？`, '批量删除', { type: 'warning' })
+  } catch { return }
+  const blocked = []
+  const toDelete = []
+  for (const id of selectedIds.value) {
+    try {
+      const res = await getImageReferences(id)
+      const refs = res.data || []
+      if (refs.length > 0) {
+        const img = currentImages.value.find(i => i.id === id)
+        blocked.push({ id, name: img?.filename, count: refs.length })
+      } else {
+        toDelete.push(id)
+      }
+    } catch { toDelete.push(id) }
+  }
+  if (toDelete.length === 0) {
+    ElMessage.warning('所有选中图片均被引用，无法删除')
+    return
+  }
+  if (blocked.length > 0) {
+    const names = blocked.map(r => `"${r.name}" (${r.count}条引用)`).join('\n')
+    try {
+      await ElMessageBox.confirm(
+        `${blocked.length} 张图片被引用无法删除：\n${names}\n\n确认删除其余 ${toDelete.length} 张图片？`,
+        '部分图片被引用', { type: 'warning' }
+      )
+    } catch { return }
+  }
+  try {
+    await batchDeleteImages(toDelete)
+    ElMessage.success(`已删除 ${toDelete.length} 张图片`)
+    selectedIds.value = []
+    loadImages()
+    loadTree()
+  } catch {}
 }
 
 function formatSize(bytes) {
@@ -273,14 +349,18 @@ onMounted(async () => {
 .gallery-page { padding: 20px 24px; height: 100%; display: flex; flex-direction: column; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--si-border); }
 .page-header h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--si-text-primary); }
+.header-actions { display: flex; gap: 8px; }
 .gallery-body { display: flex; flex: 1; min-height: 0; gap: 16px; }
 .gallery-sidebar { width: 240px; flex-shrink: 0; background: var(--si-bg-card); border: 1px solid var(--si-border); border-radius: var(--si-radius-lg); padding: 12px; overflow-y: auto; }
 .sidebar-header { font-size: 13px; font-weight: 600; color: var(--si-text-secondary); margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--si-border-light); }
 .gallery-content { flex: 1; overflow-y: auto; background: var(--si-bg-card); border: 1px solid var(--si-border); border-radius: var(--si-radius-lg); padding: 16px; }
 .empty-tip { text-align: center; padding: 60px 20px; color: var(--si-text-muted); font-size: 14px; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-.image-card { border: 1px solid var(--si-border); border-radius: var(--si-radius-md); overflow: hidden; background: #fff; transition: box-shadow 0.2s; }
+.image-card { border: 1px solid var(--si-border); border-radius: var(--si-radius-md); overflow: hidden; background: #fff; transition: box-shadow 0.2s; position: relative; }
 .image-card:hover { box-shadow: var(--si-shadow-md); }
+.image-card.selected { border-color: #409eff; box-shadow: 0 0 0 2px rgba(64,158,255,0.2); }
+.img-checkbox { position: absolute; top: 4px; left: 4px; z-index: 2; background: rgba(255,255,255,0.9); border-radius: 3px; padding: 2px; }
+.gallery-toolbar { display: flex; align-items: center; padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--si-border-light); }
 .image-thumb { height: 140px; overflow: hidden; cursor: pointer; display: flex; align-items: center; justify-content: center; background: #f5f5f5; }
 .image-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .image-info { padding: 6px 8px; display: flex; align-items: center; overflow: hidden; }

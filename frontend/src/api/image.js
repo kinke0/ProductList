@@ -37,3 +37,7 @@ export function getImageReferences(id) {
 export function migrateImages(ids) {
   return request.post('/images/migrate-external-images', ids)
 }
+
+export function batchDeleteImages(ids) {
+  return request.post('/images/batch-delete', ids)
+}

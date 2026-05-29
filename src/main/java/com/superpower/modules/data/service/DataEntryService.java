@@ -2,6 +2,7 @@ package com.superpower.modules.data.service;
 
 import com.superpower.common.BusinessException;
 import com.superpower.modules.data.dto.DataEntryDTO;
+import com.superpower.modules.data.dto.ExcelImportResult;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
@@ -9,10 +10,14 @@ import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
 import com.superpower.modules.customtab.entity.CustomTabEntry;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -193,6 +198,19 @@ public class DataEntryService {
         allIds.add(id);
         collectDescendantIds(entry.getVersionId(), id, allIds);
         entryRepository.deleteAllById(allIds);
+    }
+
+    public void batchDelete(List<Long> ids) {
+        List<Long> allIds = new ArrayList<>();
+        for (Long id : ids) {
+            DataEntry entry = entryRepository.findById(id).orElse(null);
+            if (entry == null) continue;
+            allIds.add(id);
+            collectDescendantIds(entry.getVersionId(), id, allIds);
+        }
+        for (Long id : allIds) {
+            entryRepository.deleteById(id);
+        }
     }
 
     private void collectDescendantIds(Long versionId, Long parentId, List<Long> ids) {
@@ -479,5 +497,260 @@ public class DataEntryService {
             return Long.compare(a.getId(), b.getId());
         });
         return entries;
+    }
+
+    @Transactional
+    public ExcelImportResult importFromExcel(MultipartFile file, Long versionId) {
+        ensureVersionEditable(versionId);
+        ExcelImportResult result = new ExcelImportResult();
+
+        try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+            Sheet sheet = workbook.getSheetAt(0);
+            int lastRow = sheet.getLastRowNum();
+            if (lastRow < 1) {
+                result.getErrors().add("Excel文件中没有数据行");
+                return result;
+            }
+            result.setTotalRows(lastRow);
+
+            Row headerRow = sheet.getRow(0);
+            Map<Integer, String> colMap = new HashMap<>();
+            Map<String, Integer> headerMap = new HashMap<>();
+            for (int i = 0; i < headerRow.getLastCellNum(); i++) {
+                Cell cell = headerRow.getCell(i);
+                String header = cell != null ? cell.toString().trim() : "";
+                colMap.put(i, header);
+                headerMap.put(header, i);
+            }
+
+            List<RowData> rows = new ArrayList<>();
+            for (int rowIdx = 1; rowIdx <= lastRow; rowIdx++) {
+                Row row = sheet.getRow(rowIdx);
+                if (row == null) continue;
+                String productName = getCellString(row, headerMap.getOrDefault("产品/系统", -1));
+                productName = cleanMultiline(productName);
+                if (productName == null || productName.isEmpty()) continue;
+                String parentName = getCellString(row, headerMap.getOrDefault("父记录", -1));
+                parentName = cleanMultiline(parentName);
+                rows.add(new RowData(rowIdx, row, productName, parentName));
+            }
+
+            Map<String, Long> nameToId = new HashMap<>();
+            List<RowData> retryRows = new ArrayList<>();
+            for (RowData rd : rows) {
+                if (rd.parentName == null) {
+                    processRow(rd, headerMap, versionId, result, nameToId);
+                } else {
+                    retryRows.add(rd);
+                }
+            }
+
+            retryRows.sort((a, b) -> {
+                int depthA = a.productName.split("\\.").length;
+                int depthB = b.productName.split("\\.").length;
+                return Integer.compare(depthA, depthB);
+            });
+
+            for (RowData rd : retryRows) {
+                processRow(rd, headerMap, versionId, result, nameToId);
+            }
+        } catch (Exception e) {
+            result.getErrors().add("解析Excel文件失败: " + e.getMessage());
+        }
+        return result;
+    }
+
+    private void processRow(RowData rd, Map<String, Integer> headerMap, Long versionId,
+                            ExcelImportResult result, Map<String, Long> nameToId) {
+        try {
+            Row row = rd.row;
+            String productName = rd.productName;
+            String parentName = rd.parentName;
+            int rowIdx = rd.rowIdx;
+            String bizCategory = getCellString(row, headerMap.getOrDefault("业务分类", -1));
+            String bizDomain = getCellString(row, headerMap.getOrDefault("业务域", -1));
+
+            Long parentId = null;
+            int level = 3;
+
+            if (parentName != null) {
+                parentId = nameToId.get(parentName);
+                if (parentId == null) {
+                    List<DataEntry> parents = entryRepository
+                        .findByVersionIdAndColProductSystem(versionId, parentName);
+                    if (!parents.isEmpty()) {
+                        parentId = parents.get(0).getId();
+                        nameToId.put(parentName, parentId);
+                        level = (parents.get(0).getLevel() != null ? parents.get(0).getLevel() : 3) + 1;
+                    }
+                } else {
+                    DataEntry p = entryRepository.findById(parentId).orElse(null);
+                    if (p != null) {
+                        level = (p.getLevel() != null ? p.getLevel() : 3) + 1;
+                    }
+                }
+            }
+
+            if (parentName != null && parentId == null) {
+                result.getErrors().add("行" + (rowIdx + 1) + ": 找不到父记录 '" + parentName + "'");
+                result.setFailRows(result.getFailRows() + 1);
+                return;
+            }
+
+            DataEntry existing = null;
+            List<DataEntry> matches;
+            final Long finalParentId = parentId;
+            if (parentId != null) {
+                matches = entryRepository.findByVersionIdAndColBizCategoryAndColBizDomainAndColProductSystem(
+                    versionId, bizCategory, bizDomain, productName);
+                existing = matches.stream()
+                    .filter(e -> finalParentId.equals(e.getParentId()))
+                    .findFirst().orElse(null);
+            } else {
+                matches = entryRepository.findByVersionIdAndColBizCategoryAndColBizDomainAndColProductSystem(
+                    versionId, bizCategory, bizDomain, productName);
+                if (!matches.isEmpty()) existing = matches.get(0);
+            }
+
+            boolean isUpdate = existing != null;
+            DataEntry entry = isUpdate ? existing : new DataEntry();
+
+            if (!isUpdate) {
+                entry.setVersionId(versionId);
+                entry.setParentId(parentId);
+                entry.setLevel(level);
+                entry.setSortOrder(0);
+                entry.setIsLeaf(true);
+            }
+
+            setStr(headerMap, row, entry, "应用角色", DataEntry::setColAppRole);
+            setStr(headerMap, row, entry, "招标参数", DataEntry::setColBidParamDesc);
+            setStr(headerMap, row, entry, "功能说明", DataEntry::setColFeatureDesc);
+            setStr(headerMap, row, entry, "状态", DataEntry::setColStatus);
+            entry.setColBizCategory(bizCategory);
+            entry.setColBizDomain(bizDomain);
+            entry.setColProductSystem(productName);
+            setStr(headerMap, row, entry, "版本划分", DataEntry::setColVersionDivision);
+            setStr(headerMap, row, entry, "远", DataEntry::setColYuan);
+            setStr(headerMap, row, entry, "交付工作量(人月)", DataEntry::setColDeliveryWorkload);
+            setStr(headerMap, row, entry, "控标点", DataEntry::setColControlPoint);
+            setStr(headerMap, row, entry, "控标点截图-1", DataEntry::setColControlPointImg1);
+            setStr(headerMap, row, entry, "控标点截图-2", DataEntry::setColControlPointImg2);
+            setStr(headerMap, row, entry, "控标点截图-3", DataEntry::setColControlPointImg3);
+            setStr(headerMap, row, entry, "控标点文档说明", DataEntry::setColControlPointDoc);
+            setStr(headerMap, row, entry, "软著", DataEntry::setColCopyright);
+            setStr(headerMap, row, entry, "备注", DataEntry::setColRemark);
+            setStr(headerMap, row, entry, "智慧医疗", DataEntry::setColSmartMedical);
+            setStr(headerMap, row, entry, "智慧服务", DataEntry::setColSmartService);
+            setStr(headerMap, row, entry, "智慧管理", DataEntry::setColSmartManagement);
+            setStr(headerMap, row, entry, "互联互通", DataEntry::setColInterconnection);
+            setStr(headerMap, row, entry, "产品/系统标识", DataEntry::setColProductSysId);
+            setStr(headerMap, row, entry, "模块标识", DataEntry::setColModuleId);
+            setStr(headerMap, row, entry, "其他解决方案标记", DataEntry::setColOtherSolutionTag);
+            setStr(headerMap, row, entry, "文档维护人员", DataEntry::setColDocMaintainer);
+            setStr(headerMap, row, entry, "产品经理", DataEntry::setColProductManager);
+            setStr(headerMap, row, entry, "内部版本", DataEntry::setColInternalVersion);
+            setStr(headerMap, row, entry, "智能化", DataEntry::setColIntelligent);
+            setStr(headerMap, row, entry, "曜", DataEntry::setColYao);
+            setStr(headerMap, row, entry, "驰", DataEntry::setColChi);
+            setStr(headerMap, row, entry, "负责人", DataEntry::setColPrincipal);
+            setStr(headerMap, row, entry, "产品线", DataEntry::setColProductLine);
+            setStr(headerMap, row, entry, "资产类型", DataEntry::setColAssetType);
+            setBd(headerMap, row, entry, "FY23", DataEntry::setColFY23);
+            setBd(headerMap, row, entry, "FY24", DataEntry::setColFY24);
+            setBd(headerMap, row, entry, "FY25", DataEntry::setColFY25);
+            setBd(headerMap, row, entry, "FY26", DataEntry::setColFY26);
+            setBd(headerMap, row, entry, "FY27", DataEntry::setColFY27);
+            setBd(headerMap, row, entry, "FY28", DataEntry::setColFY28);
+            setBd(headerMap, row, entry, "FY29", DataEntry::setColFY29);
+            setBd(headerMap, row, entry, "研发成本合计", DataEntry::setColRDCostTotal);
+            setBd(headerMap, row, entry, "出厂套价-保本", DataEntry::setColFactoryPrice);
+            setIntVal(headerMap, row, entry, "销量-曜", DataEntry::setColSalesYao);
+            setIntVal(headerMap, row, entry, "销量-远", DataEntry::setColSalesYuan);
+            setIntVal(headerMap, row, entry, "销量-驰", DataEntry::setColSalesChi);
+
+            String feat = entry.getColFeatureDesc();
+            if (feat != null) {
+                entry.setColFeatureDesc(feat.replaceAll("<(https?://[^>]+)>", "[$1]"));
+            }
+
+            entryRepository.save(entry);
+            nameToId.put(productName, entry.getId());
+
+            if (parentId != null) {
+                DataEntry parent = entryRepository.findById(parentId).orElse(null);
+                if (parent != null && parent.getIsLeaf()) {
+                    parent.setIsLeaf(false);
+                    entryRepository.save(parent);
+                }
+            }
+
+            if (isUpdate) {
+                result.setUpdateRows(result.getUpdateRows() + 1);
+            }
+            result.setSuccessRows(result.getSuccessRows() + 1);
+        } catch (Exception e) {
+            result.getErrors().add("行" + (rd.rowIdx + 1) + ": " + e.getMessage());
+            result.setFailRows(result.getFailRows() + 1);
+        }
+    }
+
+    private static class RowData {
+        final int rowIdx;
+        final Row row;
+        final String productName;
+        final String parentName;
+        RowData(int rowIdx, Row row, String productName, String parentName) {
+            this.rowIdx = rowIdx;
+            this.row = row;
+            this.productName = productName;
+            this.parentName = parentName;
+        }
+    }
+
+    private String cleanMultiline(String val) {
+        if (val == null) return null;
+        val = val.replace('\n', ' ').replace('\r', ' ').replaceAll("\\s+", " ").trim();
+        val = val.replaceAll("(\\d)\\s+\\.\\s+(\\d)", "$1.$2");
+        val = val.replaceAll("(\\d)\\.\\s+(\\d)", "$1.$2");
+        val = val.replaceAll("(\\d)\\s+\\.(\\d)", "$1.$2");
+        val = val.replaceAll("\\.\\s+(\\d)", ".$1");
+        val = val.replaceAll("(\\d)\\s+\\.", "$1.");
+        val = val.replaceAll("(\\d)\\s+(\\d)(?=\\s*[\\u4e00-\\u9fff])", "$1$2");
+        return val.isEmpty() ? null : val;
+    }
+
+    private String getCellString(Row row, int colIdx) {
+        if (colIdx < 0) return null;
+        Cell cell = row.getCell(colIdx);
+        if (cell == null) return null;
+        cell.setCellType(CellType.STRING);
+        String val = cell.getStringCellValue();
+        return val != null ? val.trim() : null;
+    }
+
+    private void setStr(Map<String, Integer> hm, Row row, DataEntry e, String h, java.util.function.BiConsumer<DataEntry, String> setter) {
+        Integer idx = hm.get(h);
+        if (idx == null) return;
+        String val = getCellString(row, idx);
+        if (val != null && !val.isEmpty()) setter.accept(e, val);
+    }
+
+    private void setBd(Map<String, Integer> hm, Row row, DataEntry e, String h, java.util.function.BiConsumer<DataEntry, BigDecimal> setter) {
+        Integer idx = hm.get(h);
+        if (idx == null) return;
+        String val = getCellString(row, idx);
+        if (val != null && !val.isEmpty()) {
+            try { setter.accept(e, new BigDecimal(val)); } catch (NumberFormatException ignored) {}
+        }
+    }
+
+    private void setIntVal(Map<String, Integer> hm, Row row, DataEntry e, String h, java.util.function.BiConsumer<DataEntry, Integer> setter) {
+        Integer idx = hm.get(h);
+        if (idx == null) return;
+        String val = getCellString(row, idx);
+        if (val != null && !val.isEmpty()) {
+            try { setter.accept(e, Integer.parseInt(val)); } catch (NumberFormatException ignored) {}
+        }
     }
 }

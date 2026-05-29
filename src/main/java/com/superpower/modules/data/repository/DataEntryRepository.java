@@ -107,4 +107,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
 
     List<DataEntry> findByVersionIdAndColBizCategoryAndColBizDomain(
             Long versionId, String colBizCategory, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndColProductSystem(Long versionId, String colProductSystem);
 }

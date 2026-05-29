@@ -10,9 +10,7 @@ import com.superpower.modules.data.repository.DataEntryRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -91,28 +89,65 @@ public class CustomTabService {
     public void addEntries(Long tabId, List<Long> entryIds) {
         getById(tabId);
         List<CustomTabEntry> existing = customTabEntryRepository.findByCustomTabIdOrderBySortOrder(tabId);
+        Set<Long> existingIds = existing.stream().map(CustomTabEntry::getEntryId).collect(Collectors.toSet());
         int maxSort = -1;
         for (CustomTabEntry te : existing) {
             if (te.getSortOrder() != null && te.getSortOrder() > maxSort) {
                 maxSort = te.getSortOrder();
             }
         }
-        Set<Long> existingIds = existing.stream().map(CustomTabEntry::getEntryId).collect(java.util.stream.Collectors.toSet());
-        for (int i = 0; i < entryIds.size(); i++) {
-            Long entryId = entryIds.get(i);
+        for (Long entryId : entryIds) {
             if (existingIds.contains(entryId)) continue;
             CustomTabEntry entry = new CustomTabEntry();
             entry.setCustomTabId(tabId);
             entry.setEntryId(entryId);
-            entry.setSortOrder(maxSort + 1 + i);
+            entry.setSortOrder(maxSort + 1);
             customTabEntryRepository.save(entry);
+            maxSort++;
+        }
+        fixNullSort(tabId, existing);
+        reorderTabByHierarchy(tabId);
+    }
+
+    private void fixNullSort(Long tabId, List<CustomTabEntry> existing) {
+        int maxSort = -1;
+        for (CustomTabEntry te : existing) {
+            if (te.getSortOrder() != null && te.getSortOrder() > maxSort) {
+                maxSort = te.getSortOrder();
+            }
         }
         int order = 0;
         for (CustomTabEntry te : existing) {
             if (te.getSortOrder() == null) {
-                te.setSortOrder(maxSort + 1 + entryIds.size() + order++);
+                te.setSortOrder(maxSort + 1 + order++);
                 customTabEntryRepository.save(te);
             }
+        }
+    }
+
+    private void reorderTabByHierarchy(Long tabId) {
+        List<CustomTabEntry> allEntries = customTabEntryRepository.findByCustomTabIdOrderBySortOrder(tabId);
+        List<Long> entryIds = allEntries.stream().map(CustomTabEntry::getEntryId).collect(Collectors.toList());
+        if (entryIds.isEmpty()) return;
+        List<DataEntry> dataEntries = dataEntryRepository.findAllById(entryIds);
+        Map<Long, DataEntry> entryMap = new HashMap<>();
+        for (DataEntry e : dataEntries) entryMap.put(e.getId(), e);
+
+        List<DataEntry> sorted = new ArrayList<>();
+        for (Long id : entryIds) {
+            DataEntry e = entryMap.get(id);
+            if (e != null) sorted.add(e);
+        }
+        sorted.sort(Comparator
+            .comparing(DataEntry::getColBizCategory, Comparator.nullsLast(String::compareTo))
+            .thenComparing(DataEntry::getColBizDomain, Comparator.nullsLast(String::compareTo))
+            .thenComparing(DataEntry::getParentId, Comparator.nullsLast(Long::compareTo))
+            .thenComparing(DataEntry::getLevel, Comparator.nullsLast(Integer::compareTo))
+            .thenComparing(DataEntry::getSortOrder, Comparator.nullsLast(Integer::compareTo)));
+
+        int idx = 0;
+        for (DataEntry e : sorted) {
+            customTabEntryRepository.updateSortOrder(tabId, e.getId(), idx++);
         }
     }
 

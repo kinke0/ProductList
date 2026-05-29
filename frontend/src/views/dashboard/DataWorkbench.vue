@@ -105,7 +105,7 @@
     </div>
   </div>
 
-  <el-dialog v-model="showDocDialog" title="生成文档" width="700px">
+  <el-dialog v-model="showDocDialog" title="生成文档" width="960px" top="2vh">
     <el-form label-width="100px" size="small">
       <el-form-item label="文档类型">
         <el-radio-group v-model="docType">
@@ -128,28 +128,44 @@
     </el-form>
 
     <el-divider content-position="left">生成记录</el-divider>
-    <el-table :data="genRecords" size="small" max-height="300" v-loading="recordsLoading">
-      <el-table-column label="状态" width="90">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+      <span style="font-size:13px;color:var(--si-text-secondary);">文档生成人</span>
+      <el-select v-model="filterCreator" placeholder="生成人" clearable size="small" style="width:130px;">
+        <el-option v-for="name in creatorList" :key="name" :label="name" :value="name" />
+      </el-select>
+      <el-radio-group v-model="filterTime" size="small">
+        <el-radio-button value="3">近3天</el-radio-button>
+        <el-radio-button value="7">近7天</el-radio-button>
+        <el-radio-button value="30">近30天</el-radio-button>
+        <el-radio-button value="">全部</el-radio-button>
+      </el-radio-group>
+      <div style="margin-left:auto;">
+        <el-button type="danger" size="small" :disabled="selectedRecIds.length === 0" @click="batchDeleteRecords">删除 ({{ selectedRecIds.length }})</el-button>
+      </div>
+    </div>
+    <el-table :data="pagedRecords" size="small" max-height="380" v-loading="recordsLoading" @selection-change="onRecSelectionChange" ref="recTable" style="width:100%">
+      <el-table-column type="selection" width="40" />
+      <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'generating' || row.status === 'processing'" type="warning" size="small">
             {{ getRecordPercent(row) }}%
           </el-tag>
-          <el-tag v-else-if="row.status === 'completed' || row.status === 'success'" type="success" size="small">已完成</el-tag>
-          <el-tag v-else-if="row.status === 'error'" type="danger" size="small">生成错误</el-tag>
+          <el-tag v-else-if="row.status === 'completed' || row.status === 'success'" type="success" size="small">完成</el-tag>
+          <el-tag v-else-if="row.status === 'error'" type="danger" size="small">错误</el-tag>
           <el-tag v-else type="info" size="small">{{ row.status || '未知' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="文档类型" width="140">
+      <el-table-column label="文档类型" min-width="160">
         <template #default="{ row }">
           {{ row.format === 'word' ? 'Word' : 'Excel' }}版{{ row.docType === 'bid' ? '招标参数' : '功能说明' }}
         </template>
       </el-table-column>
-      <el-table-column label="生成时间" width="160">
+      <el-table-column label="生成时间" min-width="170">
         <template #default="{ row }">
           {{ row.createdAt ? row.createdAt.replace('T', ' ').substring(0, 19) : '' }}
         </template>
       </el-table-column>
-      <el-table-column label="文档大小" width="90">
+      <el-table-column label="大小" width="125">
         <template #default="{ row }">
           {{ row.fileSize ? (row.fileSize / 1024).toFixed(1) + 'KB' : '-' }}
         </template>
@@ -166,6 +182,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+      <el-pagination
+        v-model:current-page="recPage"
+        :page-size="recPageSize"
+        :total="filteredRecords.length"
+        layout="prev, pager, next"
+        small
+      />
+    </div>
 
     <template #footer>
       <el-button @click="showDocDialog = false">取消</el-button>
@@ -235,6 +260,12 @@ const selectedEntryIds = ref([])
   const docLoading = ref(false)
  const genRecords = ref([])
 const recordsLoading = ref(false)
+const filterCreator = ref('')
+const filterTime = ref('')
+const selectedRecIds = ref([])
+const recPage = ref(1)
+const recPageSize = 15
+const recTable = ref(null)
 const customTabs = ref([])
 const showInsertDialog = ref(false)
 const insertEntryIds = ref([])
@@ -496,14 +527,16 @@ function onSelectInsertTarget(tab) {
 
 async function onRemoveFromList(tabId, entryIds) {
   if (!entryIds || entryIds.length === 0) return
-  try {
-    for (const entryId of entryIds) {
+  let removed = 0
+  for (const entryId of entryIds) {
+    try {
       await removeEntryFromTab(tabId, entryId)
-    }
-    ElMessage.success(`已移除 ${entryIds.length} 条记录`)
+      removed++
+    } catch {} 
+  }
+  if (removed > 0) {
+    ElMessage.success(`已移除 ${removed} 条记录`)
     customTabRefresh.value++
-  } catch (e) {
-    ElMessage.error('移除失败')
   }
 }
 
@@ -519,9 +552,50 @@ async function loadGenRecords() {
   try {
     const res = await getDocRecords(selectedVersion.value.id)
     genRecords.value = res.data || []
+    recPage.value = 1
+    selectedRecIds.value = []
   } finally {
     recordsLoading.value = false
   }
+}
+
+const creatorList = computed(() => {
+  const names = new Set()
+  genRecords.value.forEach(r => { if (r.generatedByName) names.add(r.generatedByName) })
+  return [...names]
+})
+
+const filteredRecords = computed(() => {
+  let list = genRecords.value
+  if (filterCreator.value) {
+    list = list.filter(r => r.generatedByName === filterCreator.value)
+  }
+  if (filterTime.value) {
+    const days = parseInt(filterTime.value)
+    const cutoff = Date.now() - days * 86400000
+    list = list.filter(r => r.createdAt && new Date(r.createdAt).getTime() > cutoff)
+  }
+  return list
+})
+
+const pagedRecords = computed(() => {
+  const start = (recPage.value - 1) * recPageSize
+  return filteredRecords.value.slice(start, start + recPageSize)
+})
+
+function onRecSelectionChange(rows) {
+  selectedRecIds.value = rows.map(r => r.id)
+}
+
+async function batchDeleteRecords() {
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedRecIds.value.length} 条记录？`, '批量删除', { type: 'warning' })
+  } catch { return }
+  for (const id of selectedRecIds.value) {
+    try { await deleteDocRecord(id) } catch {}
+  }
+  ElMessage.success('已删除')
+  loadGenRecords()
 }
 
 function startPolling() {

@@ -56,6 +56,13 @@ public class ImageResourceController {
         return Result.success();
     }
 
+    @PostMapping("/batch-delete")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<Void> batchDelete(@RequestBody List<Long> ids) {
+        imageResourceService.batchDelete(ids);
+        return Result.success();
+    }
+
     @PutMapping("/{id}")
     public Result<ImageResource> update(@PathVariable Long id, @RequestBody ImageResource body) {
         return Result.success(imageResourceService.update(id, body));

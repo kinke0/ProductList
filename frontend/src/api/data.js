@@ -51,3 +51,17 @@ export function levelUp(id) {
 export function levelDown(id) {
   return request.put(`/data/${id}/level-down`)
 }
+
+export function importExcel(file, versionId) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('versionId', versionId)
+  return request.post('/data/import-excel', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  })
+}
+
+export function batchDelete(versionId, ids) {
+  return request.post(`/data/batch-delete?versionId=${versionId}`, ids)
+}

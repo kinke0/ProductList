@@ -88,11 +88,8 @@ public class ImageResourceService {
         }
 
         Path filePath = dirPath.resolve(storedName);
-        int dup = 1;
-        while (Files.exists(filePath)) {
-            storedName = sanitizedBase + "_" + dup + "." + ext;
-            filePath = dirPath.resolve(storedName);
-            dup++;
+        if (Files.exists(filePath)) {
+            throw new BusinessException("同目录下已存在同名文件: " + storedName);
         }
         try {
             Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
@@ -119,20 +116,24 @@ public class ImageResourceService {
     }
 
     public List<ImageResource> findAll(String category, String domain, String product, Long versionId) {
-        List<ImageResource> direct = findDirect(category, domain, product, versionId);
+        final String cat = stripCountSuffix(category);
+        final String dom = stripCountSuffix(domain);
+        final String prod = stripCountSuffix(product);
+        List<ImageResource> direct = findDirect(cat, dom, prod, versionId);
 
-        if (versionId != null && category != null && domain != null) {
+        if (versionId != null && cat != null && dom != null) {
             List<DataEntry> matchingEntries = dataEntryRepository.findByVersionIdAndColBizCategoryAndColBizDomain(
-                    versionId, category, domain);
-            if (product != null) {
+                    versionId, cat, dom);
+            if (prod != null) {
                 Map<Long, DataEntry> entryMap = new HashMap<>();
                 for (DataEntry e : dataEntryRepository.findByVersionId(versionId)) {
                     entryMap.put(e.getId(), e);
                 }
+                final String fProd = prod;
                 matchingEntries = matchingEntries.stream()
                         .filter(e -> {
                             DataEntry l3 = findAncestorAtLevel(e, entryMap, 3);
-                            return l3 != null && product.equals(l3.getColProductSystem());
+                            return l3 != null && fProd.equals(l3.getColProductSystem());
                         })
                         .toList();
             }
@@ -209,12 +210,45 @@ public class ImageResourceService {
         imageResourceRepository.deleteById(id);
     }
 
+    public void batchDelete(List<Long> ids) {
+        for (Long id : ids) {
+            try {
+                delete(id);
+            } catch (Exception ignored) {}
+        }
+    }
+
     @Transactional
     public ImageResource update(Long id, ImageResource body) {
         ImageResource image = imageResourceRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
         if (body.getFilename() != null) {
-            image.setFilename(body.getFilename());
+            String newName = body.getFilename();
+            String ext = image.getStoredName().substring(image.getStoredName().lastIndexOf('.') + 1);
+            String newStored = sanitizePath(newName);
+            if (newStored.isEmpty()) newStored = UUID.randomUUID().toString();
+            if (!newStored.endsWith("." + ext)) newStored = newStored + "." + ext;
+            if (!newStored.equals(image.getStoredName())) {
+                List<ImageResource> dup = imageResourceRepository.findByCategoryAndDomainAndProductAndStoredName(
+                    image.getCategory(), image.getDomain(), image.getProduct(), newStored);
+                if (!dup.isEmpty()) {
+                    throw new BusinessException("同目录下已存在同名文件: " + newName);
+                }
+                String oldPath = image.getPath();
+                Path newPath = Paths.get(image.getPath()).resolveSibling(newStored);
+                try {
+                    Files.move(Paths.get(oldPath), newPath, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException e) {
+                    throw new BusinessException("文件重命名失败: " + e.getMessage());
+                }
+                image.setStoredName(newStored);
+                image.setPath(newPath.toString());
+                image.setFilename(newName);
+                String subPath = buildSubPath(image.getCategory(), image.getDomain(), image.getProduct());
+                image.setUrl("/api/images/file/" + subPath + "/" + newStored);
+            } else {
+                image.setFilename(newName);
+            }
         }
         if (body.getCategory() != null) {
             image.setCategory(body.getCategory());
@@ -236,93 +270,105 @@ public class ImageResourceService {
             images = imageResourceRepository.findAll();
         }
 
-        Map<String, Map<String, Map<String, Set<Long>>>> treeImgIds = new LinkedHashMap<>();
-        Map<Long, ImageResource> imgMap = new LinkedHashMap<>();
+        Map<String, Integer> imageCountByCat = new LinkedHashMap<>();
+        Map<String, Integer> imageCountByDom = new LinkedHashMap<>();
+        Map<String, Integer> imageCountByProd = new LinkedHashMap<>();
         for (ImageResource img : images) {
-            imgMap.put(img.getId(), img);
-            String cat = img.getCategory() != null ? img.getCategory() : "未分类";
-            String dom = img.getDomain() != null ? img.getDomain() : "未分类";
-            String prod = img.getProduct() != null ? img.getProduct() : "未分类";
-            treeImgIds.computeIfAbsent(cat, k -> new LinkedHashMap<>())
-                    .computeIfAbsent(dom, k -> new LinkedHashMap<>())
-                    .computeIfAbsent(prod, k -> new LinkedHashSet<>())
-                    .add(img.getId());
+            String cat = img.getCategory() != null ? img.getCategory() : "";
+            String dom = img.getDomain() != null ? img.getDomain() : "";
+            String prod = img.getProduct() != null ? img.getProduct() : "";
+            imageCountByCat.merge(cat, 1, Integer::sum);
+            String domKey = cat + "||" + dom;
+            imageCountByDom.merge(domKey, 1, Integer::sum);
+            String prodKey = domKey + "||" + prod;
+            imageCountByProd.merge(prodKey, 1, Integer::sum);
         }
 
-        if (versionId != null) {
-            Map<Long, DataEntry> entryMap = new HashMap<>();
-            for (DataEntry e : dataEntryRepository.findByVersionId(versionId)) {
-                entryMap.put(e.getId(), e);
-            }
-            for (DataEntry entry : entryMap.values()) {
-                String desc = entry.getColFeatureDesc();
-                if (desc == null) continue;
-                String entryCat = entry.getColBizCategory();
-                String entryDom = entry.getColBizDomain();
-                if (entryCat == null || entryDom == null) continue;
-                DataEntry l3 = findAncestorAtLevel(entry, entryMap, 3);
-                String entryProd = l3 != null ? l3.getColProductSystem() : entry.getColProductSystem();
-                if (entryProd == null) continue;
-                for (ImageResource img : images) {
-                    String url = img.getUrl();
-                    if (url != null && desc.contains(url)) {
-                        if (!entryCat.equals(img.getCategory()) || !entryDom.equals(img.getDomain()) || !entryProd.equals(img.getProduct())) {
-                            treeImgIds.computeIfAbsent(entryCat, k -> new LinkedHashMap<>())
-                                    .computeIfAbsent(entryDom, k -> new LinkedHashMap<>())
-                                    .computeIfAbsent(entryProd, k -> new LinkedHashSet<>())
-                                    .add(img.getId());
+        List<DataEntry> entries = versionId != null
+            ? dataEntryRepository.findByVersionId(versionId)
+            : dataEntryRepository.findAll();
+
+        Map<String, String> catNames = new LinkedHashMap<>();
+        Map<String, List<String>> catToDomains = new LinkedHashMap<>();
+        Map<String, List<String>> domToProducts = new LinkedHashMap<>();
+
+        Map<Long, DataEntry> entryMap = new HashMap<>();
+        for (DataEntry e : entries) entryMap.put(e.getId(), e);
+
+        for (DataEntry entry : entries) {
+            String cat = entry.getColBizCategory();
+            String dom = entry.getColBizDomain();
+            if (cat == null || cat.isEmpty()) continue;
+            cat = cat.trim();
+            catNames.putIfAbsent(cat, cat);
+
+            if (dom != null && !dom.trim().isEmpty()) {
+                final String domTrimmed = dom.trim();
+                catToDomains.computeIfAbsent(cat, k -> new ArrayList<>());
+                String domListKey = cat + "||" + domTrimmed;
+                if (catToDomains.get(cat).stream().noneMatch(d -> d.equals(domTrimmed))) {
+                    catToDomains.get(cat).add(domTrimmed);
+                }
+
+                if (entry.getLevel() != null && entry.getLevel() == 3) {
+                    String prod = entry.getColProductSystem();
+                    if (prod != null && !prod.trim().isEmpty()) {
+                        prod = prod.trim();
+                        domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
+                        if (!domToProducts.get(domListKey).contains(prod)) {
+                            domToProducts.get(domListKey).add(prod);
                         }
                     }
                 }
             }
         }
 
-        List<String> orderedCategories = new ArrayList<>();
+        List<String> orderedCategories = new ArrayList<>(catNames.keySet());
         if (versionId != null) {
             List<BaseCategory> baseCategories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+            Set<String> catSet = new LinkedHashSet<>();
             for (BaseCategory bc : baseCategories) {
-                if (treeImgIds.containsKey(bc.getName())) {
-                    orderedCategories.add(bc.getName());
+                if (catNames.containsKey(bc.getName())) {
+                    catSet.add(bc.getName());
                 }
             }
-        }
-        for (String cat : treeImgIds.keySet()) {
-            if (!orderedCategories.contains(cat)) {
-                orderedCategories.add(cat);
+            for (String c : orderedCategories) {
+                catSet.add(c);
             }
+            orderedCategories = new ArrayList<>(catSet);
         }
 
         List<ImageDirectoryNode> roots = new ArrayList<>();
         for (String catName : orderedCategories) {
-            Map<String, Map<String, Set<Long>>> domMap = treeImgIds.get(catName);
             ImageDirectoryNode catNode = new ImageDirectoryNode();
-            catNode.setLabel(catName);
+            int catCount = imageCountByCat.getOrDefault(catName, 0);
+            catNode.setLabel(catName + " (" + catCount + ")");
+            catNode.setCount(catCount);
+
             List<ImageDirectoryNode> domainNodes = new ArrayList<>();
-            int catCount = 0;
-
-            for (Map.Entry<String, Map<String, Set<Long>>> domEntry : domMap.entrySet()) {
+            List<String> domains = catToDomains.getOrDefault(catName, new ArrayList<>());
+            for (String domName : domains) {
+                String domKey = catName + "||" + domName;
+                int domCount = imageCountByDom.getOrDefault(domKey, 0);
                 ImageDirectoryNode domNode = new ImageDirectoryNode();
-                domNode.setLabel(domEntry.getKey());
-                List<ImageDirectoryNode> prodNodes = new ArrayList<>();
-                int domCount = 0;
+                domNode.setLabel(domName + " (" + domCount + ")");
+                domNode.setCount(domCount);
 
-                for (Map.Entry<String, Set<Long>> prodEntry : domEntry.getValue().entrySet()) {
+                List<ImageDirectoryNode> prodNodes = new ArrayList<>();
+                List<String> products = domToProducts.getOrDefault(domKey, new ArrayList<>());
+                for (String prodName : products) {
+                    String prodKey = domKey + "||" + prodName;
+                    int prodCount = imageCountByProd.getOrDefault(prodKey, 0);
                     ImageDirectoryNode prodNode = new ImageDirectoryNode();
-                    prodNode.setLabel(prodEntry.getKey());
-                    prodNode.setCount(prodEntry.getValue().size());
+                    prodNode.setLabel(prodName + " (" + prodCount + ")");
+                    prodNode.setCount(prodCount);
                     prodNode.setChildren(null);
                     prodNodes.add(prodNode);
-                    domCount += prodEntry.getValue().size();
                 }
-
-                domNode.setChildren(prodNodes);
-                domNode.setCount(domCount);
+                domNode.setChildren(prodNodes.isEmpty() ? null : prodNodes);
                 domainNodes.add(domNode);
-                catCount += domCount;
             }
-
-            catNode.setChildren(domainNodes);
-            catNode.setCount(catCount);
+            catNode.setChildren(domainNodes.isEmpty() ? null : domainNodes);
             roots.add(catNode);
         }
 
@@ -339,6 +385,7 @@ public class ImageResourceService {
         return (current != null && current.getLevel() != null && current.getLevel() == targetLevel) ? current : null;
     }
 
+    @Transactional(readOnly = true)
     public List<DataEntry> findReferences(Long imageId) {
         ImageResource image = imageResourceRepository.findById(imageId)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
@@ -381,6 +428,11 @@ public class ImageResourceService {
             sb.append(sanitizePath(product));
         }
         return sb.toString();
+    }
+
+    private String stripCountSuffix(String val) {
+        if (val == null) return null;
+        return val.replaceAll("\\s*\\(\\d+\\)$", "").trim();
     }
 
     private String sanitizePath(String input) {
@@ -637,15 +689,8 @@ public class ImageResourceService {
             }
 
             String ext = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
-            String baseName = filename.substring(0, filename.lastIndexOf('.'));
             String storedName = filename;
             Path filePath = dirPath.resolve(storedName);
-            int dup = 1;
-            while (Files.exists(filePath)) {
-                storedName = baseName + "_" + dup + "." + ext;
-                filePath = dirPath.resolve(storedName);
-                dup++;
-            }
             Files.write(filePath, data);
 
             String urlPath = "/api/images/file/" + subPath + "/" + storedName;

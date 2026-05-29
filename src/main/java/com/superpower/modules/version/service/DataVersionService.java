@@ -4,6 +4,8 @@ import com.superpower.common.BusinessException;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.category.service.CategoryService;
 import com.superpower.modules.data.repository.DataEntryRepository;
+import com.superpower.modules.image.entity.ImageResource;
+import com.superpower.modules.image.repository.ImageResourceRepository;
 import com.superpower.modules.option.service.DataOptionService;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
@@ -20,15 +22,18 @@ public class DataVersionService {
 
     private final DataVersionRepository versionRepository;
     private final DataEntryRepository entryRepository;
+    private final ImageResourceRepository imageResourceRepository;
     private final CategoryService categoryService;
     private final DataOptionService optionService;
 
     public DataVersionService(DataVersionRepository versionRepository,
                               DataEntryRepository entryRepository,
+                              ImageResourceRepository imageResourceRepository,
                               CategoryService categoryService,
                               DataOptionService optionService) {
         this.versionRepository = versionRepository;
         this.entryRepository = entryRepository;
+        this.imageResourceRepository = imageResourceRepository;
         this.categoryService = categoryService;
         this.optionService = optionService;
     }
@@ -104,6 +109,25 @@ public class DataVersionService {
 
         if (latest != null && "released".equals(latest.getStatus())) {
             optionService.copyOptions(latest.getId(), version.getId());
+        }
+
+        if (latest != null && "released".equals(latest.getStatus())) {
+            List<ImageResource> images = imageResourceRepository.findByVersionId(latest.getId());
+            for (ImageResource img : images) {
+                ImageResource copy = new ImageResource();
+                copy.setFilename(img.getFilename());
+                copy.setStoredName(img.getStoredName());
+                copy.setPath(img.getPath());
+                copy.setCategory(img.getCategory());
+                copy.setDomain(img.getDomain());
+                copy.setProduct(img.getProduct());
+                copy.setUrl(img.getUrl());
+                copy.setSize(img.getSize());
+                copy.setMimeType(img.getMimeType());
+                copy.setUploadedBy(img.getUploadedBy());
+                copy.setVersionId(version.getId());
+                imageResourceRepository.save(copy);
+            }
         }
 
         return version;
