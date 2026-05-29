@@ -3,6 +3,7 @@ package com.superpower.modules.image.controller;
 import com.superpower.common.Result;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.image.dto.ImageDirectoryNode;
+import com.superpower.modules.image.dto.MigrationResult;
 import com.superpower.modules.image.entity.ImageResource;
 import com.superpower.modules.image.service.ImageResourceService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -58,6 +59,13 @@ public class ImageResourceController {
     @PutMapping("/{id}")
     public Result<ImageResource> update(@PathVariable Long id, @RequestBody ImageResource body) {
         return Result.success(imageResourceService.update(id, body));
+    }
+
+    @PostMapping("/migrate-external-images")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<MigrationResult> migrateExternalImages(@RequestBody List<Long> entryIds) {
+        MigrationResult result = imageResourceService.migrateExternalImages(entryIds);
+        return Result.success(result);
     }
 
     @GetMapping("/{id}/references")

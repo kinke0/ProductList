@@ -33,3 +33,7 @@ export function updateImage(id, data) {
 export function getImageReferences(id) {
   return request.get(`/images/${id}/references`)
 }
+
+export function migrateImages(ids) {
+  return request.post('/images/migrate-external-images', ids)
+}

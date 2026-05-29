@@ -7,6 +7,7 @@ import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.image.dto.ImageDirectoryNode;
 import com.superpower.modules.image.entity.ImageResource;
+import com.superpower.modules.image.dto.MigrationResult;
 import com.superpower.modules.image.repository.ImageResourceRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
@@ -21,6 +22,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -382,6 +385,315 @@ public class ImageResourceService {
 
     private String sanitizePath(String input) {
         return input.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+    }
+
+    @Transactional
+    public MigrationResult migrateExternalImages(List<Long> ids) {
+        List<DataEntry> entries = dataEntryRepository.findAllById(ids);
+        MigrationResult result = new MigrationResult();
+        int successImages = 0;
+        int failedImages = 0;
+
+        for (DataEntry entry : entries) {
+            String desc = entry.getColFeatureDesc();
+            if (desc == null || desc.isEmpty()) continue;
+            if (!desc.contains("cloudimgs.jscloud.vip")) continue;
+
+            String category = entry.getColBizCategory();
+            if (category != null) category = category.trim();
+            String domain = entry.getColBizDomain();
+            if (domain != null) domain = domain.trim();
+
+            DataEntry l3 = entry;
+            while (l3 != null && l3.getLevel() != null && l3.getLevel() > 3) {
+                Long parentId = l3.getParentId();
+                l3 = parentId != null ? dataEntryRepository.findById(parentId).orElse(null) : null;
+            }
+            String product = l3 != null ? l3.getColProductSystem() : entry.getColProductSystem();
+            if (product != null) product = product.trim();
+
+            String newDesc = desc;
+            int entryMigrated = 0;
+
+            Pattern extUrlPattern = Pattern.compile("https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\"<>\\]]+");
+            Map<String, ImageResource> downloaded = new HashMap<>();
+            Matcher urlMatcher = extUrlPattern.matcher(newDesc);
+            while (urlMatcher.find()) {
+                String extUrl = urlMatcher.group();
+                if (!downloaded.containsKey(extUrl)) {
+                    ImageResource image = downloadAndStoreImage(extUrl, category, domain, product, entry.getVersionId());
+                    downloaded.put(extUrl, image);
+                }
+            }
+
+            Pattern cardOpenPattern = Pattern.compile(
+                "<span\\s+class=\"image-card\"[^>]*?>", Pattern.DOTALL);
+            Matcher cardMatcher = cardOpenPattern.matcher(newDesc);
+            StringBuffer sbCards = new StringBuffer();
+            int lastEnd = 0;
+            while (cardMatcher.find()) {
+                int matchStart = cardMatcher.start();
+                sbCards.append(newDesc, lastEnd, matchStart);
+                String blockStart = cardMatcher.group();
+                String afterStart = newDesc.substring(cardMatcher.end());
+                String fullBlock = extractImageCardBlock(blockStart, afterStart);
+                lastEnd = matchStart + fullBlock.length();
+
+                Matcher urlInCard = extUrlPattern.matcher(fullBlock);
+                if (urlInCard.find()) {
+                    String extUrl = urlInCard.group();
+                    ImageResource image = downloaded.get(extUrl);
+                    if (image != null) {
+                        sbCards.append(updateImageCardUrls(fullBlock, extUrl, image));
+                        entryMigrated++;
+                        continue;
+                    }
+                }
+                sbCards.append(fullBlock);
+            }
+            sbCards.append(newDesc, lastEnd, newDesc.length());
+            newDesc = sbCards.toString();
+
+            Pattern bracketPattern = Pattern.compile("\\[(https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\\]]+)\\]");
+            Matcher bracketMatcher = bracketPattern.matcher(newDesc);
+            StringBuffer sbBracket = new StringBuffer();
+            while (bracketMatcher.find()) {
+                String extUrl = bracketMatcher.group(1);
+                ImageResource image = downloaded.get(extUrl);
+                if (image != null) {
+                    bracketMatcher.appendReplacement(sbBracket, Matcher.quoteReplacement(buildImageCard(image)));
+                    entryMigrated++;
+                } else {
+                    bracketMatcher.appendReplacement(sbBracket, Matcher.quoteReplacement(bracketMatcher.group(0)));
+                }
+            }
+            bracketMatcher.appendTail(sbBracket);
+            newDesc = sbBracket.toString();
+
+            Pattern anglePattern = Pattern.compile("<(https?://cloudimgs\\.jscloud\\.vip:\\d+/[^>]+)>");
+            Matcher angleMatcher = anglePattern.matcher(newDesc);
+            StringBuffer sbAngle = new StringBuffer();
+            while (angleMatcher.find()) {
+                String extUrl = angleMatcher.group(1);
+                ImageResource image = downloaded.get(extUrl);
+                if (image != null) {
+                    angleMatcher.appendReplacement(sbAngle, Matcher.quoteReplacement(buildImageCard(image)));
+                    entryMigrated++;
+                } else {
+                    angleMatcher.appendReplacement(sbAngle, Matcher.quoteReplacement(angleMatcher.group(0)));
+                }
+            }
+            angleMatcher.appendTail(sbAngle);
+            newDesc = sbAngle.toString();
+
+            Matcher plainUrlMatcher = extUrlPattern.matcher(newDesc);
+            StringBuffer sbPlain = new StringBuffer();
+            while (plainUrlMatcher.find()) {
+                String extUrl = plainUrlMatcher.group();
+                ImageResource image = downloaded.get(extUrl);
+                if (image != null) {
+                    plainUrlMatcher.appendReplacement(sbPlain, Matcher.quoteReplacement(buildImageCard(image)));
+                    entryMigrated++;
+                } else {
+                    plainUrlMatcher.appendReplacement(sbPlain, Matcher.quoteReplacement(extUrl));
+                }
+            }
+            plainUrlMatcher.appendTail(sbPlain);
+            newDesc = sbPlain.toString();
+
+            if (!newDesc.equals(desc)) {
+                entry.setColFeatureDesc(newDesc);
+                dataEntryRepository.save(entry);
+            }
+
+            int entryTotal = downloaded.size();
+            int entryFailed = 0;
+            for (ImageResource img : downloaded.values()) {
+                if (img == null) entryFailed++;
+            }
+            successImages += entryMigrated;
+            failedImages += entryFailed;
+            if (entryFailed > 0) {
+                MigrationResult.EntryFailDetail detail = new MigrationResult.EntryFailDetail();
+                detail.setEntryId(entry.getId());
+                detail.setProductName(entry.getColProductSystem() != null ? entry.getColProductSystem() : (product != null ? product : "ID:" + entry.getId()));
+                detail.setFailedImageCount(entryFailed);
+                detail.setTotalImageCount(entryTotal);
+                result.getFailures().add(detail);
+            }
+        }
+        result.setSuccessImages(successImages);
+        result.setFailedImages(failedImages);
+        return result;
+    }
+
+    private String extractImageCardBlock(String blockStart, String after) {
+        int depth = 1;
+        int i = 0;
+        int len = after.length();
+        int tagCloseLen = "</span>".length();
+        int tagOpenLen = "<span".length();
+        while (i < len && depth > 0) {
+            int nextClose = after.indexOf("</span>", i);
+            int nextOpen = after.indexOf("<span", i);
+            if (nextClose < 0) break;
+            if (nextOpen >= 0 && nextOpen < nextClose) {
+                depth++;
+                i = nextOpen + tagOpenLen;
+            } else {
+                depth--;
+                i = nextClose + tagCloseLen;
+            }
+        }
+        return i > 0 ? blockStart + after.substring(0, i) : blockStart;
+    }
+
+    private String updateImageCardUrls(String block, String extUrl, ImageResource image) {
+        String localUrl = image.getUrl();
+        String block2 = block.replace("data-url=\"" + extUrl + "\"", "data-url=\"" + localUrl + "\"");
+        block2 = block2.replace("src=\"" + extUrl + "\"", "src=\"" + localUrl + "\"");
+        block2 = block2.replaceAll("data-id=\"[^\"]*\"", "data-id=\"" + image.getId() + "\"");
+        if (!block2.contains("data-id=")) {
+            block2 = block2.replaceFirst("class=\"image-card\"", "class=\"image-card\" data-id=\"" + image.getId() + "\"");
+        }
+        String name = image.getFilename() != null ? image.getFilename() : image.getStoredName();
+        if (name != null) {
+            String nameSafe = name.replace("\"", "&quot;").replace("'", "&#39;");
+            block2 = block2.replaceAll("data-filename=\"[^\"]*\"", "data-filename=\"" + nameSafe + "\"");
+            block2 = block2.replaceAll("title=\"[^\"]*\"", "title=\"" + nameSafe + "\"");
+        }
+        return block2;
+    }
+
+    private ImageResource downloadAndStoreImage(String url, String category, String domain, String product, Long versionId) {
+        try {
+            String encodedUrlStr = url;
+            try {
+                new java.net.URL(url);
+                if (url.matches(".*[\\u4e00-\\u9fff\\s()（）].*")) {
+                    int schemeEnd = url.indexOf("://");
+                    if (schemeEnd >= 0) {
+                        String scheme = url.substring(0, schemeEnd);
+                        String rest = url.substring(schemeEnd + 3);
+                        int pathStart = rest.indexOf('/');
+                        String hostPort = pathStart >= 0 ? rest.substring(0, pathStart) : rest;
+                        String pathQuery = pathStart >= 0 ? rest.substring(pathStart) : "";
+                        String[] segments = pathQuery.split("/", -1);
+                        StringBuilder sb = new StringBuilder();
+                        for (String seg : segments) {
+                            if (seg.isEmpty()) continue;
+                            sb.append("/").append(java.net.URLEncoder.encode(seg, "UTF-8").replace("+", "%20"));
+                        }
+                        encodedUrlStr = scheme + "://" + hostPort + sb;
+                    }
+                }
+            } catch (java.net.MalformedURLException e) {
+                try {
+                    encodedUrlStr = new java.net.URI(url).toASCIIString();
+                } catch (Exception ex) {
+                    int schemeEnd = url.indexOf("://");
+                    if (schemeEnd >= 0) {
+                        String scheme = url.substring(0, schemeEnd);
+                        String rest = url.substring(schemeEnd + 3);
+                        int pathStart = rest.indexOf('/');
+                        String hostPort = pathStart >= 0 ? rest.substring(0, pathStart) : rest;
+                        String pathQuery = pathStart >= 0 ? rest.substring(pathStart) : "";
+                        String[] segments = pathQuery.split("/", -1);
+                        StringBuilder sb = new StringBuilder();
+                        for (String seg : segments) {
+                            if (seg.isEmpty()) continue;
+                            sb.append("/").append(java.net.URLEncoder.encode(seg, "UTF-8").replace("+", "%20"));
+                        }
+                        encodedUrlStr = scheme + "://" + hostPort + sb;
+                    }
+                }
+            }
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(encodedUrlStr).openConnection();
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setInstanceFollowRedirects(true);
+            int code = conn.getResponseCode();
+            if (code != 200) return null;
+            String contentType = conn.getContentType();
+            if (contentType != null && contentType.startsWith("text/")) return null;
+            byte[] data = conn.getInputStream().readAllBytes();
+            if (data.length == 0) return null;
+
+            String subPath = buildSubPath(category, domain, product);
+            Path dirPath = Paths.get(storagePath, subPath);
+            Files.createDirectories(dirPath);
+
+            String filename;
+            int lastSlash = url.lastIndexOf('/');
+            if (lastSlash >= 0) {
+                filename = java.net.URLDecoder.decode(url.substring(lastSlash + 1), "UTF-8");
+            } else {
+                filename = UUID.randomUUID() + ".png";
+            }
+            filename = sanitizePath(filename);
+            if (!filename.matches(".*\\.(png|jpg|jpeg|gif|webp|bmp)$")) {
+                filename += ".png";
+            }
+
+            String ext = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
+            String baseName = filename.substring(0, filename.lastIndexOf('.'));
+            String storedName = filename;
+            Path filePath = dirPath.resolve(storedName);
+            int dup = 1;
+            while (Files.exists(filePath)) {
+                storedName = baseName + "_" + dup + "." + ext;
+                filePath = dirPath.resolve(storedName);
+                dup++;
+            }
+            Files.write(filePath, data);
+
+            String urlPath = "/api/images/file/" + subPath + "/" + storedName;
+
+            ImageResource image = new ImageResource();
+            image.setFilename(filename);
+            image.setStoredName(storedName);
+            image.setPath(filePath.toString());
+            image.setCategory(category);
+            image.setDomain(domain);
+            image.setProduct(product);
+            image.setUrl(urlPath);
+            image.setSize((long) data.length);
+            image.setMimeType(contentType != null ? contentType : "image/png");
+            image.setUploadedBy("migration");
+            image.setVersionId(versionId);
+            imageResourceRepository.save(image);
+
+            return image;
+        } catch (Exception e) {
+            System.out.println("[Migration] Failed to download: " + url + " - " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String buildImageCard(ImageResource image) {
+        String url = image.getUrl();
+        String name = image.getFilename() != null ? image.getFilename() : image.getStoredName();
+        if (name == null) name = "图片";
+        String nameSafe = name.replace("\"", "&quot;").replace("'", "&#39;");
+        String sizeStr = formatSizeString(image.getSize());
+        return "<span class=\"image-card\" contenteditable=\"false\" data-url=\"" + url
+            + "\" data-filename=\"" + nameSafe + "\" data-id=\"" + image.getId()
+            + "\" title=\"" + nameSafe + "\"><span class=\"image-thumb\"><img src=\"" + url
+            + "\" alt=\"" + nameSafe + "\" /></span><span class=\"image-info\"><button type=\"button\""
+            + " class=\"image-action-btn image-edit-name-btn\" data-action=\"edit-name\">编辑</button>"
+            + "<span class=\"image-name\">" + nameSafe + "</span><span class=\"image-size\">"
+            + sizeStr + "</span></span><span class=\"image-actions\"><button type=\"button\""
+            + " class=\"image-action-btn\" data-action=\"preview\">预览</button><button type=\"button\""
+            + " class=\"image-action-btn image-action-danger\" data-action=\"delete\">删除</button>"
+            + "<button type=\"button\" class=\"image-action-btn\" data-action=\"replace\">替换</button></span></span>";
+    }
+
+    private String formatSizeString(Long bytes) {
+        if (bytes == null) return "";
+        if (bytes < 1024) return bytes + "B";
+        if (bytes < 1024 * 1024) return String.format("%.1f", bytes / 1024.0) + "KB";
+        return String.format("%.1f", bytes / (1024.0 * 1024.0)) + "MB";
     }
 
     public String getCurrentUsername() {

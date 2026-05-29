@@ -67,6 +67,14 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            <el-button
+              v-if="approvalRole === 'admin'"
+              type="warning" size="small" plain
+              :disabled="selectedIds.length === 0"
+              :loading="migrating"
+              @click="onMigrateImages">
+              <el-icon><Picture /></el-icon>迁移图片
+            </el-button>
       </div>
     </div>
 
@@ -343,7 +351,7 @@
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
@@ -351,7 +359,7 @@ import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImagePicker from './ImagePicker.vue'
-import { updateImage } from '../api/image'
+import { updateImage, migrateImages } from '../api/image'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -379,6 +387,7 @@ const batchSolutionValue = ref('')
 const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
 const selectedIds = ref([])
+const migrating = ref(false)
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
@@ -1436,6 +1445,50 @@ function onRemoveClick() {
   }
   const ids = collectSelectedWithDescendants()
   emit('removeFromList', ids)
+}
+
+async function onMigrateImages() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先勾选条目')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认将选中的 ${selectedIds.value.length} 条记录中的外部图片下载并替换为本地图片？`,
+      '迁移图片',
+      { confirmButtonText: '确认迁移', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  migrating.value = true
+  try {
+    const res = await migrateImages([...selectedIds.value])
+    if (res.code === 200) {
+      const data = res.data
+      let html = `<div style="line-height:2;"><b>迁移完成</b></div>`
+      html += `<div style="margin:8px 0;color:#67c23a;">成功：${data.successImages} 张图片</div>`
+      html += `<div style="margin:8px 0;color:#f56c6c;">失败：${data.failedImages} 张图片</div>`
+      if (data.failures && data.failures.length > 0) {
+        html += `<div style="margin-top:12px;font-weight:bold;">失败明细：</div>`
+        html += `<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;">`
+        html += `<tr style="background:#f5f7fa;text-align:left;"><th style="padding:6px 8px;">章节</th><th style="padding:6px 8px;text-align:center;">失败/总数</th></tr>`
+        data.failures.forEach(f => {
+          html += `<tr><td style="padding:6px 8px;">${f.productName || '(ID:' + f.entryId + ')'}</td><td style="padding:6px 8px;text-align:center;color:#f56c6c;">${f.failedImageCount}/${f.totalImageCount}</td></tr>`
+        })
+        html += `</table>`
+      }
+      ElMessageBox.alert(html, '迁移结果', {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '确定',
+        customClass: 'migration-result-dialog'
+      })
+      handleQuery()
+    }
+  } catch {
+  } finally {
+    migrating.value = false
+  }
 }
 
 function collectFullBranch() {
