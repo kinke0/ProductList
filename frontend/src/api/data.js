@@ -4,6 +4,10 @@ export function getTree(versionId) {
   return request.get(`/data/tree/${versionId}`)
 }
 
+export function getCategoryTree(versionId) {
+  return request.get(`/tree?versionId=${versionId}`)
+}
+
 export function getChildren(versionId, parentId) {
   return request.get(`/data/children/${versionId}/${parentId}`)
 }

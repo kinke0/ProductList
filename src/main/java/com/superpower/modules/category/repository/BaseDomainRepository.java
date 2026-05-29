@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface BaseDomainRepository extends JpaRepository<BaseDomain, Long> {
     List<BaseDomain> findByVersionIdAndCategoryIdOrderBySortOrderAsc(Long versionId, Long categoryId);
+    List<BaseDomain> findByVersionId(Long versionId);
 }

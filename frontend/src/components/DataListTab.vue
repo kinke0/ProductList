@@ -79,7 +79,11 @@
       </div>
     </div>
 
-    <div class="table-body">
+    <div class="table-body" style="position:relative;">
+      <div v-if="batchLoading" class="batch-overlay">
+        <el-icon class="is-loading" style="font-size:36px;color:#409eff;"><Loading /></el-icon>
+        <span style="margin-top:8px;color:#666;font-size:14px;">正在批量处理...</span>
+      </div>
      <div class="vtable-header">
        <div class="vcol vcol-num" style="width:50px;">
          <div class="check-col-inner" :style="{ paddingLeft: props.isEditing ? '22px' : '0' }">
@@ -210,8 +214,8 @@
           <el-col :span="8">
             <el-form-item label="业务分类">
               <template v-if="props.isEditing && editingRow?.level === 3">
-                <el-select v-model="editForm.colBizCategory" style="width:100%;" @change="onL1Change">
-                  <el-option v-for="cat in l1Options" :key="cat" :label="cat" :value="cat" />
+                <el-select v-model="editForm.categoryId" style="width:100%;" @change="onL1Change" placeholder="请选择">
+                  <el-option v-for="cat in l1Options" :key="cat.id" :label="cat.label" :value="cat.id" />
                 </el-select>
               </template>
               <template v-else>
@@ -222,8 +226,8 @@
           <el-col :span="8">
             <el-form-item label="业务域">
               <template v-if="props.isEditing && editingRow?.level === 3">
-                <el-select v-model="editForm.colBizDomain" style="width:100%;">
-                  <el-option v-for="d in l2Options" :key="d" :label="d" :value="d" />
+                <el-select v-model="editForm.domainId" style="width:100%;" placeholder="请选择" @change="onL2Change">
+                  <el-option v-for="d in l2Options" :key="d.id" :label="d.label" :value="d.id" />
                 </el-select>
               </template>
               <template v-else>
@@ -382,7 +386,7 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, getTree } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, getTree, getCategoryTree } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -423,6 +427,7 @@ const selectedIds = ref([])
 const migrating = ref(false)
 const importing = ref(false)
 const fileInput = ref(null)
+const batchLoading = ref(false)
 const newlyCreatedIds = reactive(new Map())
 const l1Options = ref([])
 const l2Options = ref([])
@@ -1147,84 +1152,81 @@ function findRowById(id, nodes) {
 }
 
 async function batchApprove(action) {
-  const actionLabel = action === 'submit' ? '提交' : '通过'
-  const validStatus = action === 'submit' ? ['待提交', '驳回'] : ['待审核']
-  const validIds = []
-  const invalidRows = []
-  for (const id of selectedIds.value) {
-    const row = findRowById(id, tableData.value)
-    const s = row?.approvalStatus || '待提交'
-    if (validStatus.includes(s)) {
-      validIds.push(id)
-    } else {
-      invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+  batchLoading.value = true
+  try {
+    const actionLabel = action === 'submit' ? '提交' : '通过'
+    const validStatus = action === 'submit' ? ['待提交', '驳回'] : ['待审核']
+    const validIds = []
+    const invalidRows = []
+    for (const id of selectedIds.value) {
+      const row = findRowById(id, tableData.value)
+      const s = row?.approvalStatus || '待提交'
+      if (validStatus.includes(s)) {
+        validIds.push(id)
+      } else {
+        invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+      }
     }
-  }
-  if (invalidRows.length > 0) {
-    const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('、')
-    ElMessage.warning(`以下条目不满足${actionLabel}条件，已跳过：${names}`)
-  }
-  if (validIds.length === 0) {
-    ElMessage.warning('没有可操作的条目')
-    return
-  }
-  let successCount = 0
-  for (const id of validIds) {
-    try {
-      await approveEntry(id, action, '')
-      successCount++
-    } catch (e) {
-      console.error(`批量${actionLabel}失败 id=${id}:`, e)
+    if (invalidRows.length > 0) {
+      const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('<br>')
+      ElMessageBox.alert(
+        `以下条目不满足${actionLabel}条件，已跳过：<br>${names}`,
+        '提示',
+        { dangerouslyUseHTMLString: true, type: 'warning' }
+      )
     }
-  }
-  ElMessage.success(`成功${actionLabel} ${successCount} 条`)
-  handleQuery(true)
+    if (validIds.length === 0) {
+      ElMessage.warning('没有可操作的条目')
+      return
+    }
+    let successCount = 0
+    for (const id of validIds) {
+      try {
+        await approveEntry(id, action, '')
+        successCount++
+      } catch (e) {
+        console.error(`批量${actionLabel}失败 id=${id}:`, e)
+      }
+    }
+    ElMessage.success(`成功${actionLabel} ${successCount} 条`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
 }
 
 async function batchReject() {
-  const validIds = []
-  const invalidRows = []
-  for (const id of selectedIds.value) {
-    const row = findRowById(id, tableData.value)
-    const s = row?.approvalStatus || '待提交'
-    if (s === '待审核') {
-      validIds.push(id)
-    } else {
-      invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+    const validIds = []
+    const invalidRows = []
+    for (const id of selectedIds.value) {
+      const row = findRowById(id, tableData.value)
+      const s = row?.approvalStatus || '待提交'
+      if (s === '待审核') { validIds.push(id) }
+      else { invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s }) }
     }
-  }
-  if (invalidRows.length > 0) {
-    const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('、')
-    ElMessage.warning(`以下条目不满足驳回条件，已跳过：${names}`)
-  }
-  if (validIds.length === 0) {
-    ElMessage.warning('没有可操作的条目')
-    return
-  }
-  let reason = ''
-  try {
-    const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '批量驳回', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPlaceholder: '请输入驳回原因，可不填',
-      inputValidator: () => true
-    })
-    reason = value || ''
-  } catch (e) {
-    return
-  }
-  let successCount = 0
-  for (const id of validIds) {
+    if (invalidRows.length > 0) {
+      ElMessageBox.alert(
+        `以下条目不满足驳回条件，已跳过：<br>${invalidRows.map(r => `${r.name}（${r.status}）`).join('<br>')}`,
+        '提示',
+        { dangerouslyUseHTMLString: true, type: 'warning' }
+      )
+    }
+    if (validIds.length === 0) { ElMessage.warning('没有可操作的条目'); return }
+    let reason = ''
     try {
-      await approveEntry(id, 'reject', reason)
-      successCount++
-    } catch (e) {
-      console.error(`批量驳回失败 id=${id}:`, e)
-    }
-  }
-  ElMessage.success(`成功驳回 ${successCount} 条`)
-  handleQuery(true)
- }
+      const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '批量驳回', {
+        confirmButtonText: '确定', cancelButtonText: '取消', inputPlaceholder: '请输入驳回原因，可不填', inputValidator: () => true
+      })
+      reason = value || ''
+    } catch (e) { return }
+    batchLoading.value = true
+    try {
+      let successCount = 0
+      for (const id of validIds) {
+        try { await approveEntry(id, 'reject', reason); successCount++ } catch (e) {}
+      }
+      ElMessage.success(`成功驳回 ${successCount} 条`)
+      handleQuery(true)
+    } finally { batchLoading.value = false }
+}
 
  function onBatchCommand(cmd) {
   if (selectedIds.value.length === 0) {
@@ -1257,6 +1259,7 @@ async function onBatchDelete() {
       { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
+  batchLoading.value = true
   try {
     const res = await batchDelete(props.versionId, [...selectedIds.value])
     if (res.code === 200) {
@@ -1264,7 +1267,8 @@ async function onBatchDelete() {
       selectedIds.value = []
       handleQuery()
     }
-  } catch {}
+  } catch(e) {}
+  batchLoading.value = false
 }
 
 function batchChangeStatus() {
@@ -1277,69 +1281,54 @@ function batchChangeStatus() {
 }
 
 async function confirmBatchStatus() {
-  if (!batchStatusValue.value) {
-    ElMessage.warning('请选择功能状态')
-    return
-  }
-  let successCount = 0
-  for (const id of selectedIds.value) {
-    try {
-      const row = findRowById(id, tableData.value)
-      if (row) {
-        await updateEntry(id, { ...row, colStatus: batchStatusValue.value })
-        successCount++
-      }
-    } catch (e) {
-      console.error(`修改状态失败 id=${id}:`, e)
+  if (!batchStatusValue.value) { ElMessage.warning('请选择功能状态'); return }
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) { await updateEntry(id, { ...row, colStatus: batchStatusValue.value }); successCount++ }
+      } catch (e) { console.error(`修改状态失败 id=${id}:`, e) }
     }
-  }
-  showBatchStatusDialog.value = false
-  ElMessage.success(`成功修改 ${successCount} 条功能状态`)
-  handleQuery(true)
+    showBatchStatusDialog.value = false
+    ElMessage.success(`成功修改 ${successCount} 条功能状态`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
  }
 
 async function confirmBatchSolution() {
-  if (!batchSolutionValue.value) {
-    ElMessage.warning('请选择解决方案')
-    return
-  }
-  let successCount = 0
-  for (const id of selectedIds.value) {
-    try {
-      const row = findRowById(id, tableData.value)
-      if (row) {
-        await updateEntry(id, { ...row, colOtherSolutionTag: batchSolutionValue.value })
-        successCount++
-      }
-    } catch (e) {
-      console.error(`修改解决方案失败 id=${id}:`, e)
+  if (!batchSolutionValue.value) { ElMessage.warning('请选择解决方案'); return }
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) { await updateEntry(id, { ...row, colOtherSolutionTag: batchSolutionValue.value }); successCount++ }
+      } catch (e) { console.error(`修改解决方案失败 id=${id}:`, e) }
     }
-  }
-  showBatchSolutionDialog.value = false
-  ElMessage.success(`成功修改 ${successCount} 条解决方案`)
-  handleQuery(true)
+    showBatchSolutionDialog.value = false
+    ElMessage.success(`成功修改 ${successCount} 条解决方案`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
  }
 
 async function confirmBatchManager() {
-  if (!batchManagerValue.value) {
-    ElMessage.warning('请输入产品经理')
-    return
-  }
+  if (!batchManagerValue.value) { ElMessage.warning('请输入产品经理'); return }
+  batchLoading.value = true
   let successCount = 0
-  for (const id of selectedIds.value) {
-    try {
-      const row = findRowById(id, tableData.value)
-      if (row) {
-        await updateEntry(id, { ...row, colProductManager: batchManagerValue.value })
-        successCount++
-      }
-    } catch (e) {
-      console.error(`指定产品经理失败 id=${id}:`, e)
+  try {
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) { await updateEntry(id, { ...row, colProductManager: batchManagerValue.value }); successCount++ }
+      } catch (e) { console.error(`指定产品经理失败 id=${id}:`, e) }
     }
-  }
-  showBatchManagerDialog.value = false
-  ElMessage.success(`成功指定 ${successCount} 条产品经理`)
-  handleQuery(true)
+    showBatchManagerDialog.value = false
+    ElMessage.success(`成功指定 ${successCount} 条产品经理`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
 }
 
 function statusTagType(status) {
@@ -1437,6 +1426,8 @@ const editForm = reactive({
   colStatus: '',
   colBizCategory: '',
   colBizDomain: '',
+  categoryId: null,
+  domainId: null,
   colVersionDivision: '',
   colProductManager: '',
   colOtherSolutionTag: '',
@@ -1487,13 +1478,13 @@ function initEditForm() {
 async function loadCategoryTree() {
   if (!props.versionId) return
   try {
-    const res = await getTree(props.versionId)
+    const res = await getCategoryTree(props.versionId)
     const data = res.data || []
-    l1Options.value = data.map(d => d.label).filter(Boolean)
-    const currentL1 = editForm.colBizCategory
-    if (currentL1) {
-      const matched = data.find(d => d.label === currentL1)
-      l2Options.value = matched?.children?.map(c => c.label).filter(Boolean) || []
+    l1Options.value = data.map(d => ({ id: d.id, label: d.label }))
+    const currentL1Id = editForm.categoryId
+    if (currentL1Id) {
+      const matched = data.find(d => d.id == currentL1Id)
+      l2Options.value = (matched?.children || []).map(c => ({ id: c.id, label: c.label }))
     } else {
       l2Options.value = []
     }
@@ -1501,11 +1492,21 @@ async function loadCategoryTree() {
 }
 
 function onL1Change(val) {
+  if (!val) { l2Options.value = []; editForm.domainId = null; editForm.colBizDomain = ''; return }
+  const cat = l1Options.value.find(c => c.id == val)
+  if (cat) editForm.colBizCategory = cat.label
   loadCategoryTree().then(() => {
-    if (!l2Options.value.includes(editForm.colBizDomain)) {
-      editForm.colBizDomain = l2Options.value[0] || ''
+    if (!l2Options.value.find(d => d.id == editForm.domainId)) {
+      editForm.domainId = l2Options.value[0]?.id || null
+      editForm.colBizDomain = l2Options.value[0]?.label || ''
     }
   })
+}
+
+function onL2Change(val) {
+  if (!val) return
+  const dom = l2Options.value.find(d => d.id == val)
+  if (dom) editForm.colBizDomain = dom.label
 }
 
   function collectDescendantIds(row) {
@@ -1857,6 +1858,7 @@ function buildTree(entries) {
     parentRow.value = null
     Object.assign(editForm, row)
     syncVersionFromForm()
+    loadCategoryTree()
     lastRejectReason.value = ''
     if (row.approvalStatus === '驳回') {
       try {
@@ -1876,6 +1878,7 @@ function buildTree(entries) {
     parentRow.value = null
     Object.assign(editForm, row)
     syncVersionFromForm()
+    loadCategoryTree()
     lastRejectReason.value = ''
     showEditDialog.value = true
   }
@@ -1931,6 +1934,8 @@ function addChildRow(row) {
   initEditForm()
   editForm.colBizCategory = row.colBizCategory || editForm.colBizCategory
   editForm.colBizDomain = row.colBizDomain || editForm.colBizDomain
+  editForm.categoryId = row.categoryId || editForm.categoryId
+  editForm.domainId = row.domainId || editForm.domainId
   editForm.colProductManager = row.colProductManager || ''
   editForm.colVersionDivision = row.colVersionDivision || ''
   syncVersionFromForm()
@@ -2079,6 +2084,11 @@ watch(() => props.versionId, () => {
   0% { background-color: #d4edda; }
   30% { background-color: #d4edda; }
   100% { background-color: inherit; }
+}
+.batch-overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255,255,255,0.85); z-index: 100;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
 .vrow.sep-row {
   background: rgba(37, 99, 235, 0.08) !important;

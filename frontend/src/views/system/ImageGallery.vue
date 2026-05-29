@@ -119,16 +119,17 @@ function onNodeClick(data, node) {
   const path = []
   let n = node
   while (n && n.data && n.data.label) { path.unshift(n.data.label); n = n.parent }
-  if (path.length >= 3) {
-    selectedCategory.value = path[0]
-    selectedDomain.value = path[1]
-    selectedProduct.value = path[2]
-  } else if (path.length === 2) {
-    selectedCategory.value = path[0]
-    selectedDomain.value = path[1]
+  const cleanPath = path.map(p => p.replace(/\s*\(\d+\)$/, ''))
+  if (cleanPath.length >= 3) {
+    selectedCategory.value = cleanPath[0]
+    selectedDomain.value = cleanPath[1]
+    selectedProduct.value = cleanPath[2]
+  } else if (cleanPath.length === 2) {
+    selectedCategory.value = cleanPath[0]
+    selectedDomain.value = cleanPath[1]
     selectedProduct.value = null
   } else {
-    selectedCategory.value = path[0]
+    selectedCategory.value = cleanPath[0]
     selectedDomain.value = null
     selectedProduct.value = null
   }

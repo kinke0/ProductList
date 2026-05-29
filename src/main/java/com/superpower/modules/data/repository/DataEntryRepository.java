@@ -109,4 +109,14 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             Long versionId, String colBizCategory, String colBizDomain);
 
     List<DataEntry> findByVersionIdAndColProductSystem(Long versionId, String colProductSystem);
+
+    List<DataEntry> findByVersionIdAndColBizCategory(Long versionId, String colBizCategory);
+
+    List<DataEntry> findByVersionIdAndColBizDomain(Long versionId, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizCategory(Long versionId, Integer level, String colBizCategory);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizDomain(Long versionId, Integer level, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndDomainIdAndLevel(Long versionId, Long domainId, Integer level);
 }

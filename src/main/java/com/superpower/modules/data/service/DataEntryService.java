@@ -3,6 +3,10 @@ package com.superpower.modules.data.service;
 import com.superpower.common.BusinessException;
 import com.superpower.modules.approval.entity.ApprovalLog;
 import com.superpower.modules.approval.repository.ApprovalLogRepository;
+import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
+import com.superpower.modules.category.repository.BaseCategoryRepository;
+import com.superpower.modules.category.repository.BaseDomainRepository;
 import com.superpower.modules.data.dto.DataEntryDTO;
 import com.superpower.modules.data.dto.ExcelImportResult;
 import com.superpower.modules.data.dto.TreeNodeDTO;
@@ -34,38 +38,61 @@ public class DataEntryService {
     private final CustomTabEntryRepository customTabEntryRepository;
     private final ApprovalLogRepository approvalLogRepository;
     private final SysUserRepository sysUserRepository;
+    private final BaseCategoryRepository baseCategoryRepository;
+    private final BaseDomainRepository baseDomainRepository;
 
     public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
                             CustomTabEntryRepository customTabEntryRepository,
                             ApprovalLogRepository approvalLogRepository,
-                            SysUserRepository sysUserRepository) {
+                            SysUserRepository sysUserRepository,
+                            BaseCategoryRepository baseCategoryRepository,
+                            BaseDomainRepository baseDomainRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
         this.customTabEntryRepository = customTabEntryRepository;
         this.approvalLogRepository = approvalLogRepository;
         this.sysUserRepository = sysUserRepository;
+        this.baseCategoryRepository = baseCategoryRepository;
+        this.baseDomainRepository = baseDomainRepository;
     }
 
     public List<TreeNodeDTO> getTree(Long versionId, String name, String status, String productManager,
                                      String solution, String versionTag) {
         List<DataEntry> entries = entryRepository.findByVersionIdAndLevelWithFilter(
                 versionId, 1, name, status, productManager, solution, versionTag);
-        return entries.stream().map(e -> buildTree(e, versionId)).toList();
+
+        Map<Long, BaseCategory> catMap = new HashMap<>();
+        Map<Long, BaseDomain> domMap = new HashMap<>();
+        baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId)
+            .forEach(c -> catMap.put(c.getId(), c));
+        baseDomainRepository.findByVersionId(versionId)
+            .forEach(d -> domMap.put(d.getId(), d));
+
+        return entries.stream().map(e -> buildTree(e, versionId, catMap, domMap)).toList();
     }
 
-    private TreeNodeDTO buildTree(DataEntry entry, Long versionId) {
+    private TreeNodeDTO buildTree(DataEntry entry, Long versionId, Map<Long, BaseCategory> catMap, Map<Long, BaseDomain> domMap) {
         TreeNodeDTO node = new TreeNodeDTO();
         node.setId(entry.getId());
         node.setParentId(entry.getParentId());
         node.setLevel(entry.getLevel());
-        node.setLabel(entry.getColProductSystem() != null ? entry.getColProductSystem() : entry.getColBizCategory());
+
+        String label;
+        if (entry.getLevel() == 1 && entry.getCategoryId() != null && catMap.containsKey(entry.getCategoryId())) {
+            label = catMap.get(entry.getCategoryId()).getName();
+        } else if (entry.getLevel() == 2 && entry.getDomainId() != null && domMap.containsKey(entry.getDomainId())) {
+            label = domMap.get(entry.getDomainId()).getName();
+        } else {
+            label = entry.getColProductSystem() != null ? entry.getColProductSystem() : entry.getColBizCategory();
+        }
+        node.setLabel(label);
         node.setSortOrder(entry.getSortOrder());
 
         if (entry.getLevel() < 2) {
             node.setIsLeaf(false);
             List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId());
             if (!children.isEmpty()) {
-                node.setChildren(children.stream().map(c -> buildTree(c, versionId)).toList());
+                node.setChildren(children.stream().map(c -> buildTree(c, versionId, catMap, domMap)).toList());
             }
         } else {
             node.setIsLeaf(true);
@@ -92,27 +119,44 @@ public class DataEntryService {
                 || (versionDivision != null && !versionDivision.isEmpty())
                 || (bizCategory != null && !bizCategory.isEmpty()) || (bizDomain != null && !bizDomain.isEmpty());
 
+        List<DataEntry> result;
         if (customTabId != null) {
-            List<DataEntry> entries;
             if (hasFilter) {
-                entries = entryRepository.queryEntries(versionId, customTabId, name, status, productManager,
+                result = entryRepository.queryEntries(versionId, customTabId, name, status, productManager,
                         solution, versionDivision, bizCategory, bizDomain);
             } else {
-                entries = entryRepository.findEntriesByTab(versionId, customTabId);
+                result = entryRepository.findEntriesByTab(versionId, customTabId);
             }
-            return reorderByCustomTabSort(customTabId, entries);
-        }
-
-        if (hasFilter) {
-            return entryRepository.queryEntries(versionId, null, name, status, productManager,
+            result = reorderByCustomTabSort(customTabId, result);
+        } else if (hasFilter) {
+            result = entryRepository.queryEntries(versionId, null, name, status, productManager,
                     solution, versionDivision, bizCategory, bizDomain);
+        } else if (bizCategory != null || bizDomain != null) {
+            result = entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
+        } else {
+            result = entryRepository.findAllEntries(versionId);
         }
-
-        if (bizCategory != null || bizDomain != null) {
-            return entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
+        // Sort by business category/domain order
+        if (customTabId == null) {
+            result = sortByCategoryOrder(result, versionId);
         }
+        return result;
+    }
 
-        return entryRepository.findAllEntries(versionId);
+    private List<DataEntry> sortByCategoryOrder(List<DataEntry> entries, Long versionId) {
+        List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+        Map<String, Integer> catOrder = new LinkedHashMap<>();
+        for (int i = 0; i < cats.size(); i++) catOrder.put(cats.get(i).getName(), i);
+        Map<String, Integer> l2Order = new LinkedHashMap<>();
+        List<BaseDomain> domains = baseDomainRepository.findByVersionId(versionId);
+        domains.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+        for (int i = 0; i < domains.size(); i++) l2Order.put(domains.get(i).getName(), i);
+        entries.sort(Comparator.comparingInt((DataEntry e) -> catOrder.getOrDefault(e.getColBizCategory(), Integer.MAX_VALUE))
+                .thenComparingInt(e -> l2Order.getOrDefault(e.getColBizDomain(), Integer.MAX_VALUE))
+                .thenComparingInt(e -> e.getLevel() != null ? e.getLevel() : 3)
+                .thenComparing(e -> e.getParentId(), Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+        return entries;
     }
 
     @Transactional
@@ -166,26 +210,49 @@ public class DataEntryService {
         boolean domChanged = newDomain != null && !newDomain.equals(oldBizDomain);
 
         if (entry.getLevel() == 1 && catChanged) {
-            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
-            for (DataEntry d : descendants) {
-                d.setColBizCategory(newCategory);
-                entryRepository.save(d);
+            List<DataEntry> all = entryRepository.findByVersionId(entry.getVersionId());
+            for (DataEntry d : all) {
+                if (oldBizCategory.equals(d.getColBizCategory())) {
+                    d.setColBizCategory(newCategory);
+                    entryRepository.save(d);
+                }
+            }
+            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(entry.getVersionId());
+            for (BaseCategory c : cats) {
+                if (oldBizCategory.equals(c.getName())) {
+                    c.setName(newCategory);
+                    baseCategoryRepository.save(c);
+                    break;
+                }
             }
         }
 
         if (entry.getLevel() == 2 && domChanged) {
-            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
-            for (DataEntry d : descendants) {
-                d.setColBizDomain(newDomain);
-                entryRepository.save(d);
+            List<DataEntry> all = entryRepository.findByVersionId(entry.getVersionId());
+            for (DataEntry d : all) {
+                if (oldBizDomain.equals(d.getColBizDomain())) {
+                    d.setColBizDomain(newDomain);
+                    entryRepository.save(d);
+                }
+            }
+            List<BaseDomain> doms = baseDomainRepository.findByVersionId(entry.getVersionId());
+            for (BaseDomain d : doms) {
+                if (oldBizDomain.equals(d.getName())) {
+                    d.setName(newDomain);
+                    baseDomainRepository.save(d);
+                    break;
+                }
             }
         }
 
         if (entry.getLevel() == 3 && (catChanged || domChanged)) {
+            List<DataEntry> all = entryRepository.findByVersionId(entry.getVersionId());
             List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            descendants.add(entry);
             for (DataEntry d : descendants) {
                 if (catChanged) d.setColBizCategory(newCategory);
                 if (domChanged) d.setColBizDomain(newDomain);
+                if (d.getId().equals(entry.getId())) continue;
                 entryRepository.save(d);
             }
         }
@@ -262,6 +329,8 @@ public class DataEntryService {
         if (dto.getColStatus() != null) entry.setColStatus(dto.getColStatus());
         if (dto.getColBizCategory() != null) entry.setColBizCategory(dto.getColBizCategory());
         if (dto.getColBizDomain() != null) entry.setColBizDomain(dto.getColBizDomain());
+        if (dto.getCategoryId() != null) entry.setCategoryId(dto.getCategoryId());
+        if (dto.getDomainId() != null) entry.setDomainId(dto.getDomainId());
         if (dto.getColVersionDivision() != null) entry.setColVersionDivision(dto.getColVersionDivision());
         if (dto.getColYuan() != null) entry.setColYuan(dto.getColYuan());
         if (dto.getColDeliveryWorkload() != null) entry.setColDeliveryWorkload(dto.getColDeliveryWorkload());
@@ -548,6 +617,15 @@ public class DataEntryService {
                 headerMap.put(header, i);
             }
 
+            Map<String, Long> catNameToId = new HashMap<>();
+            for (BaseCategory cat : baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId)) {
+                catNameToId.put(cat.getName(), cat.getId());
+            }
+            Map<String, Long> domNameToId = new HashMap<>();
+            for (BaseDomain dom : baseDomainRepository.findByVersionId(versionId)) {
+                domNameToId.put(dom.getName(), dom.getId());
+            }
+
             List<RowData> rows = new ArrayList<>();
             for (int rowIdx = 1; rowIdx <= lastRow; rowIdx++) {
                 Row row = sheet.getRow(rowIdx);
@@ -564,7 +642,7 @@ public class DataEntryService {
             List<RowData> retryRows = new ArrayList<>();
             for (RowData rd : rows) {
                 if (rd.parentName == null) {
-                    processRow(rd, headerMap, versionId, result, nameToId);
+                    processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId);
                 } else {
                     retryRows.add(rd);
                 }
@@ -577,7 +655,7 @@ public class DataEntryService {
             });
 
             for (RowData rd : retryRows) {
-                processRow(rd, headerMap, versionId, result, nameToId);
+                processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId);
             }
         } catch (Exception e) {
             result.getErrors().add("解析Excel文件失败: " + e.getMessage());
@@ -586,7 +664,8 @@ public class DataEntryService {
     }
 
     private void processRow(RowData rd, Map<String, Integer> headerMap, Long versionId,
-                            ExcelImportResult result, Map<String, Long> nameToId) {
+                            ExcelImportResult result, Map<String, Long> nameToId,
+                            Map<String, Long> catNameToId, Map<String, Long> domNameToId) {
         try {
             Row row = rd.row;
             String productName = rd.productName;
@@ -655,6 +734,8 @@ public class DataEntryService {
             entry.setColBizCategory(bizCategory);
             entry.setColBizDomain(bizDomain);
             entry.setColProductSystem(productName);
+            if (bizCategory != null) entry.setCategoryId(catNameToId.get(bizCategory));
+            if (bizDomain != null) entry.setDomainId(domNameToId.get(bizDomain));
             setStr(headerMap, row, entry, "版本划分", DataEntry::setColVersionDivision);
             setStr(headerMap, row, entry, "远", DataEntry::setColYuan);
             setStr(headerMap, row, entry, "交付工作量(人月)", DataEntry::setColDeliveryWorkload);

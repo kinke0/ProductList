@@ -1,7 +1,9 @@
 package com.superpower.modules.image.service;
 
 import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
 import com.superpower.modules.category.repository.BaseCategoryRepository;
+import com.superpower.modules.category.repository.BaseDomainRepository;
 import com.superpower.common.BusinessException;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
@@ -35,16 +37,19 @@ public class ImageResourceService {
     private final ImageResourceRepository imageResourceRepository;
     private final DataEntryRepository dataEntryRepository;
     private final BaseCategoryRepository baseCategoryRepository;
+    private final BaseDomainRepository baseDomainRepository;
 
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
 
     public ImageResourceService(ImageResourceRepository imageResourceRepository,
                                 DataEntryRepository dataEntryRepository,
-                                BaseCategoryRepository baseCategoryRepository) {
+                                BaseCategoryRepository baseCategoryRepository,
+                                BaseDomainRepository baseDomainRepository) {
         this.imageResourceRepository = imageResourceRepository;
         this.dataEntryRepository = dataEntryRepository;
         this.baseCategoryRepository = baseCategoryRepository;
+        this.baseDomainRepository = baseDomainRepository;
     }
 
     @Transactional
@@ -292,31 +297,58 @@ public class ImageResourceService {
         Map<String, List<String>> catToDomains = new LinkedHashMap<>();
         Map<String, List<String>> domToProducts = new LinkedHashMap<>();
 
-        Map<Long, DataEntry> entryMap = new HashMap<>();
-        for (DataEntry e : entries) entryMap.put(e.getId(), e);
+        if (versionId != null) {
+            List<BaseCategory> baseCategories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+            for (BaseCategory cat : baseCategories) {
+                String catName = cat.getName();
+                catNames.put(catName, catName);
 
-        for (DataEntry entry : entries) {
-            String cat = entry.getColBizCategory();
-            String dom = entry.getColBizDomain();
-            if (cat == null || cat.isEmpty()) continue;
-            cat = cat.trim();
-            catNames.putIfAbsent(cat, cat);
+                List<BaseDomain> domains = baseDomainRepository.findByVersionIdAndCategoryIdOrderBySortOrderAsc(versionId, cat.getId());
+                for (BaseDomain dom : domains) {
+                    String domName = dom.getName();
+                    catToDomains.computeIfAbsent(catName, k -> new ArrayList<>());
+                    String domListKey = catName + "||" + domName;
+                    if (catToDomains.get(catName).stream().noneMatch(d -> d.equals(domName))) {
+                        catToDomains.get(catName).add(domName);
+                    }
 
-            if (dom != null && !dom.trim().isEmpty()) {
-                final String domTrimmed = dom.trim();
-                catToDomains.computeIfAbsent(cat, k -> new ArrayList<>());
-                String domListKey = cat + "||" + domTrimmed;
-                if (catToDomains.get(cat).stream().noneMatch(d -> d.equals(domTrimmed))) {
-                    catToDomains.get(cat).add(domTrimmed);
+                    List<DataEntry> level3Entries = dataEntryRepository.findByVersionIdAndDomainIdAndLevel(versionId, dom.getId(), 3);
+                    for (DataEntry e : level3Entries) {
+                        String prod = e.getColProductSystem();
+                        if (prod != null && !prod.trim().isEmpty()) {
+                            prod = prod.trim();
+                            domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
+                            if (!domToProducts.get(domListKey).contains(prod)) {
+                                domToProducts.get(domListKey).add(prod);
+                            }
+                        }
+                    }
                 }
-
-                if (entry.getLevel() != null && entry.getLevel() == 3) {
-                    String prod = entry.getColProductSystem();
-                    if (prod != null && !prod.trim().isEmpty()) {
-                        prod = prod.trim();
-                        domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
-                        if (!domToProducts.get(domListKey).contains(prod)) {
-                            domToProducts.get(domListKey).add(prod);
+            }
+        } else {
+            Map<Long, DataEntry> entryMap = new HashMap<>();
+            for (DataEntry e : entries) entryMap.put(e.getId(), e);
+            for (DataEntry entry : entries) {
+                String cat = entry.getColBizCategory();
+                String dom = entry.getColBizDomain();
+                if (cat == null || cat.isEmpty()) continue;
+                cat = cat.trim();
+                catNames.putIfAbsent(cat, cat);
+                if (dom != null && !dom.trim().isEmpty()) {
+                    final String domTrimmed = dom.trim();
+                    catToDomains.computeIfAbsent(cat, k -> new ArrayList<>());
+                    String domListKey = cat + "||" + domTrimmed;
+                    if (catToDomains.get(cat).stream().noneMatch(d -> d.equals(domTrimmed))) {
+                        catToDomains.get(cat).add(domTrimmed);
+                    }
+                    if (entry.getLevel() != null && entry.getLevel() == 3) {
+                        String prod = entry.getColProductSystem();
+                        if (prod != null && !prod.trim().isEmpty()) {
+                            prod = prod.trim();
+                            domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
+                            if (!domToProducts.get(domListKey).contains(prod)) {
+                                domToProducts.get(domListKey).add(prod);
+                            }
                         }
                     }
                 }
@@ -324,19 +356,6 @@ public class ImageResourceService {
         }
 
         List<String> orderedCategories = new ArrayList<>(catNames.keySet());
-        if (versionId != null) {
-            List<BaseCategory> baseCategories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
-            Set<String> catSet = new LinkedHashSet<>();
-            for (BaseCategory bc : baseCategories) {
-                if (catNames.containsKey(bc.getName())) {
-                    catSet.add(bc.getName());
-                }
-            }
-            for (String c : orderedCategories) {
-                catSet.add(c);
-            }
-            orderedCategories = new ArrayList<>(catSet);
-        }
 
         List<ImageDirectoryNode> roots = new ArrayList<>();
         for (String catName : orderedCategories) {

@@ -37,7 +37,7 @@
 
 <script setup>
 import { ref, watch, nextTick } from 'vue'
-import { getTree } from '../api/data'
+import { getCategoryTree } from '../api/data'
 
 const props = defineProps({ versionId: [Number, String] })
 const emit = defineEmits(['select'])
@@ -55,7 +55,7 @@ watch(filterText, (val) => {
 
 watch(() => props.versionId, async (val) => {
   if (val) {
-    const res = await getTree(val)
+    const res = await getCategoryTree(val)
     treeData.value = res.data
     nodeMap.value = {}
     buildNodeMap(res.data)

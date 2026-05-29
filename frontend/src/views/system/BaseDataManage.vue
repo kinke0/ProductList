@@ -22,9 +22,15 @@
           @current-change="onL1Select"
           style="cursor: pointer;"
         >
+          <el-table-column label="" width="30">
+            <template #default="{ row }">
+              <span class="drag-icon" @mousedown="startDrag($event, row, 'l1')"
+                :style="{ cursor: versionStatus === 'released' ? 'default' : 'grab' }">⠿</span>
+            </template>
+          </el-table-column>
           <el-table-column label="名称" min-width="160">
             <template #default="{ row }">
-              {{ row.colBizCategory || row.label }}
+              {{ row.label }}
             </template>
           </el-table-column>
           <el-table-column label="操作" width="100">
@@ -41,7 +47,7 @@
           <strong>业务域 (L2)</strong>
           <div>
             <span v-if="selectedL1" style="font-size:12px;color:#999;margin-right:8px;">
-              当前: {{ selectedL1.colBizCategory }}
+              当前: {{ selectedL1.label }}
             </span>
             <el-button size="small" type="primary" :disabled="!selectedL1 || versionStatus === 'released'" @click="openL2Dialog()">新增</el-button>
             <el-button size="small" @click="moveUp('l2')" :disabled="versionStatus === 'released'||!selectedL2" style="margin-left:4px;">↑</el-button>
@@ -57,9 +63,15 @@
           highlight-current-row
           @current-change="onL2Select"
         >
+          <el-table-column label="" width="30">
+            <template #default="{ row }">
+              <span class="drag-icon" @mousedown="startDrag($event, row, 'l2')"
+                :style="{ cursor: versionStatus === 'released' ? 'default' : 'grab' }">⠿</span>
+            </template>
+          </el-table-column>
           <el-table-column label="名称" min-width="160">
             <template #default="{ row }">
-              {{ row.colBizDomain || row.label }}
+              {{ row.label }}
             </template>
           </el-table-column>
           <el-table-column label="操作" width="100">
@@ -103,7 +115,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getTree, getChildren, createEntry, updateEntry, deleteEntry, updateCategorySort } from '../../api/data'
+import { getCategoryTree, createCategory, updateCategory, deleteCategory, createDomain, updateDomain, deleteDomain, updateCategorySort } from '../../api/category'
 import { getVersions } from '../../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -131,13 +143,13 @@ async function loadVersion() {
 }
 
 async function loadL1() {
-  const res = await getTree(versionId)
+  const res = await getCategoryTree(versionId)
   l1List.value = res.data || []
 }
 
 async function loadL2(l1Id) {
-  const res = await getChildren(versionId, l1Id)
-  l2List.value = res.data || []
+  const l1 = l1List.value.find(c => c.id === l1Id)
+  l2List.value = l1?.children || []
 }
 
 function onL1Select(row) {
@@ -150,20 +162,97 @@ function onL2Select(row) {
   selectedL2.value = row
 }
 
+function startDrag(e, row, type) {
+  if (e.button !== 0 || versionStatus.value === 'released') return
+  e.preventDefault()
+  const list = type === 'l1' ? l1List : l2List
+  const idx = list.value.findIndex(r => r.id === row.id)
+  if (idx < 0) return
+  const tr = e.target.closest('tr')
+  if (!tr) return
+  const tbody = tr.parentElement
+  const allRows = Array.from(tbody.querySelectorAll('tr'))
+  const rect = tr.getBoundingClientRect()
+  const ghost = tr.cloneNode(true)
+  ghost.style.cssText = `position:fixed;top:${rect.top}px;left:${rect.left}px;width:${rect.width}px;z-index:9999;opacity:0.85;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,0.15);background:#fff`
+  document.body.appendChild(ghost)
+  tr.style.opacity = '0.3'
+
+  const offsetY = e.clientY - rect.top
+  let targetIdx = idx
+
+  const onMove = (ev) => {
+    ghost.style.top = (ev.clientY - offsetY) + 'px'
+    for (let i = 0; i < allRows.length; i++) {
+      const r = allRows[i]
+      const rRect = r.getBoundingClientRect()
+      if (ev.clientY < rRect.top + rRect.height / 2) {
+        targetIdx = i; break
+      }
+      targetIdx = allRows.length
+    }
+    showDropLine(allRows, targetIdx)
+  }
+
+  const onUp = async () => {
+    ghost.remove(); tr.style.opacity = '1'
+    removeDropLine()
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    if (targetIdx !== idx && targetIdx >= 0) {
+      await reorderList(type, idx, targetIdx)
+    }
+  }
+
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+function showDropLine(rows, idx) {
+  removeDropLine()
+  const targetRow = idx < rows.length ? rows[idx] : rows[rows.length - 1]
+  if (!targetRow) return
+  const r = targetRow.getBoundingClientRect()
+  const line = document.createElement('div')
+  line.className = 'drop-line'
+  line.style.cssText = `position:fixed;left:${r.left}px;width:${r.width}px;top:${idx < rows.length ? r.top : r.bottom}px;height:2px;background:#2563EB;z-index:10000;pointer-events:none`
+  document.body.appendChild(line)
+}
+
+function removeDropLine() {
+  document.querySelectorAll('.drop-line').forEach(el => el.remove())
+}
+
+async function reorderList(type, fromIdx, toIdx) {
+  const list = type === 'l1' ? l1List : l2List
+  const items = [...list.value]
+  const [moved] = items.splice(fromIdx, 1)
+  items.splice(toIdx, 0, moved)
+  const sortList = items.map((item, i) => ({
+    type: type === 'l1' ? 'category' : 'domain',
+    id: item.id,
+    sortOrder: i
+  }))
+  await updateCategorySort(versionId, sortList)
+  if (type === 'l1') await loadL1()
+  else { await loadL1(); await loadL2(selectedL1.value?.id) }
+}
+
 async function moveUp(type) {
   const list = type === 'l1' ? l1List : l2List
   const selected = type === 'l1' ? selectedL1 : selectedL2
   const idx = list.value.findIndex(r => r.id === selected.value.id)
   if (idx <= 0) return
-  const idType = type === 'l1' ? 'category' : 'domain'
-  const itemA = list.value[idx]
-  const itemB = list.value[idx - 1]
-  await updateCategorySort(versionId, [
-    { type: idType, id: itemA.id, sortOrder: idx - 1 },
-    { type: idType, id: itemB.id, sortOrder: idx }
-  ])
+  const items = [...list.value]
+  ;[items[idx - 1], items[idx]] = [items[idx], items[idx - 1]]
+  const sortList = items.map((item, i) => ({
+    type: type === 'l1' ? 'category' : 'domain',
+    id: item.id,
+    sortOrder: i
+  }))
+  await updateCategorySort(versionId, sortList)
   if (type === 'l1') await loadL1()
-  else await loadL2(selectedL1.value.id)
+  else { await loadL1(); await loadL2(selectedL1.value.id) }
   selectedL2.value = null
 }
 
@@ -172,15 +261,16 @@ async function moveDown(type) {
   const selected = type === 'l1' ? selectedL1 : selectedL2
   const idx = list.value.findIndex(r => r.id === selected.value.id)
   if (idx < 0 || idx >= list.value.length - 1) return
-  const idType = type === 'l1' ? 'category' : 'domain'
-  const itemA = list.value[idx]
-  const itemB = list.value[idx + 1]
-  await updateCategorySort(versionId, [
-    { type: idType, id: itemA.id, sortOrder: idx + 1 },
-    { type: idType, id: itemB.id, sortOrder: idx }
-  ])
+  const items = [...list.value]
+  ;[items[idx], items[idx + 1]] = [items[idx + 1], items[idx]]
+  const sortList = items.map((item, i) => ({
+    type: type === 'l1' ? 'category' : 'domain',
+    id: item.id,
+    sortOrder: i
+  }))
+  await updateCategorySort(versionId, sortList)
   if (type === 'l1') await loadL1()
-  else await loadL2(selectedL1.value.id)
+  else { await loadL1(); await loadL2(selectedL1.value.id) }
   selectedL2.value = null
 }
 
@@ -188,7 +278,7 @@ function openL1Dialog(row) {
   if (row) {
     isNewL1.value = false
     editingL1Id.value = row.id
-    l1Form.value = { colBizCategory: row.colBizCategory || row.label }
+    l1Form.value = { colBizCategory: row.label }
   } else {
     isNewL1.value = true
     editingL1Id.value = null
@@ -203,16 +293,10 @@ async function saveL1() {
     return
   }
   if (isNewL1.value) {
-    await createEntry({
-      versionId,
-      level: 1,
-      sortOrder: l1List.value.length,
-      colBizCategory: l1Form.value.colBizCategory,
-      colProductSystem: l1Form.value.colBizCategory
-    })
+    await createCategory(versionId, l1Form.value.colBizCategory)
     ElMessage.success('创建成功')
   } else {
-    await updateEntry(editingL1Id.value, { colBizCategory: l1Form.value.colBizCategory, colProductSystem: l1Form.value.colBizCategory })
+    await updateCategory(editingL1Id.value, l1Form.value.colBizCategory)
     ElMessage.success('保存成功')
   }
   l1Dialog.value = false
@@ -220,11 +304,11 @@ async function saveL1() {
 }
 
 async function deleteL1(row) {
-  ElMessageBox.confirm(`确认删除业务分类"${row.colBizCategory || row.label}"？`, '提示', {
+  ElMessageBox.confirm(`确认删除业务分类"${row.label}"？`, '提示', {
     type: 'warning'
   }).then(async () => {
     try {
-      await deleteEntry(row.id)
+      await deleteCategory(row.id)
       ElMessage.success('删除成功')
       if (selectedL1.value?.id === row.id) {
         selectedL1.value = null
@@ -242,7 +326,7 @@ function openL2Dialog(row) {
   if (row) {
     isNewL2.value = false
     editingL2Id.value = row.id
-    l2Form.value = { colBizDomain: row.colBizDomain || row.label }
+    l2Form.value = { colBizDomain: row.label }
   } else {
     isNewL2.value = true
     editingL2Id.value = null
@@ -257,38 +341,29 @@ async function saveL2() {
     return
   }
   if (isNewL2.value) {
-    await createEntry({
-      versionId,
-      parentId: selectedL1.value.id,
-      level: 2,
-      sortOrder: l2List.value.length,
-      colBizDomain: l2Form.value.colBizDomain,
-      colProductSystem: l2Form.value.colBizDomain,
-      colBizCategory: selectedL1.value.colBizCategory || selectedL1.value.label
-    })
+    await createDomain(versionId, selectedL1.value.id, l2Form.value.colBizDomain)
     ElMessage.success('创建成功')
   } else {
-    await updateEntry(editingL2Id.value, { colBizDomain: l2Form.value.colBizDomain, colProductSystem: l2Form.value.colBizDomain })
+    await updateDomain(editingL2Id.value, l2Form.value.colBizDomain)
     ElMessage.success('保存成功')
   }
   l2Dialog.value = false
+  await loadL1()
   await loadL2(selectedL1.value.id)
 }
 
 async function deleteL2(row) {
-  ElMessageBox.confirm(`确认删除业务域"${row.colBizDomain || row.label}"？`, '提示', {
-    type: 'warning'
-  }).then(async () => {
-    try {
-      await deleteEntry(row.id)
-      ElMessage.success('删除成功')
-      await loadL2(selectedL1.value.id)
-    } catch (e) {
-      const msg = e?.response?.data?.message || '删除失败'
-      ElMessage.warning(msg)
-    }
-  }).catch(() => {})
+  try {
+    await deleteDomain(row.id)
+    ElMessage.success('删除成功')
+    await loadL1()
+    await loadL2(selectedL1.value.id)
+  } catch (e) {
+    const msg = e?.response?.data?.message || '删除失败'
+    ElMessage.warning(msg)
+  }
 }
+
 
 onMounted(async () => {
   await loadVersion()
