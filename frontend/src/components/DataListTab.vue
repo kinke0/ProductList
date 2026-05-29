@@ -615,6 +615,8 @@ watch(showEditDialog, (val) => {
     dragState.sourceIndex = rowIndex
     dragState.targetIndex = rowIndex
 
+    const sourceDomain = row.colBizDomain || ''
+
     const el = e.target.closest('.vrow')
     if (!el) return
     const rect = el.getBoundingClientRect()
@@ -654,12 +656,15 @@ watch(showEditDialog, (val) => {
          const idx = displayData.value.findIndex(d => String(d.id) === idStr)
          if (idx === -1) continue
          if (displayData.value[idx]._isSeparator) continue
+         if (displayData.value[idx].colBizDomain !== sourceDomain) continue
          if (ev.clientY < mid) { targetIdx = idx; break }
          let nextIdx = idx + 1
-         while (nextIdx < displayData.value.length && displayData.value[nextIdx]._isSeparator) {
+         while (nextIdx < displayData.value.length && (displayData.value[nextIdx]._isSeparator || displayData.value[nextIdx].colBizDomain !== sourceDomain)) {
            nextIdx++
          }
-         targetIdx = nextIdx
+         if (nextIdx < displayData.value.length && displayData.value[nextIdx].colBizDomain === sourceDomain) {
+           targetIdx = nextIdx
+         }
        }
        if (targetIdx === -1) targetIdx = dragState.sourceIndex
        dragState.targetIndex = targetIdx
