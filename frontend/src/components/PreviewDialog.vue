@@ -2,7 +2,13 @@
   <el-dialog v-model="visible" title="预览" width="80%" top="5vh" :close-on-click-modal="true" @close="onClose">
     <template #header>
       <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
-        <span>预览</span>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <span>预览</span>
+          <el-radio-group v-model="previewMode" size="small" @change="onModeChange">
+            <el-radio-button value="feature">功能说明</el-radio-button>
+            <el-radio-button value="bid">招标参数</el-radio-button>
+          </el-radio-group>
+        </div>
         <el-button type="primary" size="small" :loading="downloadLoading" @click="downloadPreview">下载Word</el-button>
       </div>
     </template>
@@ -32,7 +38,9 @@ const visible = ref(false)
 const html = ref('')
 const downloadLoading = ref(false)
 const frameRef = ref(null)
+const previewMode = ref('feature')
 let pendingScrollTop = 0
+let pendingScrollToId = null
 let pendingHighlightId = null
 let messageHandler = null
 
@@ -69,7 +77,10 @@ async function loadPreview(timestamp) {
   html.value = ''
   try {
     const token = localStorage.getItem('token')
-    const url = `/api/data/${props.entryId}/preview` + (timestamp ? `?_t=${timestamp}` : '')
+    const params = new URLSearchParams()
+    params.set('mode', previewMode.value)
+    if (timestamp) params.set('_t', timestamp)
+    const url = `/api/data/${props.entryId}/preview?` + params.toString()
     const resp = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` }
     })
@@ -88,7 +99,7 @@ async function downloadPreview() {
   downloadLoading.value = true
   try {
     const token = localStorage.getItem('token')
-    const resp = await fetch(`/api/data/${props.entryId}/preview-download`, {
+    const resp = await fetch(`/api/data/${props.entryId}/preview-download?mode=${previewMode.value}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (!resp.ok) {
@@ -113,11 +124,49 @@ async function downloadPreview() {
   }
 }
 
+function findNearestHeadingId() {
+  try {
+    const doc = frameRef.value?.contentWindow?.document
+    if (!doc) return null
+    const content = doc.querySelector('.content')
+    if (!content) return null
+    const scrollTop = content.scrollTop
+    const headings = doc.querySelectorAll('h3[id]')
+    let nearest = null
+    let nearestTop = -1
+    for (const h of headings) {
+      const top = h.offsetTop
+      if (top <= scrollTop + 100 && top > nearestTop) {
+        nearestTop = top
+        nearest = h.id
+      }
+    }
+    return nearest
+  } catch { return null }
+}
+
+function onModeChange() {
+  if (!props.entryId) return
+  pendingScrollToId = findNearestHeadingId()
+  pendingHighlightId = null
+  pendingScrollTop = 0
+  loadPreview(Date.now())
+}
+
 function onFrameLoad() {
   try {
     var doc = frameRef.value?.contentWindow?.document
     if (!doc?.querySelector('.content')) return
   } catch { return }
+  if (pendingScrollToId) {
+    try {
+      const el = doc.getElementById(pendingScrollToId)
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' })
+    } catch {}
+    pendingScrollToId = null
+    pendingScrollTop = 0
+    return
+  }
   if (pendingScrollTop > 0) {
     try { frameRef.value?.contentWindow?.document?.querySelector?.('.content')?.scrollTo(0, pendingScrollTop) } catch {}
     pendingScrollTop = 0
@@ -130,12 +179,14 @@ function onFrameLoad() {
 
 function onClose() {
   html.value = ''
+  previewMode.value = 'feature'
 }
 
 function reload(highlightEntryId) {
   if (!props.entryId) return
   try { pendingScrollTop = frameRef.value?.contentWindow?.document?.querySelector?.('.content')?.scrollTop || 0 } catch {}
   pendingHighlightId = highlightEntryId || null
+  pendingScrollToId = null
   loadPreview(Date.now())
 }
 

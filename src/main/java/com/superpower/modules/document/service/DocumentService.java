@@ -207,11 +207,7 @@ public class DocumentService {
     private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId) throws Exception {
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
-        if ("bid".equals(docType)) {
-            generateBidWord(doc, entries, recordId);
-        } else {
-            generateFeatureWord(doc, entries, recordId);
-        }
+        generateFeatureWord(doc, entries, recordId, docType);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
         doc.close();
@@ -255,7 +251,7 @@ public class DocumentService {
         }
     }
 
-    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId) {
+    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId, String docType) {
         int totalSize = entries.size();
         int[] progressCounter = {0};
         log.info("generateFeatureWord: total entries={}, recordId={}", totalSize, recordId);
@@ -306,7 +302,7 @@ public class DocumentService {
 
                 for (int i = 0; i < roots.size(); i++) {
                     String nodeNumber = domainNumber + "." + (i + 1);
-                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize);
+                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize, docType);
                 }
             }
         }
@@ -314,12 +310,12 @@ public class DocumentService {
 
     private void writeNode(XWPFDocument doc, DataEntry entry, String number, int level,
                            Map<Long, List<DataEntry>> childrenByParent,
-                           Long recordId, int[] progressCounter, int totalSize) {
+                           Long recordId, int[] progressCounter, int totalSize, String docType) {
         int docLevel = Math.min(level, MAX_HEADING_LEVEL);
         String name = extractName(entry.getColProductSystem());
         addNumberedHeading(doc, name, docLevel, number);
 
-        String desc = entry.getColFeatureDesc();
+        String desc = "bid".equals(docType) ? entry.getColBidParamDesc() : entry.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
             processDescriptionWithImages(doc, desc);
         }
@@ -332,7 +328,7 @@ public class DocumentService {
             children.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
             for (int i = 0; i < children.size(); i++) {
                 String childNumber = number + "." + (i + 1);
-                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize);
+                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize, docType);
             }
         }
     }
@@ -421,7 +417,7 @@ public class DocumentService {
                             if (imgData != null) {
                                 insertSingleImage(doc, url, imgData);
                             } else {
-                                insertFallbackText(doc, url);
+                                insertFallbackImage(doc);
                             }
                         }
                     }
@@ -431,7 +427,7 @@ public class DocumentService {
                     if (imgData != null) {
                         insertSingleImage(doc, url, imgData);
                     } else {
-                        insertFallbackText(doc, url);
+                        insertFallbackImage(doc);
                     }
                 }
 
@@ -689,7 +685,7 @@ public class DocumentService {
             captionRun.setColor("808080");
         } catch (Exception e) {
             log.warn("Failed to insert image: {}", url, e);
-            insertFallbackText(doc, url);
+            insertFallbackImage(doc);
         }
     }
 
@@ -760,14 +756,46 @@ public class DocumentService {
         border.setColor("FFFFFF");
     }
 
-    private void insertFallbackText(XWPFDocument doc, String url) {
+    private void insertFallbackImage(XWPFDocument doc) {
+        try {
+            java.nio.file.Path errorPath = java.nio.file.Paths.get("uploads/error/error.png");
+            if (java.nio.file.Files.exists(errorPath)) {
+                byte[] errorData = java.nio.file.Files.readAllBytes(errorPath);
+                BufferedImage bimg = javax.imageio.ImageIO.read(new ByteArrayInputStream(errorData));
+                if (bimg != null) {
+                    double targetWidthPx = 200;
+                    double aspectRatio = (double) bimg.getHeight() / bimg.getWidth();
+                    double targetHeightPx = targetWidthPx * aspectRatio;
+                    int widthEMU = (int) (targetWidthPx * 9525);
+                    int heightEMU = (int) (targetHeightPx * 9525);
+
+                    XWPFParagraph para = doc.createParagraph();
+                    para.setAlignment(ParagraphAlignment.CENTER);
+                    XWPFRun run = para.createRun();
+                    run.addPicture(new ByteArrayInputStream(errorData),
+                            XWPFDocument.PICTURE_TYPE_PNG, "error.png", widthEMU, heightEMU);
+
+                    XWPFParagraph captionPara = doc.createParagraph();
+                    captionPara.setAlignment(ParagraphAlignment.CENTER);
+                    captionPara.setSpacingBetween(1.5);
+                    XWPFRun captionRun = captionPara.createRun();
+                    captionRun.setText("缺失图片");
+                    captionRun.setFontSize(10);
+                    setFontStyle(captionRun);
+                    captionRun.setColor("808080");
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load error.png fallback image", e);
+        }
         XWPFParagraph para = doc.createParagraph();
-        para.setIndentationFirstLine(420);
-        para.setAlignment(ParagraphAlignment.LEFT);
+        para.setAlignment(ParagraphAlignment.CENTER);
         para.setSpacingBetween(1.5);
         XWPFRun run = para.createRun();
-        run.setText("<" + url + ">");
+        run.setText("缺失图片");
         setFontStyle(run);
+        run.setColor("808080");
     }
 
     String extractText(String codeText) {

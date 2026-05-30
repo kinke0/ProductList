@@ -69,18 +69,19 @@ public class DataEntryController {
     }
 
     @GetMapping(value = "/{id}/preview", produces = "text/html;charset=UTF-8")
-    public String preview(@PathVariable Long id, Authentication auth) {
+    public String preview(@PathVariable Long id, @RequestParam(defaultValue = "feature") String mode, Authentication auth) {
         boolean isEditing = versionService.isEditable(dataEntryService.getById(id).getVersionId());
         String roleCode = auth != null ? auth.getName() : null;
-        return dataEntryService.getPreviewHtml(id, isEditing, roleCode);
+        return dataEntryService.getPreviewHtml(id, isEditing, roleCode, mode);
     }
 
     @GetMapping("/{id}/preview-download")
-    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id) throws Exception {
+    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id, @RequestParam(defaultValue = "feature") String mode) throws Exception {
         DataEntry entry = dataEntryService.getById(id);
         List<Long> ids = dataEntryService.collectL3AndDescendantIds(id);
-        byte[] data = documentService.generateDocument("feature", "word", ids);
-        String filename = (entry.getColProductSystem() != null ? entry.getColProductSystem() : "预览") + ".docx";
+        byte[] data = documentService.generateDocument(mode, "word", ids);
+        String suffix = "bid".equals(mode) ? "_招标参数" : "_功能说明";
+        String filename = (entry.getColProductSystem() != null ? entry.getColProductSystem() : "预览") + suffix + ".docx";
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + java.net.URLEncoder.encode(filename, "UTF-8") + "\"")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)

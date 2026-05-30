@@ -947,7 +947,7 @@ public class DataEntryService {
         }
     }
 
-    public String getPreviewHtml(Long entryId, boolean isEditing, String username) {
+    public String getPreviewHtml(Long entryId, boolean isEditing, String username, String mode) {
         DataEntry l3 = entryRepository.findById(entryId)
                 .orElseThrow(() -> new BusinessException("条目不存在"));
         List<DataEntry> all = collectL3AndDescendants(l3);
@@ -986,7 +986,7 @@ public class DataEntryService {
         for (List<DataEntry> list : childrenMap.values()) {
             list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
         }
-        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role);
+        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role, mode);
 
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
             + "*{margin:0;padding:0;box-sizing:border-box;}"
@@ -1038,7 +1038,7 @@ public class DataEntryService {
 
     private void buildNavAndBody(DataEntry node, Map<Long, List<DataEntry>> childrenMap,
                                   StringBuilder nav, StringBuilder body, int depth,
-                                  Map<Long, String> rejectReasons, boolean isEditing, String role) {
+                                  Map<Long, String> rejectReasons, boolean isEditing, String role, String mode) {
         String nodeId = "e" + node.getId();
         String label = node.getColProductSystem() != null ? node.getColProductSystem() : "";
         List<DataEntry> children = childrenMap.getOrDefault(node.getId(), new ArrayList<>());
@@ -1070,7 +1070,7 @@ public class DataEntryService {
             }
         }
         body.append("</h3>");
-        String desc = node.getColFeatureDesc();
+        String desc = "bid".equals(mode) ? node.getColBidParamDesc() : node.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
             body.append(toPreviewParagraphs(desc));
         }
@@ -1104,7 +1104,7 @@ public class DataEntryService {
         if (hasChildren) {
             nav.append("<div>");
             for (DataEntry child : children) {
-                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role);
+                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role, mode);
             }
             nav.append("</div>");
         }
@@ -1124,8 +1124,10 @@ public class DataEntryService {
                 int pipeIdx = url.indexOf('|');
                 if (pipeIdx > 0) { caption = url.substring(pipeIdx + 1); url = url.substring(0, pipeIdx); }
                 String enc = encodeUrl(url);
-                sb.append("<div class='img-wrap'><img src='").append(enc).append("' />");
+                sb.append("<div class='img-wrap'>")
+                  .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
                 if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption).append("</div>");
+                else sb.append("<div class='img-caption'></div>");
                 sb.append("</div>");
             } else {
                 sb.append("<p class='p'>").append(trimmed.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
