@@ -88,6 +88,14 @@ public class DataEntryController {
                 .body(data);
     }
 
+    @GetMapping(value = "/preview-batch", produces = "text/html;charset=UTF-8")
+    public String previewBatch(@RequestParam String entryIds, @RequestParam(defaultValue = "feature") String mode, Authentication auth) {
+        List<Long> ids = java.util.Arrays.stream(entryIds.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).map(Long::parseLong).toList();
+        String roleCode = auth != null ? auth.getName() : null;
+        return dataEntryService.getPreviewHtml(ids, false, roleCode, mode);
+    }
+
     @GetMapping("/query/{versionId}")
     public Result<List<DataEntry>> query(
             @PathVariable Long versionId,

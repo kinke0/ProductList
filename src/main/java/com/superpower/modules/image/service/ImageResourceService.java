@@ -520,6 +520,8 @@ public class ImageResourceService {
                 if (product != null) product = product.trim();
 
                 String newDesc = desc;
+                newDesc = newDesc.replaceAll("<\\s+(https?://)", "<$1");
+                newDesc = newDesc.replaceAll("<\\s*<\\s*(span\\s+class=\"image-card\")", "<$1");
                 int entryMigrated = 0;
 
                 Pattern extUrlPattern = Pattern.compile("https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\"<>\\]]+");

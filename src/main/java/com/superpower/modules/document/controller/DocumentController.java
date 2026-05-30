@@ -60,7 +60,11 @@ public class DocumentController {
                 documentService.generateAndSaveDocument(
                         recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId);
             } catch (Exception e) {
-                documentService.updateGenRecordError(recordId, e.getMessage());
+                try {
+                    documentService.updateGenRecordError(recordId, e.getMessage());
+                } catch (Exception ex) {
+                    try { documentService.updateGenRecordError(recordId, "生成失败: " + e.getClass().getSimpleName()); } catch (Exception ignored) {}
+                }
             }
         }).start();
 

@@ -14,6 +14,10 @@
     </template>
     <div style="position:relative;">
       <iframe ref="frameRef" :srcdoc="html" @load="onFrameLoad" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
+      <div v-if="previewLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
+        <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
+        <span style="margin-top:12px;color:#666;font-size:14px;">正在加载预览...</span>
+      </div>
       <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
         <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
         <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档...</span>
@@ -29,6 +33,7 @@ import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   entryId: { type: Number, default: null },
+  batchEntryIds: { type: Array, default: null },
   modelValue: { type: Boolean, default: false }
 })
 
@@ -36,6 +41,7 @@ const emit = defineEmits(['update:modelValue'])
 
 const visible = ref(false)
 const html = ref('')
+const previewLoading = ref(false)
 const downloadLoading = ref(false)
 const frameRef = ref(null)
 const previewMode = ref('feature')
@@ -46,7 +52,7 @@ let messageHandler = null
 
 watch(() => props.modelValue, (val) => {
   visible.value = val
-  if (val && props.entryId) {
+  if (val && (props.entryId || (props.batchEntryIds && props.batchEntryIds.length > 0))) {
     loadPreview()
   }
 })
@@ -75,12 +81,18 @@ onUnmounted(() => {
 
 async function loadPreview(timestamp) {
   html.value = ''
+  previewLoading.value = true
   try {
     const token = localStorage.getItem('token')
     const params = new URLSearchParams()
     params.set('mode', previewMode.value)
     if (timestamp) params.set('_t', timestamp)
-    const url = `/api/data/${props.entryId}/preview?` + params.toString()
+    let url
+    if (props.batchEntryIds && props.batchEntryIds.length > 0) {
+      url = `/api/data/preview-batch?entryIds=${props.batchEntryIds.join(',')}&` + params.toString()
+    } else {
+      url = `/api/data/${props.entryId}/preview?` + params.toString()
+    }
     const resp = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` }
     })
@@ -154,6 +166,8 @@ function onModeChange() {
 }
 
 function onFrameLoad() {
+  if (!html.value) return
+  previewLoading.value = false
   try {
     var doc = frameRef.value?.contentWindow?.document
     if (!doc?.querySelector('.content')) return

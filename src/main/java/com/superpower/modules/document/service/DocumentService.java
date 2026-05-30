@@ -6,6 +6,7 @@ import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.document.entity.DocGenRecord;
 import com.superpower.modules.document.repository.DocGenRecordRepository;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
 import org.apache.poi.ss.usermodel.*;
@@ -161,12 +162,6 @@ public class DocumentService {
             r.setUpdatedAt(LocalDateTime.now());
             genRecordRepository.save(r);
         });
-        byte[] data;
-        if ("word".equals(format)) {
-            data = generateWord(docType, entries, recordId);
-        } else {
-            data = generateExcel(docType, entries, recordId);
-        }
 
         Path dir = Paths.get(docStoragePath);
         Files.createDirectories(dir);
@@ -174,7 +169,13 @@ public class DocumentService {
         String ext = "word".equals(format) ? ".docx" : ".xlsx";
         String filename = docType + "_" + timestamp + "_" + recordId + ext;
         Path filePath = dir.resolve(filename);
-        Files.write(filePath, data);
+
+        if ("word".equals(format)) {
+            generateWordToFile(docType, entries, recordId, filePath);
+        } else {
+            byte[] data = generateExcel(docType, entries, recordId);
+            Files.write(filePath, data);
+        }
 
         updateGenRecordSuccess(recordId, filePath.toString(), Files.size(filePath));
         return filePath.toString();
@@ -206,6 +207,8 @@ public class DocumentService {
     }
 
     private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId) throws Exception {
+        ZipSecureFile.setMinInflateRatio(0.001);
+        ZipSecureFile.setMaxFileCount(100000);
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
         generateFeatureWord(doc, entries, recordId, docType);
@@ -213,6 +216,19 @@ public class DocumentService {
         doc.write(out);
         doc.close();
         return out.toByteArray();
+    }
+
+    private void generateWordToFile(String docType, List<DataEntry> entries, Long recordId, Path filePath) throws Exception {
+        ZipSecureFile.setMinInflateRatio(0.001);
+        ZipSecureFile.setMaxFileCount(100000);
+        XWPFDocument doc = new XWPFDocument();
+        ensureBuiltinHeadingStyles(doc);
+        generateFeatureWord(doc, entries, recordId, docType);
+        try (OutputStream out = Files.newOutputStream(filePath)) {
+            doc.write(out);
+        } finally {
+            doc.close();
+        }
     }
 
     private void addParagraph(XWPFDocument doc, String text) {

@@ -101,6 +101,7 @@
               </template>
               <DataListTab
                 v-if="activeTab === 'custom-' + tab.id"
+                :ref="el => { if (el) customTabRefs[tab.id] = el }"
                 :version-id="selectedVersion.id"
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
@@ -123,7 +124,7 @@
         </div>
       </div>
     </div>
-    <PreviewDialog ref="globalPreviewRef" v-model="globalPreviewVisible" :entry-id="globalPreviewEntryId" @preview-message="onGlobalPreviewMessage" />
+    <PreviewDialog ref="globalPreviewRef" v-model="globalPreviewVisible" :entry-id="globalPreviewEntryId" :batch-entry-ids="globalPreviewBatchIds" @preview-message="onGlobalPreviewMessage" />
   </div>
 
   <el-dialog v-model="showDocDialog" title="生成文档" width="960px" top="2vh">
@@ -192,10 +193,9 @@
         </template>
       </el-table-column>
       <el-table-column prop="generatedByName" label="生成人" width="80" />
-      <el-table-column label="操作" width="150">
+      <el-table-column label="操作" width="100">
         <template #default="{ row }">
           <template v-if="row.status === 'completed' || row.status === 'success'">
-            <el-button type="primary" link size="small" @click="handlePreview(row)">预览</el-button>
             <el-button type="primary" link size="small" @click="handleDownload(row)">下载</el-button>
             <el-button type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
           </template>
@@ -321,6 +321,7 @@ const progressProcessed = ref(0)
 const progressStatus = ref('')
 let pollTimer = null
 let progressTimer = null
+let progressFullTimestamp = null
 
 const showProgress = computed(() => activeGenRecordId.value !== null && progressTotal.value > 0)
 const progressPercent = computed(() => {
@@ -350,6 +351,14 @@ async function pollProgress() {
       if (r.status === 'completed' || r.status === 'error') {
         stopProgressPoll()
         loadGenRecords()
+      } else if (progressTotal.value > 0 && progressProcessed.value >= progressTotal.value) {
+        if (!progressFullTimestamp) progressFullTimestamp = Date.now()
+        else if (Date.now() - progressFullTimestamp > 120000) {
+          stopProgressPoll()
+          progressStatus.value = 'error'
+          loadGenRecords()
+          ElMessage.error('文档生成超时，可能因文件过大导致序列化失败')
+        }
       }
     }
   } catch (e) {
@@ -359,6 +368,7 @@ async function pollProgress() {
 
 function startProgressPoll() {
   stopProgressPoll()
+  progressFullTimestamp = null
   pollProgress()
   progressTimer = setInterval(pollProgress, 100)
 }
@@ -432,11 +442,14 @@ function onNavigateToList({ categoryLabel, domainLabel }) {
 
 const globalPreviewVisible = ref(false)
 const globalPreviewEntryId = ref(null)
+const globalPreviewBatchIds = ref(null)
 const globalPreviewRef = ref(null)
 const dataListRef = ref(null)
+const customTabRefs = reactive({})
 
 function onOpenPreview(entryId) {
   globalPreviewEntryId.value = entryId
+  globalPreviewBatchIds.value = null
   globalPreviewVisible.value = true
 }
 
@@ -641,7 +654,9 @@ async function onRemoveFromList(tabId, entryIds) {
       removed++
     } catch {} 
   }
-  if (dataListRef.value) dataListRef.value.setBatchLoading(false)
+  const tabRef = customTabRefs[tabId]
+  if (tabRef) tabRef.setBatchLoading(false)
+  else if (dataListRef.value) dataListRef.value.setBatchLoading(false)
   if (removed > 0) {
     ElMessage.success(`已移除 ${removed} 条记录`)
     customTabRefresh.value++
@@ -724,6 +739,10 @@ async function handleGenerate() {
     ElMessage.warning('请先选择数据')
     return
   }
+  if (filteredRecords.value.length >= 10) {
+    ElMessage.warning('生成记录已达上限（10条），请先删除旧记录')
+    return
+  }
   docLoading.value = true
   try {
     const res = await generateDocument({
@@ -772,20 +791,20 @@ async function handleDownload(row) {
   }
 }
 
-async function handlePreview(row) {
-  try {
-    const res = await downloadDocument(row.id)
-    const blob = new Blob([res], {
-      type: row.format === 'word'
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-    const url = URL.createObjectURL(blob)
-    window.open(url, '_blank')
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  } catch (e) {
-    ElMessage.error('预览失败')
+function handlePreview(row) {
+  const idsStr = row.entryIds
+  if (!idsStr || idsStr.trim() === '') {
+    ElMessage.warning('该记录无生成范围数据')
+    return
   }
+  const ids = idsStr.split(',').map(s => s.trim()).filter(Boolean).map(Number)
+  if (ids.length === 0) {
+    ElMessage.warning('该记录无生成范围数据')
+    return
+  }
+  globalPreviewEntryId.value = null
+  globalPreviewBatchIds.value = ids
+  globalPreviewVisible.value = true
 }
 
 async function handleDeleteRecord(row) {

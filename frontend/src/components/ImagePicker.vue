@@ -15,7 +15,7 @@
       <div class="picker-content">
         <div class="picker-toolbar">
           <el-button size="small" type="primary" plain @click="triggerUpload"><el-icon><Upload /></el-icon>本地上传</el-button>
-          <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" @change="handleFileUpload" />
+          <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" @change="handleFileUpload" />
         </div>
         <div class="picker-scroll">
           <div v-if="loading" style="text-align:center;padding:40px;">加载中...</div>
@@ -143,35 +143,54 @@ function triggerUpload() {
 }
 
 async function handleFileUpload(e) {
-  const file = e.target.files[0]
-  if (!file) return
-  const defaultName = file.name.replace(/\.[^.]+$/, '')
-  try {
-    const { value } = await ElMessageBox.prompt('请输入图片名称', '上传图片', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputValue: defaultName,
-      inputPlaceholder: '请输入名称'
-    })
-    const displayName = value || defaultName
-    const uploadCategory = curCategory.value || props.defaultCategory
-    const uploadDomain = curDomain.value || props.defaultDomain
-    const uploadProduct = curProduct.value || props.defaultProduct
-    await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
-    ElMessage.success('上传成功')
-    await loadTree()
-    curCategory.value = uploadCategory
-    curDomain.value = uploadDomain
-    curProduct.value = uploadProduct
-    if (uploadProduct && treeRef.value) {
-      treeRef.value.setCurrentKey(uploadProduct)
+  const files = Array.from(e.target.files || [])
+  if (files.length === 0) return
+  const uploadCategory = curCategory.value || props.defaultCategory
+  const uploadDomain = curDomain.value || props.defaultDomain
+  const uploadProduct = curProduct.value || props.defaultProduct
+  if (files.length === 1) {
+    const file = files[0]
+    const defaultName = file.name.replace(/\.[^.]+$/, '')
+    try {
+      const { value } = await ElMessageBox.prompt('请输入图片名称', '上传图片', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        inputValue: defaultName,
+        inputPlaceholder: '请输入名称'
+      })
+      const displayName = value || defaultName
+      await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
+      ElMessage.success('上传成功')
+    } catch (err) {
+      if (err !== 'cancel' && err !== 'close') {
+        ElMessage.error(err?.response?.data?.message || '上传失败')
+      }
+      e.target.value = ''
+      return
     }
-    await loadImages()
-  } catch (err) {
-    if (err !== 'cancel' && err !== 'close') {
-      ElMessage.error(err?.response?.data?.message || '上传失败')
+  } else {
+    let success = 0
+    let failed = 0
+    for (const file of files) {
+      const displayName = file.name.replace(/\.[^.]+$/, '')
+      try {
+        await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
+        success++
+      } catch {
+        failed++
+      }
     }
+    if (success > 0) ElMessage.success(`成功上传 ${success} 张图片${failed > 0 ? `，${failed} 张失败` : ''}`)
+    else ElMessage.error('全部上传失败')
   }
+  await loadTree()
+  curCategory.value = uploadCategory
+  curDomain.value = uploadDomain
+  curProduct.value = uploadProduct
+  if (uploadProduct && treeRef.value) {
+    treeRef.value.setCurrentKey(uploadProduct)
+  }
+  await loadImages()
   e.target.value = ''
 }
 </script>

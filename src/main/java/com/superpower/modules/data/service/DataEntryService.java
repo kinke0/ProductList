@@ -29,6 +29,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class DataEntryService {
@@ -310,17 +311,32 @@ public class DataEntryService {
         entryRepository.deleteAllById(allIds);
     }
 
+    @Transactional
     public void batchDelete(List<Long> ids) {
-        List<Long> allIds = new ArrayList<>();
-        for (Long id : ids) {
-            DataEntry entry = entryRepository.findById(id).orElse(null);
-            if (entry == null) continue;
-            allIds.add(id);
-            collectDescendantIds(entry.getVersionId(), id, allIds);
+        List<DataEntry> roots = entryRepository.findAllById(ids);
+        if (roots.isEmpty()) return;
+        Long versionId = roots.get(0).getVersionId();
+        Map<Long, List<Long>> parentChildMap = new HashMap<>();
+        for (DataEntry e : entryRepository.findByVersionId(versionId)) {
+            Long pid = e.getParentId();
+            if (pid != null) {
+                parentChildMap.computeIfAbsent(pid, k -> new ArrayList<>()).add(e.getId());
+            }
         }
-        for (Long id : allIds) {
-            entryRepository.deleteById(id);
+        Set<Long> allIds = new LinkedHashSet<>(ids);
+        Queue<Long> queue = new LinkedList<>(ids);
+        while (!queue.isEmpty()) {
+            Long pid = queue.poll();
+            List<Long> children = parentChildMap.get(pid);
+            if (children != null) {
+                for (Long cid : children) {
+                    if (allIds.add(cid)) {
+                        queue.add(cid);
+                    }
+                }
+            }
         }
+        entryRepository.deleteAllByIdInBatch(new ArrayList<>(allIds));
     }
 
     @Transactional
@@ -948,46 +964,50 @@ public class DataEntryService {
     }
 
     public String getPreviewHtml(Long entryId, boolean isEditing, String username, String mode) {
-        DataEntry l3 = entryRepository.findById(entryId)
-                .orElseThrow(() -> new BusinessException("条目不存在"));
-        List<DataEntry> all = collectL3AndDescendants(l3);
-        Map<Long, String> rejectReasons = new HashMap<>();
-        for (DataEntry e : all) {
-            if ("驳回".equals(e.getApprovalStatus())) {
-                List<ApprovalLog> logs = approvalLogRepository.findByEntryIdOrderByCreatedAtDesc(e.getId());
-                for (ApprovalLog log : logs) {
-                    if ("reject".equals(log.getAction())) {
-                        rejectReasons.put(e.getId(), log.getComment());
-                        break;
-                    }
-                }
-            }
-        }
+        return getPreviewHtml(List.of(entryId), isEditing, username, mode);
+    }
 
-        // Determine user role
+    public String getPreviewHtml(List<Long> entryIds, boolean isEditing, String username, String mode) {
         String roleCode = "USER";
         if (username != null) {
             com.superpower.modules.system.entity.SysUser user = null;
-            try {
-                user = findUserByUsername(username);
-            } catch (Exception ignored) {}
+            try { user = findUserByUsername(username); } catch (Exception ignored) {}
             if (user != null && user.getRole() != null) roleCode = user.getRole().getCode();
         }
         String role = mapRoleCode(roleCode);
 
+        Map<Long, String> rejectReasons = new HashMap<>();
         StringBuilder nav = new StringBuilder();
         StringBuilder body = new StringBuilder();
-        Map<Long, List<DataEntry>> childrenMap = new HashMap<>();
-        for (DataEntry e : all) {
-            if (!e.getId().equals(l3.getId())) {
-                childrenMap.computeIfAbsent(e.getParentId() != null ? e.getParentId() : l3.getId(), k -> new ArrayList<>()).add(e);
-            }
-        }
-        for (List<DataEntry> list : childrenMap.values()) {
-            list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
-        }
-        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role, mode);
 
+        for (Long entryId : entryIds) {
+            DataEntry l3 = entryRepository.findById(entryId).orElse(null);
+            if (l3 == null) continue;
+            List<DataEntry> all = collectL3AndDescendants(l3);
+            for (DataEntry e : all) {
+                if ("驳回".equals(e.getApprovalStatus())) {
+                    List<ApprovalLog> logs = approvalLogRepository.findByEntryIdOrderByCreatedAtDesc(e.getId());
+                    for (ApprovalLog log : logs) {
+                        if ("reject".equals(log.getAction())) { rejectReasons.put(e.getId(), log.getComment()); break; }
+                    }
+                }
+            }
+            Map<Long, List<DataEntry>> childrenMap = new HashMap<>();
+            for (DataEntry e : all) {
+                if (!e.getId().equals(l3.getId())) {
+                    childrenMap.computeIfAbsent(e.getParentId() != null ? e.getParentId() : l3.getId(), k -> new ArrayList<>()).add(e);
+                }
+            }
+            for (List<DataEntry> list : childrenMap.values()) {
+                list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+            }
+            buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role, mode);
+        }
+
+        return buildPreviewHtmlWrapper(nav, body);
+    }
+
+    private String buildPreviewHtmlWrapper(StringBuilder nav, StringBuilder body) {
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
             + "*{margin:0;padding:0;box-sizing:border-box;}"
             + "body{font-family:'SimSun','宋体',serif;font-size:10.5pt;line-height:1.5;color:#000;display:flex;flex-direction:column;height:100vh;overflow:hidden;}"
@@ -1008,6 +1028,9 @@ public class DataEntryService {
             + ".img-wrap{text-align:center;margin:6pt 0;}"
             + ".img-wrap img{max-width:100%;max-height:400px;}"
             + ".img-caption{text-align:center;font-size:9pt;color:#666;margin-top:2pt;}"
+            + ".img-grid{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:6pt 0;}"
+            + ".img-grid-cell{flex:0 0 calc(33.33% - 6px);max-width:calc(33.33% - 6px);min-width:120px;text-align:center;box-sizing:border-box;}"
+            + ".img-grid-cell img{width:auto;height:300px;max-width:100%;object-fit:contain;}"
             + ".toggle{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;cursor:pointer;margin-right:2px;user-select:none;font-size:10px;background:#e2e8f0;border-radius:3px;color:#475569;font-weight:bold;}"
             + ".toggle-empty{visibility:hidden;cursor:default;}"
             + ".entry-actions{padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:#fafbfc;}"
@@ -1132,46 +1155,132 @@ public class DataEntryService {
         String cleaned = cleanImageCardsToText(desc);
         cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
         StringBuilder sb = new StringBuilder();
-        Pattern bracketUrlPattern = Pattern.compile("\\[(https?://[^\\]]+)\\]");
-        for (String line : cleaned.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                String url = trimmed;
-                String caption = "";
-                int pipeIdx = url.indexOf('|');
-                if (pipeIdx > 0) { caption = url.substring(pipeIdx + 1); url = url.substring(0, pipeIdx); }
-                String enc = encodeUrl(url);
-                sb.append("<div class='img-wrap'>")
-                  .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
-                if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption).append("</div>");
-                else sb.append("<div class='img-caption'></div>");
-                sb.append("</div>");
-            } else if (bracketUrlPattern.matcher(trimmed).find()) {
-                Matcher bm = bracketUrlPattern.matcher(trimmed);
+        Pattern urlPattern = Pattern.compile("https?://[^\\s\\[\\]|]+");
+        Pattern urlLinePattern = Pattern.compile("^https?://[^\\s\\[\\]|]+(?:\\|[^\\s]*)?$");
+
+        String[] lines = cleaned.split("\n");
+        int i = 0;
+        while (i < lines.length) {
+            String line = lines[i].trim();
+            if (line.isEmpty()) { i++; continue; }
+
+            List<String> batch = new ArrayList<>();
+            while (i < lines.length) {
+                String l = lines[i].trim();
+                if (l.isEmpty()) { i++; continue; }
+                if (urlLinePattern.matcher(l).matches()) {
+                    batch.add(l);
+                    i++;
+                } else {
+                    break;
+                }
+            }
+
+            if (!batch.isEmpty()) {
+                if (batch.size() >= 2) {
+                    List<String> encUrls = new ArrayList<>();
+                    List<String> captions = new ArrayList<>();
+                    for (String raw : batch) {
+                        int pi = raw.indexOf('|');
+                        String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+                        String cap = pi > 0 ? raw.substring(pi + 1) : "";
+                        encUrls.add(encodeUrl(urlPart));
+                        captions.add(cap);
+                    }
+                    boolean allPortrait = true;
+                    for (String raw : batch) {
+                        int pi = raw.indexOf('|');
+                        String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+                        int[] wh = getImageDimensions(urlPart);
+                        if (wh[0] > 0 && wh[1] > 0) {
+                            if ((double) wh[1] / wh[0] <= 1.2) allPortrait = false;
+                        } else {
+                            allPortrait = false;
+                        }
+                    }
+                    if (allPortrait) {
+                        sb.append("<div class='img-grid'>");
+                        for (int k = 0; k < encUrls.size(); k++) {
+                            sb.append("<div class='img-grid-cell'>")
+                              .append("<img src='").append(encUrls.get(k)).append("' style='height:300px;' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';\" />");
+                            String cap = captions.get(k);
+                            if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                            else sb.append("<div class='img-caption'></div>");
+                            sb.append("</div>");
+                        }
+                        sb.append("</div>");
+                    } else {
+                        for (int k = 0; k < encUrls.size(); k++) {
+                            sb.append("<div class='img-wrap'>")
+                              .append("<img src='").append(encUrls.get(k)).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                            String cap = captions.get(k);
+                            if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                            else sb.append("<div class='img-caption'></div>");
+                            sb.append("</div>");
+                        }
+                    }
+                } else {
+                    String raw = batch.get(0);
+                    int pi = raw.indexOf('|');
+                    String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+                    String cap = pi > 0 ? raw.substring(pi + 1) : "";
+                    String enc = encodeUrl(urlPart);
+                    sb.append("<div class='img-wrap'>")
+                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                    if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                    else sb.append("<div class='img-caption'></div>");
+                    sb.append("</div>");
+                }
+                continue;
+            }
+
+            Matcher um = urlPattern.matcher(line);
+            List<String> inlineUrls = new ArrayList<>();
+            while (um.find()) inlineUrls.add(um.group());
+            if (!inlineUrls.isEmpty()) {
                 int lastEnd = 0;
-                while (bm.find()) {
-                    if (bm.start() > lastEnd) {
-                        String textBefore = trimmed.substring(lastEnd, bm.start()).trim();
+                um.reset();
+                while (um.find()) {
+                    if (um.start() > lastEnd) {
+                        String textBefore = line.substring(lastEnd, um.start());
                         if (!textBefore.isEmpty()) sb.append("<p class='p'>").append(textBefore.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
                     }
-                    String url = bm.group(1);
-                    String enc = encodeUrl(url);
+                    String rawUrl = um.group();
+                    String enc = encodeUrl(rawUrl);
                     sb.append("<div class='img-wrap'>")
                       .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />")
-                      .append("<div class='img-caption'></div>")
-                      .append("</div>");
-                    lastEnd = bm.end();
+                      .append("<div class='img-caption'></div></div>");
+                    lastEnd = um.end();
                 }
-                if (lastEnd < trimmed.length()) {
-                    String textAfter = trimmed.substring(lastEnd).trim();
+                if (lastEnd < line.length()) {
+                    String textAfter = line.substring(lastEnd);
                     if (!textAfter.isEmpty()) sb.append("<p class='p'>").append(textAfter.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
                 }
             } else {
-                sb.append("<p class='p'>").append(trimmed.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+                sb.append("<p class='p'>").append(line.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
             }
+            i++;
         }
         return sb.toString();
+    }
+
+    private int[] getImageDimensions(String rawUrl) {
+        try {
+            String url = rawUrl;
+            int hashIdx = url.indexOf('#');
+            if (hashIdx > 0) url = url.substring(0, hashIdx);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            if (conn.getResponseCode() != 200) return new int[]{0, 0};
+            byte[] data = conn.getInputStream().readAllBytes();
+            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(data));
+            if (img == null) return new int[]{0, 0};
+            return new int[]{img.getWidth(), img.getHeight()};
+        } catch (Exception e) {
+            return new int[]{0, 0};
+        }
     }
 
     private void appendTextLines(StringBuilder sb, String text) {
@@ -1215,8 +1324,9 @@ public class DataEntryService {
                 if (nextOpen >= 0 && nextOpen < nextClose) { depth++; pos = nextOpen + 1; }
                 else { depth--; pos = nextClose + tagName.length() + 3; if (depth == 0) contentEnd = pos; }
             }
-            result.append(url);
+            result.append(encodeUrl(url));
             if (filename != null && !filename.isEmpty()) result.append("|").append(filename);
+            result.append("\n");
             lastEnd = contentEnd;
         }
         result.append(html, lastEnd, html.length());
