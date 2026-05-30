@@ -70,6 +70,15 @@ public class SysUserService {
         userRepository.deleteById(id);
     }
 
+    public void changePassword(String username, String oldPassword, String newPassword) {
+        SysUser user = findByUsername(username);
+        if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
+            throw new BusinessException("当前密码不正确");
+        }
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+    }
+
     private UserDTO toDTO(SysUser user) {
         UserDTO dto = new UserDTO();
         dto.setId(user.getId());

@@ -13,19 +13,21 @@
         />
       </div>
       <div class="picker-content">
-        <div v-if="loading" style="text-align:center;padding:40px;">加载中...</div>
-        <div v-else-if="images.length === 0" class="empty-tip">请选择目录或上传图片</div>
-        <div v-else class="image-grid">
-          <div v-for="img in images" :key="img.id" class="image-card" :class="{ selected: selectedId === img.id }" @click="selectImage(img)">
-            <div class="image-thumb">
-              <img :src="img.url" :alt="img.filename" />
-            </div>
-            <div class="image-name">{{ img.filename }}</div>
-          </div>
-        </div>
-        <div style="margin-top:12px;text-align:center;">
-          <el-button size="small" @click="triggerUpload">本地上传</el-button>
+        <div class="picker-toolbar">
+          <el-button size="small" type="primary" plain @click="triggerUpload"><el-icon><Upload /></el-icon>本地上传</el-button>
           <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" @change="handleFileUpload" />
+        </div>
+        <div class="picker-scroll">
+          <div v-if="loading" style="text-align:center;padding:40px;">加载中...</div>
+          <div v-else-if="images.length === 0" class="empty-tip">请选择目录或上传图片</div>
+          <div v-else class="image-grid">
+            <div v-for="img in images" :key="img.id" class="image-card" :class="{ selected: selectedId === img.id }" @click="selectImage(img)">
+              <div class="image-thumb">
+                <img :src="img.url" :alt="img.filename" />
+              </div>
+              <div class="image-name">{{ img.filename }}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -41,6 +43,7 @@ import { ref, watch } from 'vue'
 import { getImages, uploadImage, getImageTree } from '../api/image'
 import { getVersions } from '../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Upload } from '@element-plus/icons-vue'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -176,7 +179,9 @@ async function handleFileUpload(e) {
 <style scoped>
 .picker-body { display: flex; gap: 16px; height: 400px; }
 .picker-sidebar { width: 220px; flex-shrink: 0; overflow-y: auto; border: 1px solid var(--si-border); border-radius: 8px; padding: 8px; }
-.picker-content { flex: 1; overflow-y: auto; }
+.picker-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.picker-toolbar { flex-shrink: 0; padding: 0 0 8px 0; }
+.picker-scroll { flex: 1; overflow-y: auto; }
 .empty-tip { text-align: center; padding: 40px; color: #999; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
 .image-card { border: 2px solid transparent; border-radius: 6px; overflow: hidden; cursor: pointer; transition: border-color 0.2s; }

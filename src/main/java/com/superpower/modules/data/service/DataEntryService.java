@@ -56,10 +56,19 @@ public class DataEntryService {
         this.baseDomainRepository = baseDomainRepository;
     }
 
-    public List<TreeNodeDTO> getTree(Long versionId, String name, String status, String productManager,
+    private boolean matchesStatus(String colStatus, List<String> statusList) {
+        if (statusList == null || statusList.isEmpty()) return true;
+        if (colStatus == null || colStatus.isEmpty()) return false;
+        for (String s : statusList) {
+            if (colStatus.contains(s)) return true;
+        }
+        return false;
+    }
+
+    public List<TreeNodeDTO> getTree(Long versionId, String name, List<String> statusList, String productManager,
                                      String solution, String versionTag) {
         List<DataEntry> entries = entryRepository.findByVersionIdAndLevelWithFilter(
-                versionId, 1, name, status, productManager, solution, versionTag);
+                versionId, 1, name, productManager, solution, versionTag);
 
         Map<Long, BaseCategory> catMap = new HashMap<>();
         Map<Long, BaseDomain> domMap = new HashMap<>();
@@ -68,7 +77,9 @@ public class DataEntryService {
         baseDomainRepository.findByVersionId(versionId)
             .forEach(d -> domMap.put(d.getId(), d));
 
-        return entries.stream().map(e -> buildTree(e, versionId, catMap, domMap)).toList();
+        return entries.stream()
+                .filter(e -> matchesStatus(e.getColStatus(), statusList))
+                .map(e -> buildTree(e, versionId, catMap, domMap)).toList();
     }
 
     private TreeNodeDTO buildTree(DataEntry entry, Long versionId, Map<Long, BaseCategory> catMap, Map<Long, BaseDomain> domMap) {
@@ -100,10 +111,12 @@ public class DataEntryService {
         return node;
     }
 
-    public List<DataEntry> getChildren(Long versionId, Long parentId, String name, String status,
+    public List<DataEntry> getChildren(Long versionId, Long parentId, String name, List<String> statusList,
                                       String productManager, String solution, String versionTag) {
         return entryRepository.findByVersionIdAndParentIdWithFilter(
-                versionId, parentId, name, status, productManager, solution, versionTag);
+                versionId, parentId, name, productManager, solution, versionTag).stream()
+                .filter(e -> matchesStatus(e.getColStatus(), statusList))
+                .toList();
     }
 
     public DataEntry getById(Long id) {
@@ -112,31 +125,36 @@ public class DataEntryService {
     }
 
     @Transactional
-    public List<DataEntry> query(Long versionId, Long customTabId, String name, String status, String productManager,
-                                 String solution, String versionDivision, String bizCategory, String bizDomain) {
-        boolean hasFilter = (name != null && !name.isEmpty()) || (status != null && !status.isEmpty())
+    public List<DataEntry> query(Long versionId, Long customTabId, String name, List<String> statusList, String productManager,
+                                 String solution, String versionDivision, String bizCategory, String bizDomain, Integer level) {
+        boolean hasFilter = (name != null && !name.isEmpty()) || (statusList != null && !statusList.isEmpty())
                 || (productManager != null && !productManager.isEmpty()) || (solution != null && !solution.isEmpty())
                 || (versionDivision != null && !versionDivision.isEmpty())
                 || (bizCategory != null && !bizCategory.isEmpty()) || (bizDomain != null && !bizDomain.isEmpty());
 
         List<DataEntry> result;
+        if (level != null) {
+            result = entryRepository.findByVersionIdAndLevel(versionId, level);
+            result = sortByCategoryOrder(result, versionId);
+            return result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList();
+        }
         if (customTabId != null) {
             if (hasFilter) {
-                result = entryRepository.queryEntries(versionId, customTabId, name, status, productManager,
+                result = entryRepository.queryEntries(versionId, customTabId, name, productManager,
                         solution, versionDivision, bizCategory, bizDomain);
             } else {
                 result = entryRepository.findEntriesByTab(versionId, customTabId);
             }
             result = reorderByCustomTabSort(customTabId, result);
         } else if (hasFilter) {
-            result = entryRepository.queryEntries(versionId, null, name, status, productManager,
+            result = entryRepository.queryEntries(versionId, null, name, productManager,
                     solution, versionDivision, bizCategory, bizDomain);
         } else if (bizCategory != null || bizDomain != null) {
             result = entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
         } else {
             result = entryRepository.findAllEntries(versionId);
         }
-        // Sort by business category/domain order
+        result = new ArrayList<>(result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList());
         if (customTabId == null) {
             result = sortByCategoryOrder(result, versionId);
         }
@@ -303,6 +321,49 @@ public class DataEntryService {
         for (Long id : allIds) {
             entryRepository.deleteById(id);
         }
+    }
+
+    @Transactional
+    public int batchUpdateCategory(Long versionId, List<Long> entryIds, Long categoryId, Long domainId) {
+        ensureVersionEditable(versionId);
+
+        String catName = null;
+        String domName = null;
+        if (categoryId != null) {
+            BaseCategory cat = baseCategoryRepository.findById(categoryId).orElse(null);
+            if (cat != null) catName = cat.getName();
+        }
+        if (domainId != null) {
+            BaseDomain dom = baseDomainRepository.findById(domainId).orElse(null);
+            if (dom != null) domName = dom.getName();
+        }
+
+        int count = 0;
+        for (Long id : entryIds) {
+            DataEntry entry = entryRepository.findById(id).orElse(null);
+            if (entry == null) continue;
+            if (entry.getLevel() == null || entry.getLevel() < 3) continue;
+
+            if (catName != null) {
+                entry.setColBizCategory(catName);
+                entry.setCategoryId(categoryId);
+            }
+            if (domName != null) {
+                entry.setColBizDomain(domName);
+                entry.setDomainId(domainId);
+            }
+
+            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            for (DataEntry d : descendants) {
+                if (catName != null) d.setColBizCategory(catName);
+                if (domName != null) d.setColBizDomain(domName);
+                entryRepository.save(d);
+            }
+
+            entryRepository.save(entry);
+            count++;
+        }
+        return count;
     }
 
     private void collectDescendantIds(Long versionId, Long parentId, List<Long> ids) {
@@ -617,13 +678,32 @@ public class DataEntryService {
                 headerMap.put(header, i);
             }
 
+            if (!headerMap.containsKey("招标参数") && headerMap.containsKey("招标参数说明")) {
+                headerMap.put("招标参数", headerMap.get("招标参数说明"));
+            }
+            if (!headerMap.containsKey("招标参数说明") && headerMap.containsKey("招标参数")) {
+                headerMap.put("招标参数说明", headerMap.get("招标参数"));
+            }
+            if (!headerMap.containsKey("解决方案标记") && headerMap.containsKey("其他解决方案标记")) {
+                headerMap.put("解决方案标记", headerMap.get("其他解决方案标记"));
+            }
+            if (!headerMap.containsKey("其他解决方案标记") && headerMap.containsKey("解决方案标记")) {
+                headerMap.put("其他解决方案标记", headerMap.get("解决方案标记"));
+            }
+
             Map<String, Long> catNameToId = new HashMap<>();
+            Map<Long, String> catIdToName = new HashMap<>();
             for (BaseCategory cat : baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId)) {
                 catNameToId.put(cat.getName(), cat.getId());
+                catNameToId.put(cat.getName().replaceAll("(\\d+\\.)\\s+", "$1"), cat.getId());
+                catIdToName.put(cat.getId(), cat.getName());
             }
             Map<String, Long> domNameToId = new HashMap<>();
+            Map<Long, String> domIdToName = new HashMap<>();
             for (BaseDomain dom : baseDomainRepository.findByVersionId(versionId)) {
                 domNameToId.put(dom.getName(), dom.getId());
+                domNameToId.put(dom.getName().replaceAll("(\\d+\\.)\\s+", "$1"), dom.getId());
+                domIdToName.put(dom.getId(), dom.getName());
             }
 
             List<RowData> rows = new ArrayList<>();
@@ -642,7 +722,7 @@ public class DataEntryService {
             List<RowData> retryRows = new ArrayList<>();
             for (RowData rd : rows) {
                 if (rd.parentName == null) {
-                    processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId);
+                    processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId, catIdToName, domIdToName);
                 } else {
                     retryRows.add(rd);
                 }
@@ -655,7 +735,7 @@ public class DataEntryService {
             });
 
             for (RowData rd : retryRows) {
-                processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId);
+                processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId, catIdToName, domIdToName);
             }
         } catch (Exception e) {
             result.getErrors().add("解析Excel文件失败: " + e.getMessage());
@@ -665,7 +745,8 @@ public class DataEntryService {
 
     private void processRow(RowData rd, Map<String, Integer> headerMap, Long versionId,
                             ExcelImportResult result, Map<String, Long> nameToId,
-                            Map<String, Long> catNameToId, Map<String, Long> domNameToId) {
+                            Map<String, Long> catNameToId, Map<String, Long> domNameToId,
+                            Map<Long, String> catIdToName, Map<Long, String> domIdToName) {
         try {
             Row row = rd.row;
             String productName = rd.productName;
@@ -731,11 +812,13 @@ public class DataEntryService {
             setStr(headerMap, row, entry, "招标参数", DataEntry::setColBidParamDesc);
             setStr(headerMap, row, entry, "功能说明", DataEntry::setColFeatureDesc);
             setStr(headerMap, row, entry, "状态", DataEntry::setColStatus);
-            entry.setColBizCategory(bizCategory);
-            entry.setColBizDomain(bizDomain);
+            Long catId = bizCategory != null ? catNameToId.get(bizCategory) : null;
+            Long domId = bizDomain != null ? domNameToId.get(bizDomain) : null;
+            entry.setColBizCategory(catId != null ? catIdToName.get(catId) : bizCategory);
+            entry.setColBizDomain(domId != null ? domIdToName.get(domId) : bizDomain);
             entry.setColProductSystem(productName);
-            if (bizCategory != null) entry.setCategoryId(catNameToId.get(bizCategory));
-            if (bizDomain != null) entry.setDomainId(domNameToId.get(bizDomain));
+            entry.setCategoryId(catId);
+            entry.setDomainId(domId);
             setStr(headerMap, row, entry, "版本划分", DataEntry::setColVersionDivision);
             setStr(headerMap, row, entry, "远", DataEntry::setColYuan);
             setStr(headerMap, row, entry, "交付工作量(人月)", DataEntry::setColDeliveryWorkload);
@@ -752,9 +835,12 @@ public class DataEntryService {
             setStr(headerMap, row, entry, "互联互通", DataEntry::setColInterconnection);
             setStr(headerMap, row, entry, "产品/系统标识", DataEntry::setColProductSysId);
             setStr(headerMap, row, entry, "模块标识", DataEntry::setColModuleId);
-            setStr(headerMap, row, entry, "其他解决方案标记", DataEntry::setColOtherSolutionTag);
+            setStr(headerMap, row, entry, "解决方案标记", DataEntry::setColOtherSolutionTag);
             setStr(headerMap, row, entry, "文档维护人员", DataEntry::setColDocMaintainer);
             setStr(headerMap, row, entry, "产品经理", DataEntry::setColProductManager);
+            if (entry.getColProductManager() == null || entry.getColProductManager().isBlank()) {
+                entry.setColProductManager("未指定");
+            }
             setStr(headerMap, row, entry, "内部版本", DataEntry::setColInternalVersion);
             setStr(headerMap, row, entry, "智能化", DataEntry::setColIntelligent);
             setStr(headerMap, row, entry, "曜", DataEntry::setColYao);
@@ -826,13 +912,14 @@ public class DataEntryService {
         return val.isEmpty() ? null : val;
     }
 
+    private static final DataFormatter DATA_FORMATTER = new DataFormatter();
+
     private String getCellString(Row row, int colIdx) {
         if (colIdx < 0) return null;
         Cell cell = row.getCell(colIdx);
         if (cell == null) return null;
-        cell.setCellType(CellType.STRING);
-        String val = cell.getStringCellValue();
-        return val != null ? val.trim() : null;
+        String val = DATA_FORMATTER.formatCellValue(cell);
+        return val != null && !val.trim().isEmpty() ? val.trim() : null;
     }
 
     private void setStr(Map<String, Integer> hm, Row row, DataEntry e, String h, java.util.function.BiConsumer<DataEntry, String> setter) {
@@ -973,7 +1060,7 @@ public class DataEntryService {
         }
         String colStatus = node.getColStatus();
         String approvalStatus = node.getApprovalStatus();
-        if (approvalStatus != null && !approvalStatus.isEmpty() && "可交付".equals(colStatus)) {
+        if (approvalStatus != null && !approvalStatus.isEmpty() && colStatus != null && colStatus.contains("可交付")) {
             body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
             if ("驳回".equals(approvalStatus)) {
                 String reason = rejectReasons.get(node.getId());
@@ -996,7 +1083,7 @@ public class DataEntryService {
             }
             body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'delete',entryId:").append(node.getId()).append(",entryName:'").append(label.replace("'", "\\'")).append("'},'*')\">删除</a>");
             String apprStatus = node.getApprovalStatus();
-            boolean showApproval = isEditing && "可交付".equals(colStatus);
+            boolean showApproval = isEditing && colStatus != null && colStatus.contains("可交付");
             if (showApproval) {
                 body.append("<div class='ea-label' style='margin-left:16px;'>流程操作：</div>");
                 boolean canSubmit = (apprStatus == null || apprStatus.isEmpty() || "待提交".equals(apprStatus) || "驳回".equals(apprStatus));

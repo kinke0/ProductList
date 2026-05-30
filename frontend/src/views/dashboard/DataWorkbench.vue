@@ -59,22 +59,35 @@
 
     <div class="workbench-body">
       <div class="left-panel">
-        <TreePanel :version-id="selectedVersion.id" @select="onTreeSelect" />
+        <TreePanel :version-id="selectedVersion.id" :highlight-node="treeHighlight" @select="onTreeSelect" />
       </div>
       <div class="right-panel">
         <div class="tabs-wrapper">
           <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
+            <el-tab-pane label="产品全景图" name="panorama">
+              <PanoramaTab
+                v-if="activeTab === 'panorama'"
+                :version-id="selectedVersion.id"
+                :selected-node="selectedNode"
+                @navigate-to-list="onNavigateToList"
+                @open-preview="onOpenPreview"
+              />
+            </el-tab-pane>
             <el-tab-pane label="统计视图" name="stats">
-              <StatsTab :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
+              <StatsTab v-if="activeTab === 'stats'" :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
             </el-tab-pane>
             <el-tab-pane label="数据清单" name="list">
               <DataListTab
+                v-show="activeTab === 'list'"
+                ref="dataListRef"
                 :version-id="selectedVersion.id"
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
                 :user-role="currentUserRole"
                 :refresh-trigger="listRefreshTrigger"
                 @insert-to-list="onInsertToList"
+                @open-preview="onOpenPreview"
+                @preview-reload="onPreviewReload"
               />
             </el-tab-pane>
             <el-tab-pane
@@ -87,6 +100,7 @@
                 <span @dblclick.stop="onRenameTab(tab)">{{ tab.name }}</span>
               </template>
               <DataListTab
+                v-if="activeTab === 'custom-' + tab.id"
                 :version-id="selectedVersion.id"
                 :selected-node="selectedNode"
                 :is-editing="selectedVersion.status === 'draft'"
@@ -98,11 +112,18 @@
                 @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
               />
             </el-tab-pane>
+            <el-tab-pane name="__add_list" disabled>
+              <template #label>
+                <span class="add-list-tab-btn" @click.stop.prevent="onAddList">
+                  <el-icon><Plus /></el-icon> 添加清单
+                </span>
+              </template>
+            </el-tab-pane>
           </el-tabs>
-          <el-button class="add-list-btn" size="small" @click="onAddList">添加清单</el-button>
         </div>
       </div>
     </div>
+    <PreviewDialog ref="globalPreviewRef" v-model="globalPreviewVisible" :entry-id="globalPreviewEntryId" @preview-message="onGlobalPreviewMessage" />
   </div>
 
   <el-dialog v-model="showDocDialog" title="生成文档" width="960px" top="2vh">
@@ -201,18 +222,22 @@
   <el-dialog v-model="showAddListDialog" title="添加清单" width="420px" :close-on-click-modal="false">
     <el-form :model="addListForm" label-width="100px" size="small">
       <el-form-item label="清单名称" required>
-        <el-input v-model="addListForm.name" placeholder="请输入清单名称" />
+        <el-input v-model="addListForm.name" placeholder="请输入清单名称" @keyup.enter="handleAddList" />
       </el-form-item>
-      <el-form-item label="产品/系统">
-        <el-input v-model="addListForm.entryName" placeholder="按名称检索" clearable />
+    </el-form>
+    <el-divider style="margin: 12px 0 8px;" />
+    <div style="padding: 0 0 4px 16px; font-size: 13px; color: #909399;">可通过条件检索建立清单</div>
+    <el-form :model="addListForm" label-width="100px" size="small" style="margin-top: 4px;">
+      <el-form-item label="名称">
+        <el-input v-model="addListForm.entryName" placeholder="产品/系统名称" clearable @keyup.enter="handleAddList" />
       </el-form-item>
       <el-form-item label="状态">
-        <el-select v-model="addListForm.status" placeholder="全部" clearable style="width:100%">
+        <el-select v-model="addListForm.statusList" placeholder="全部" clearable multiple style="width:100%">
           <el-option v-for="s in addListStatusList" :key="s" :label="s" :value="s" />
         </el-select>
       </el-form-item>
       <el-form-item label="产品经理">
-        <el-input v-model="addListForm.productManager" placeholder="产品经理" clearable />
+        <el-input v-model="addListForm.productManager" placeholder="产品经理" clearable @keyup.enter="handleAddList" />
       </el-form-item>
       <el-form-item label="解决方案">
         <el-select v-model="addListForm.solution" placeholder="全部" clearable style="width:100%">
@@ -235,22 +260,28 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TreePanel from '../../components/TreePanel.vue'
 import StatsTab from '../../components/StatsTab.vue'
 import DataListTab from '../../components/DataListTab.vue'
+import PanoramaTab from '../../components/PanoramaTab.vue'
+import PreviewDialog from '../../components/PreviewDialog.vue'
 import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
 import { getVersions } from '../../api/version'
 import { getCustomTabs, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { getOptions } from '../../api/option'
+import { deleteEntry } from '../../api/data'
+import { approveEntry } from '../../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 
 const versions = ref([])
 const currentUserRole = localStorage.getItem('roleCode') || 'USER'
 const selectedVersion = ref(null)
 const showVersionDialog = ref(false)
 const selectedNode = ref(null)
-const activeTab = ref('stats')
+const treeHighlight = ref(null)
+const activeTab = ref('panorama')
 const showDocDialog = ref(false)
 const docType = ref('feature')
 const docFormat = ref('word')
@@ -280,7 +311,7 @@ const addListStatusList = ref([])
  const addListForm = reactive({
   name: '',
   entryName: '',
-  status: '',
+  statusList: [],
   productManager: '',
   solution: '',
   versionTag: ''
@@ -372,7 +403,7 @@ watch(showDocDialog, (val) => {
 watch(selectedVersion, async (version) => {
   if (version) {
     await loadCustomTabs()
-    activeTab.value = 'stats'
+    activeTab.value = 'panorama'
   }
 })
 
@@ -389,6 +420,79 @@ function onVersionSelect(version) {
 
 function onTreeSelect(node) {
   selectedNode.value = node
+  treeHighlight.value = null
+}
+
+function onNavigateToList({ categoryLabel, domainLabel }) {
+  selectedNode.value = { id: 'custom', categoryLabel, domainLabel }
+  treeHighlight.value = { categoryLabel, domainLabel }
+  activeTab.value = 'list'
+  listRefreshTrigger.value = Date.now()
+}
+
+const globalPreviewVisible = ref(false)
+const globalPreviewEntryId = ref(null)
+const globalPreviewRef = ref(null)
+const dataListRef = ref(null)
+
+function onOpenPreview(entryId) {
+  globalPreviewEntryId.value = entryId
+  globalPreviewVisible.value = true
+}
+
+function onPreviewReload(highlightId) {
+  if (globalPreviewRef.value) globalPreviewRef.value.reload(highlightId)
+}
+
+async function onGlobalPreviewMessage(msg) {
+  if (!globalPreviewVisible.value) return
+  if (msg?.action === 'edit' || msg?.action === 'addChild') {
+    if (dataListRef.value) {
+      dataListRef.value.editRowById(msg.entryId, msg.action)
+    }
+  } else if (msg?.action === 'submit') {
+    try {
+      await approveEntry(msg.entryId, 'submit', '')
+      ElMessage.success('已提交')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { ElMessage.error(e?.response?.data?.message || '操作失败') }
+  } else if (msg?.action === 'approve') {
+    try {
+      await approveEntry(msg.entryId, 'approve', '')
+      ElMessage.success('已通过')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { ElMessage.error(e?.response?.data?.message || '操作失败') }
+  } else if (msg?.action === 'reject') {
+    try {
+      const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '驳回', {
+        confirmButtonText: '确定', cancelButtonText: '取消', inputPlaceholder: '请输入驳回原因，可不填', inputValidator: () => true
+      })
+      await approveEntry(msg.entryId, 'reject', value || '')
+      ElMessage.success('已驳回')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) {
+      if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.message || '驳回失败')
+    }
+  } else if (msg?.action === 'delete') {
+    try {
+      await ElMessageBox.confirm('确认删除该记录？', '提示', { type: 'warning' })
+      await deleteEntry(msg.entryId)
+      ElMessage.success('删除成功')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
+  }
+}
+
+function refreshCurrentTab() {
+  if (activeTab.value === 'list') {
+    listRefreshTrigger.value = Date.now()
+  } else if (activeTab.value === 'panorama') {
+    listRefreshTrigger.value = Date.now()
+  }
 }
 
 async function loadCustomTabs() {
@@ -404,7 +508,7 @@ async function loadCustomTabs() {
 async function onAddList() {
   addListForm.name = ''
   addListForm.entryName = ''
-  addListForm.status = ''
+  addListForm.statusList = []
   addListForm.productManager = ''
   addListForm.solution = ''
   addListForm.versionTag = ''
@@ -435,7 +539,7 @@ async function handleAddList() {
       name: addListForm.name.trim(),
       versionId: selectedVersion.value.id,
       entryName: addListForm.entryName || undefined,
-      status: addListForm.status || undefined,
+      statusList: addListForm.statusList.length > 0 ? addListForm.statusList : undefined,
       productManager: addListForm.productManager || undefined,
       solution: addListForm.solution || undefined,
       versionTag: addListForm.versionTag || undefined
@@ -490,8 +594,9 @@ async function onRenameTab(tab) {
   }
 }
 
- function onTabClick(tab) {
-  if (tab.paneName === 'stats') {
+  function onTabClick(tab) {
+   if (tab.paneName === '__add_list') return
+   if (tab.paneName === 'stats') {
     statsRefreshTrigger.value = Date.now()
   } else if (tab.paneName === 'list') {
     listRefreshTrigger.value = Date.now()
@@ -745,14 +850,32 @@ async function handleDeleteRecord(row) {
   height: 100%;
 }
 .tabs-wrapper :deep(.el-tabs__header) {
-  padding-right: 120px;
   padding-left: 8px;
 }
-.add-list-btn {
-  position: absolute;
-  top: 8px;
-  right: 4px;
-  z-index: 1;
+.tabs-wrapper :deep(.el-tabs__item.is-disabled) {
+  cursor: pointer !important;
+  color: unset !important;
+  padding: 0 !important;
+}
+.add-list-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #2563EB, #1d4ed8);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+}
+.add-list-tab-btn:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+  transform: translateY(-1px);
 }
 .workbench-body {
   display: flex;

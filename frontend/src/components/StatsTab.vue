@@ -76,7 +76,7 @@ async function loadStats() {
   if (!props.versionId) return
   const res = await queryEntries(props.versionId, {})
   const entries = res.data || []
-  const deliverable = entries.filter(e => e.colStatus === '可交付')
+  const deliverable = entries.filter(e => (e.colStatus || '').includes('可交付'))
 
   stats.value.productCount = deliverable.filter(e => e.level === 3).length
   stats.value.moduleCount = deliverable.filter(e => e.level === 4).length

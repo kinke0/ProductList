@@ -3,15 +3,15 @@
     <div class="query-bar">
       <el-form :model="queryForm" inline size="small">
         <el-form-item label="名称">
-          <el-input v-model="queryForm.name" placeholder="产品/系统名称" clearable style="width: 160px" />
+          <el-input v-model="queryForm.name" placeholder="产品/系统名称" clearable style="width: 160px" @keyup.enter="handleQuery" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="queryForm.status" placeholder="全部" clearable style="width: 110px">
+          <el-select v-model="queryForm.status" placeholder="全部" clearable multiple style="width: 180px">
             <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
         <el-form-item label="产品经理">
-          <el-input v-model="queryForm.productManager" placeholder="产品经理" clearable style="width: 120px" />
+          <el-input v-model="queryForm.productManager" placeholder="产品经理" clearable style="width: 120px" @keyup.enter="handleQuery" />
         </el-form-item>
         <el-form-item label="解决方案">
           <el-select v-model="queryForm.solution" placeholder="全部" clearable style="width: 130px">
@@ -64,6 +64,7 @@
                   <el-dropdown-item command="status">状态修改</el-dropdown-item>
                   <el-dropdown-item command="solution">解决方案</el-dropdown-item>
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
+                  <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
                   <el-dropdown-item command="delete" divided>{{ props.customTabId ? '批量移除' : '批量删除' }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -140,7 +141,7 @@
           </span>
          </div>
          <div class="vcol" style="width:80px;">
-            <el-tag v-if="!row._isSeparator && row.approvalStatus && row.colStatus === '可交付'" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
+            <el-tag v-if="!row._isSeparator && row.approvalStatus && (row.colStatus || '').includes('可交付')" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
          </div>
          <div class="vcol" style="width:80px;">
            <el-tag v-if="!row._isSeparator && row.colStatus" :type="statusTagType(row.colStatus)" size="small">{{ row.colStatus }}</el-tag>
@@ -157,7 +158,7 @@
         </div>
         <div class="vcol vcol-ops" style="width:240px;">
            <template v-if="!row._isSeparator">
-              <template v-if="row.colStatus === '可交付' && props.isEditing">
+              <template v-if="(row.colStatus || '').includes('可交付') && props.isEditing">
                 <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
                 <span v-else class="op-btn op-add invisible">提交</span>
                 <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
@@ -185,13 +186,14 @@
     </RecycleScroller>
     </div>
 
-    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh">
+    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh" append-to-body>
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
-          <div v-if="!isNew && editingRow && editForm.colStatus === '可交付'" style="display:flex;align-items:center;">
+          <div v-if="!isNew && editingRow && (editForm.colStatus || '').includes('可交付')" style="display:flex;align-items:center;">
             <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
             <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:14px;">原因：{{ lastRejectReason }}</span>
+            <span v-if="editingRow.approvalStatus === '驳回' && lastRejectOperator" style="margin-left:8px;color:#909399;font-size:13px;">（{{ lastRejectOperator }}）</span>
           </div>
         </div>
       </template>
@@ -237,9 +239,9 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="状态">
-              <el-select v-model="editForm.colStatus" style="width: 100%" :disabled="!props.isEditing">
-                <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
-              </el-select>
+               <el-select v-model="editStatusSelections" multiple style="width: 100%" :disabled="!props.isEditing">
+                 <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
+               </el-select>
             </el-form-item>
           </el-col>
         </el-row>
@@ -275,20 +277,40 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="招标参数">
-          <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" :disabled="!props.isEditing" />
-        </el-form-item>
-        <el-form-item label="功能说明">
-          <div class="feature-editor">
-            <div class="feature-editor-toolbar" v-if="props.isEditing">
-              <button type="button" class="fe-btn" title="插入图片" @click="saveSelectionAndShowPicker">
-                <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-              </button>
-            </div>
-            <div class="feature-editor-body" :contenteditable="props.isEditing ? 'true' : 'false'" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
-          </div>
-        </el-form-item>
-        <el-row :gutter="16">
+        <el-tabs v-model="activeEditorTab" type="border-card" style="margin-top:8px;">
+          <el-tab-pane label="功能明细" name="feature">
+            <el-form-item label="招标参数">
+              <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" :disabled="!props.isEditing" />
+            </el-form-item>
+            <el-form-item label="功能说明">
+              <div class="feature-editor">
+                <div class="feature-editor-toolbar" v-if="props.isEditing">
+                  <button type="button" class="fe-btn" title="插入图片" @click="saveSelectionAndShowPicker">
+                    <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+                <div class="feature-editor-body" :contenteditable="props.isEditing ? 'true' : 'false'" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
+              </div>
+            </el-form-item>
+          </el-tab-pane>
+          <template v-if="(editingRow?.level === 3) || (isNew && !parentRow)">
+            <el-tab-pane label="成本管理" name="cost">
+              <div class="coming-soon-placeholder">
+                <el-icon :size="48" color="#c0c4cc"><Warning /></el-icon>
+                <p class="coming-soon-title">功能开发中</p>
+                <p class="coming-soon-desc">成本管理模块正在紧锣密鼓地开发中，敬请期待！</p>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="两单一务" name="twoone">
+              <div class="coming-soon-placeholder">
+                <el-icon :size="48" color="#c0c4cc"><Warning /></el-icon>
+                <p class="coming-soon-title">功能开发中</p>
+                <p class="coming-soon-desc">两单一务模块正在紧锣密鼓地开发中，敬请期待！</p>
+              </div>
+            </el-tab-pane>
+          </template>
+        </el-tabs>
+        <el-row :gutter="16" style="margin-top:12px;">
           <el-col :span="12">
             <el-form-item label="软著">
               <el-input v-model="editForm.colCopyright" :disabled="!props.isEditing" />
@@ -307,7 +329,7 @@
       <template #footer>
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
           <div style="margin-left:120px;">
-            <template v-if="props.isEditing && !isNew && editForm.colStatus === '可交付'">
+            <template v-if="props.isEditing && !isNew && (editForm.colStatus || '').includes('可交付')">
               <el-button v-if="canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
               <el-button v-if="canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
               <el-button v-if="canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
@@ -320,26 +342,11 @@
         </div>
       </template>
     </el-dialog>
-    <el-dialog v-model="previewVisible" title="预览" width="80%" top="5vh" :close-on-click-modal="true">
-      <template #header>
-        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
-          <span>预览</span>
-          <el-button type="primary" size="small" :loading="downloadLoading" @click="downloadPreview">下载Word</el-button>
-        </div>
-      </template>
-      <div style="position:relative;">
-        <iframe ref="previewFrame" :srcdoc="previewHtml" @load="onPreviewLoad" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
-        <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
-          <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
-          <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档...</span>
-        </div>
-      </div>
-    </el-dialog>
      <el-dialog v-model="showBatchStatusDialog" title="批量修改功能状态" width="400px">
        <el-form label-width="80px">
          <el-form-item label="功能状态">
-           <el-select v-model="batchStatusValue" placeholder="请选择" style="width:100%;">
-             <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
+            <el-select v-model="batchStatusValue" placeholder="请选择" multiple style="width:100%;">
+              <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
            </el-select>
          </el-form-item>
        </el-form>
@@ -361,17 +368,35 @@
          <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
        </template>
       </el-dialog>
-     <el-dialog v-model="showBatchManagerDialog" title="批量指定产品经理" width="400px">
-       <el-form label-width="80px">
-         <el-form-item label="产品经理">
-           <el-input v-model="batchManagerValue" placeholder="请输入产品经理" />
-         </el-form-item>
-       </el-form>
-       <template #footer>
-         <el-button @click="showBatchManagerDialog = false">取消</el-button>
-         <el-button type="primary" @click="confirmBatchManager">确定</el-button>
-       </template>
-</el-dialog>
+      <el-dialog v-model="showBatchManagerDialog" title="批量指定产品经理" width="400px">
+        <el-form label-width="80px">
+          <el-form-item label="产品经理">
+            <el-input v-model="batchManagerValue" placeholder="请输入产品经理" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchManagerDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchManager">确定</el-button>
+        </template>
+      </el-dialog>
+      <el-dialog v-model="showBatchCategoryDialog" title="批量修改业务分类/业务域" width="460px">
+        <el-form label-width="80px">
+          <el-form-item label="业务分类">
+            <el-select v-model="batchCategoryId" placeholder="请选择业务分类" style="width:100%;" @change="onBatchL1Change">
+              <el-option v-for="cat in batchCatL1Options" :key="cat.id" :label="cat.label" :value="cat.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="业务域">
+            <el-select v-model="batchDomainId" placeholder="请先选择业务分类" style="width:100%;">
+              <el-option v-for="d in batchCatL2Options" :key="d.id" :label="d.label" :value="d.id" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchCategoryDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchCategory" :loading="batchLoading">确定</el-button>
+        </template>
+      </el-dialog>
       <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="insertImage" />
        <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
@@ -386,9 +411,9 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, getTree, getCategoryTree } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
@@ -407,7 +432,7 @@ const props = defineProps({
   userRole: { type: String, default: 'USER' }
 })
 
-const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc'])
+const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc', 'openPreview', 'preview-reload'])
 
 const authStore = useAuthStore()
 const tableData = ref([])
@@ -417,111 +442,35 @@ const isNew = ref(false)
 const editingId = ref(null)
 const editingRow = ref(null)
 const lastRejectReason = ref('')
+const lastRejectOperator = ref('')
 const showBatchStatusDialog = ref(false)
-const batchStatusValue = ref('')
+const batchStatusValue = ref([])
 const showBatchSolutionDialog = ref(false)
 const batchSolutionValue = ref('')
 const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
+const showBatchCategoryDialog = ref(false)
+const batchCategoryId = ref(null)
+const batchDomainId = ref(null)
+const batchCatL1Options = ref([])
+const batchCatL2Options = ref([])
 const selectedIds = ref([])
 const migrating = ref(false)
 const importing = ref(false)
 const fileInput = ref(null)
 const batchLoading = ref(false)
+const activeEditorTab = ref('feature')
 const newlyCreatedIds = reactive(new Map())
 const l1Options = ref([])
 const l2Options = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const imgPreviewUrl = ref('')
-const previewVisible = ref(false)
-const previewHtml = ref('')
-const previewEntryId = ref(null)
-const downloadLoading = ref(false)
-const previewFrame = ref(null)
-let pendingScrollTop = 0
-let pendingHighlightId = null
 const editorRef = ref(null)
 
 onMounted(() => {
-  window.addEventListener('message', onPreviewMessage)
 })
 
-async function onPreviewMessage(e) {
-  if (!previewVisible.value) return
-  const msg = e.data
-  if (msg?.action === 'edit') {
-    const row = findEntryById(msg.entryId)
-    if (row) editRow(row)
-  } else if (msg?.action === 'addChild') {
-    const row = findEntryById(msg.entryId)
-    if (row) addChildRow(row)
-  } else if (msg?.action === 'submit') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await handleApprove(row, 'submit'); reloadPreviewAfterApproval() }
-  } else if (msg?.action === 'approve') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await handleApprove(row, 'approve'); reloadPreviewAfterApproval() }
-  } else if (msg?.action === 'reject') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await handleReject(row); reloadPreviewAfterApproval() }
-  } else if (msg?.action === 'delete') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await deleteRow(row); if (previewVisible.value) reloadPreviewAfterApproval() }
-  }
-}
-
-async function reloadPreviewAfterApproval(highlightEntryId) {
-  if (!previewEntryId.value) return
-  const frame = previewFrame.value
-  try { pendingScrollTop = frame?.contentWindow?.document?.querySelector?.('.content')?.scrollTop || 0 } catch {}
-  pendingHighlightId = highlightEntryId || null
-  const token = localStorage.getItem('token')
-  const resp = await fetch(`/api/data/${previewEntryId.value}/preview?_t=${Date.now()}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (resp.ok) {
-    previewHtml.value = await resp.text()
-  }
-}
-
-function onPreviewLoad() {
-  if (pendingScrollTop > 0) {
-    const frame = previewFrame.value
-    try { frame?.contentWindow?.document?.querySelector?.('.content')?.scrollTo(0, pendingScrollTop) } catch {}
-    pendingScrollTop = 0
-  }
-  if (pendingHighlightId) {
-    const frame = previewFrame.value
-    frame?.contentWindow?.postMessage({ action: 'highlightEntry', entryId: pendingHighlightId }, '*')
-    pendingHighlightId = null
-  }
-}
-
-function notifyPreviewUpdate(row) {
-  const frame = previewFrame.value
-  if (!frame?.contentWindow) return
-  const role = approvalRole.value
-  frame.contentWindow.postMessage({
-    action: 'updateEntry',
-    entryId: row.id,
-    approvalStatus: row.approvalStatus || '',
-    colStatus: row.colStatus || '',
-    isEditing: props.isEditing,
-    role: role
-  }, '*')
-}
-
-function findEntryById(id) {
-  function search(nodes) {
-    for (const n of nodes) {
-      if (n.id === id) return n
-      if (n.children) { const r = search(n.children); if (r) return r }
-    }
-    return null
-  }
-  return search(tableData.value)
-}
 const manuallySelectedIds = ref(new Set())
 const pendingImageUpdates = ref([])
 const parentRow = ref(null)
@@ -529,6 +478,7 @@ const appRoles = ref([])
 const solutions = ref([])
 const statusList = ref([])
 const appRoleSelections = ref([])
+const editStatusSelections = ref([])
  const solutionSelections = ref([])
  const versionDivList = ref(['A-曜系列', 'B-远系列', 'C-驰系列'])
  const collapsedDomains = ref(new Set())
@@ -769,6 +719,7 @@ function addProductFromSeparator(row) {
   editForm.colBizCategory = row.colBizCategory || ''
   editForm.colBizDomain = row.colBizDomain || ''
   syncVersionFromForm()
+  activeEditorTab.value = 'feature'
   showEditDialog.value = true
 }
 
@@ -1239,7 +1190,7 @@ async function batchReject() {
     return
   }
   if (cmd === 'status') {
-    batchStatusValue.value = ''
+  batchStatusValue.value = []
     showBatchStatusDialog.value = true
   } else if (cmd === 'solution') {
     batchSolutionValue.value = ''
@@ -1247,6 +1198,11 @@ async function batchReject() {
   } else if (cmd === 'manager') {
     batchManagerValue.value = ''
     showBatchManagerDialog.value = true
+  } else if (cmd === 'category') {
+    batchCategoryId.value = null
+    batchDomainId.value = null
+    loadBatchCategoryTree()
+    showBatchCategoryDialog.value = true
   } else if (cmd === 'delete') {
     if (props.customTabId) {
       onRemoveClick()
@@ -1281,19 +1237,20 @@ function batchChangeStatus() {
     ElMessage.warning('请先选择要操作的条目')
     return
   }
-  batchStatusValue.value = ''
+  batchStatusValue.value = []
   showBatchStatusDialog.value = true
 }
 
 async function confirmBatchStatus() {
-  if (!batchStatusValue.value) { ElMessage.warning('请选择功能状态'); return }
+  if (!batchStatusValue.value || batchStatusValue.value.length === 0) { ElMessage.warning('请选择功能状态'); return }
+  const newStatus = batchStatusValue.value.join(' ')
   batchLoading.value = true
   try {
     let successCount = 0
     for (const id of selectedIds.value) {
       try {
         const row = findRowById(id, tableData.value)
-        if (row) { await updateEntry(id, { ...row, colStatus: batchStatusValue.value }); successCount++ }
+        if (row) { await updateEntry(id, { ...row, colStatus: newStatus }); successCount++ }
       } catch (e) { console.error(`修改状态失败 id=${id}:`, e) }
     }
     showBatchStatusDialog.value = false
@@ -1333,6 +1290,51 @@ async function confirmBatchManager() {
     showBatchManagerDialog.value = false
     ElMessage.success(`成功指定 ${successCount} 条产品经理`)
     handleQuery(true)
+  } finally { batchLoading.value = false }
+}
+
+async function loadBatchCategoryTree() {
+  if (!props.versionId) return
+  try {
+    const res = await getCategoryTree(props.versionId)
+    const data = res.data || []
+    batchCatL1Options.value = data.map(d => ({ id: d.id, label: d.label }))
+    batchCatL2Options.value = []
+  } catch { batchCatL1Options.value = []; batchCatL2Options.value = [] }
+}
+
+function onBatchL1Change(val) {
+  batchDomainId.value = null
+  if (!val) { batchCatL2Options.value = []; return }
+  const cat = batchCatL1Options.value.find(c => c.id == val)
+  if (!cat) { batchCatL2Options.value = []; return }
+  const res = batchCatL1Options.value
+  loadBatchCategoryTree().then(() => {
+    const allData = batchCatL1Options.value
+    const found = allData.find(c => c.id == val)
+    if (found) {
+      getCategoryTree(props.versionId).then(r => {
+        const tree = r.data || []
+        const node = tree.find(d => d.id == val)
+        batchCatL2Options.value = (node?.children || []).map(c => ({ id: c.id, label: c.label }))
+      })
+    }
+  })
+}
+
+async function confirmBatchCategory() {
+  if (!batchCategoryId.value) { ElMessage.warning('请选择业务分类'); return }
+  batchLoading.value = true
+  try {
+    const res = await batchUpdateCategory(props.versionId, [...selectedIds.value], batchCategoryId.value, batchDomainId.value)
+    if (res.code === 200) {
+      showBatchCategoryDialog.value = false
+      ElMessage.success(`成功修改 ${res.data} 条记录的业务分类/业务域`)
+      selectedIds.value = []
+      handleQuery(true)
+    }
+  } catch (e) {
+    console.error('批量修改分类失败:', e)
   } finally { batchLoading.value = false }
 }
 
@@ -1386,6 +1388,7 @@ function syncVersionToForm() {
   editForm.colChi = minChi.value ? '是' : '否'
   editForm.colAppRole = appRoleSelections.value.join(' ')
   editForm.colOtherSolutionTag = solutionSelections.value.join(',')
+  editForm.colStatus = editStatusSelections.value.join(' ')
 }
 
 function syncVersionFromForm() {
@@ -1399,6 +1402,7 @@ function syncVersionFromForm() {
   versionSelections.value = div.split(' ').filter(Boolean)
   appRoleSelections.value = (editForm.colAppRole || '').split(' ').filter(Boolean)
   solutionSelections.value = (editForm.colOtherSolutionTag || '').split(',').filter(Boolean)
+  editStatusSelections.value = (editForm.colStatus || '').split(/\s+/).filter(Boolean).filter(s => statusList.value.includes(s))
 }
 
 async function loadOptions() {
@@ -1417,7 +1421,7 @@ async function loadOptions() {
 
 const queryForm = reactive({
   name: '',
-  status: '',
+  status: [],
   productManager: '',
   solution: '',
   versionDiv: ''
@@ -1791,7 +1795,7 @@ async function handleQuery(preserveExpand = false) {
      const res = await queryEntries(props.versionId, {
        customTabId: props.customTabId || undefined,
        name: queryForm.name || undefined,
-       status: queryForm.status || undefined,
+        status: queryForm.status.length > 0 ? queryForm.status : undefined,
        productManager: queryForm.productManager || undefined,
        solution: queryForm.solution || undefined,
        versionTag: queryForm.versionDiv || undefined,
@@ -1826,7 +1830,7 @@ async function handleQuery(preserveExpand = false) {
 
 function resetQuery() {
   queryForm.name = ''
-  queryForm.status = ''
+  queryForm.status = []
   queryForm.productManager = ''
   queryForm.solution = ''
   queryForm.versionDiv = ''
@@ -1865,15 +1869,9 @@ function buildTree(entries) {
     syncVersionFromForm()
     loadCategoryTree()
     lastRejectReason.value = ''
-    if (row.approvalStatus === '驳回') {
-      try {
-        const res = await getApprovalLogs(row.id)
-        const logs = res.data || res || []
-        const rejectLog = logs.find(l => l.action === 'reject')
-        if (rejectLog) lastRejectReason.value = rejectLog.comment || ''
-      } catch (e) { /* ignore */ }
-    }
-    showEditDialog.value = true
+    lastRejectOperator.value = ''
+    activeEditorTab.value = 'feature'
+  showEditDialog.value = true
   }
 
   function viewRow(row) {
@@ -1885,51 +1883,12 @@ function buildTree(entries) {
     syncVersionFromForm()
     loadCategoryTree()
     lastRejectReason.value = ''
-    showEditDialog.value = true
+    activeEditorTab.value = 'feature'
+  showEditDialog.value = true
   }
 
-  async function previewRow(row) {
-    try {
-      previewHtml.value = ''
-      previewEntryId.value = row.id
-      previewVisible.value = true
-      const token = localStorage.getItem('token')
-      const resp = await fetch(`/api/data/${row.id}/preview`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      if (resp.ok) {
-        previewHtml.value = await resp.text()
-      } else {
-        previewHtml.value = '<p>加载预览失败</p>'
-      }
-    } catch {
-      previewHtml.value = '<p>加载预览失败</p>'
-    }
-  }
-
-  async function downloadPreview() {
-    if (!previewEntryId.value || downloadLoading.value) return
-    downloadLoading.value = true
-    try {
-      const token = localStorage.getItem('token')
-      const resp = await fetch(`/api/data/${previewEntryId.value}/preview-download`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      if (!resp.ok) {
-        ElMessage.error('生成失败')
-        downloadLoading.value = false
-        return
-      }
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = '预览文档.docx'; a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      ElMessage.error('下载失败')
-    } finally {
-      downloadLoading.value = false
-    }
+  function previewRow(row) {
+    emit('openPreview', row.id)
   }
 
 function addChildRow(row) {
@@ -1944,6 +1903,7 @@ function addChildRow(row) {
   editForm.colProductManager = row.colProductManager || ''
   editForm.colVersionDivision = row.colVersionDivision || ''
   syncVersionFromForm()
+  activeEditorTab.value = 'feature'
   showEditDialog.value = true
 }
 
@@ -1953,6 +1913,7 @@ function openNewDialog() {
   parentRow.value = null
   initEditForm()
   syncVersionFromForm()
+  activeEditorTab.value = 'feature'
   showEditDialog.value = true
 }
 
@@ -2002,8 +1963,8 @@ async function saveEdit() {
   flushPendingImageUpdates()
   showEditDialog.value = false
   handleQuery(true)
-  if (previewVisible.value && savedId) {
-    reloadPreviewAfterApproval(savedId)
+  if (savedId) {
+    emit('preview-reload', savedId)
   }
 }
 
@@ -2021,9 +1982,38 @@ watch(() => props.versionId, () => {
     if (dragUpHandler) document.removeEventListener('mouseup', dragUpHandler)
     if (dragState.ghostEl) dragState.ghostEl.remove()
   })
+
+  defineExpose({
+    editRowById(id, action) {
+      const row = findRowById(id, tableData.value)
+      if (row) {
+        if (action === 'addChild') addChildRow(row)
+        else editRow(row)
+      }
+    }
+  })
  </script>
 
- <style scoped>
+  <style scoped>
+.coming-soon-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  min-height: 200px;
+}
+.coming-soon-title {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--si-text-secondary);
+}
+.coming-soon-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--si-text-muted);
+}
 .toolbar-right .el-button .el-icon + span,
 .toolbar-right .el-button .el-icon { margin-right: 4px; }
 .toolbar-right .el-button { --el-button-icon-space: 4px; }

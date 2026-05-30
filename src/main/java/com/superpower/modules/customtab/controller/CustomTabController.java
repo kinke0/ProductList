@@ -29,12 +29,12 @@ public class CustomTabController {
         Long versionId = Long.valueOf(body.get("versionId").toString());
         Long userId = body.get("userId") != null ? Long.valueOf(body.get("userId").toString()) : null;
         String entryName = (String) body.getOrDefault("entryName", "");
-        String status = (String) body.getOrDefault("status", "");
+        List<String> statusList = body.get("statusList") != null ? (List<String>) body.get("statusList") : List.of();
         String productManager = (String) body.getOrDefault("productManager", "");
         String solution = (String) body.getOrDefault("solution", "");
         String versionTag = (String) body.getOrDefault("versionTag", "");
         CustomTab tab = customTabService.createWithFilter(name, versionId, userId,
-                entryName, status, productManager, solution, versionTag);
+                entryName, statusList, productManager, solution, versionTag);
         return Result.success(tab);
     }
 
