@@ -78,6 +78,7 @@
           </span>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="changeNickname">修改姓名</el-dropdown-item>
               <el-dropdown-item command="changePassword">修改密码</el-dropdown-item>
               <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
             </el-dropdown-menu>
@@ -107,6 +108,18 @@
         <el-button type="primary" :loading="pwdLoading" @click="handleChangePassword">确定</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="nameVisible" title="修改姓名" width="400px" :close-on-click-modal="false">
+      <el-form ref="nameFormRef" :model="nameForm" :rules="nameRules" label-width="60px" size="large">
+        <el-form-item label="姓名" prop="nickname">
+          <el-input v-model="nameForm.nickname" @keyup.enter="handleChangeNickname" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="nameVisible = false">取消</el-button>
+        <el-button type="primary" :loading="nameLoading" @click="handleChangeNickname">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -116,7 +129,7 @@ import { useAuthStore } from '../store/auth'
 import { ref, reactive } from 'vue'
 import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { changePassword } from '../api/auth'
+import { changePassword, changeNickname } from '../api/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -132,6 +145,9 @@ function handleCommand(command) {
   } else if (command === 'changePassword') {
     Object.assign(pwdForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
     pwdVisible.value = true
+  } else if (command === 'changeNickname') {
+    nameForm.nickname = nickname.value
+    nameVisible.value = true
   }
 }
 
@@ -171,6 +187,30 @@ async function handleChangePassword() {
   } catch (e) {
   } finally {
     pwdLoading.value = false
+  }
+}
+
+const nameVisible = ref(false)
+const nameLoading = ref(false)
+const nameFormRef = ref(null)
+const nameForm = reactive({ nickname: '' })
+const nameRules = {
+  nickname: [{ required: true, message: '请输入姓名', trigger: 'blur' }]
+}
+
+async function handleChangeNickname() {
+  const valid = await nameFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  nameLoading.value = true
+  try {
+    await changeNickname(nameForm.nickname)
+    nickname.value = nameForm.nickname
+    localStorage.setItem('nickname', nameForm.nickname)
+    ElMessage.success('姓名修改成功')
+    nameVisible.value = false
+  } catch {
+  } finally {
+    nameLoading.value = false
   }
 }
 </script>

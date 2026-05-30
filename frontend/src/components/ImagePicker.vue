@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" title="选择图片" width="70%" top="5vh" @close="emit('close')">
+  <el-dialog v-model="visible" title="选择图片" width="70%" top="5vh" append-to-body @close="emit('close')">
     <div class="picker-body">
       <div class="picker-sidebar">
         <el-tree

@@ -7,7 +7,7 @@
     <el-table :data="users" border stripe size="small">
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="username" label="用户名" width="120" />
-      <el-table-column prop="nickname" label="昵称" width="120" />
+      <el-table-column prop="nickname" label="姓名" width="120" />
       <el-table-column prop="roleName" label="角色" width="120" />
       <el-table-column prop="status" label="状态" width="80">
         <template #default="{ row }">
@@ -28,7 +28,7 @@
         <el-form-item label="用户名" v-if="isNew">
           <el-input v-model="form.username" />
         </el-form-item>
-        <el-form-item label="昵称">
+        <el-form-item label="姓名">
           <el-input v-model="form.nickname" />
         </el-form-item>
         <el-form-item label="角色">

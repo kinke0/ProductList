@@ -1,5 +1,23 @@
 <template>
   <div class="data-list-tab">
+    <div v-if="migrating && migrateProgress" class="migrate-overlay">
+      <div class="migrate-overlay-content">
+        <el-icon class="is-loading" style="font-size:28px;color:#409eff;margin-bottom:12px;"><Loading /></el-icon>
+        <div style="font-size:15px;font-weight:600;margin-bottom:16px;">图片迁移中...</div>
+        <el-progress :percentage="migrateProgress.percentage || 0" :stroke-width="20" style="width:360px;" />
+        <div style="margin-top:12px;font-size:13px;color:#606266;">
+          已处理 {{ migrateProgress.processedEntries }} / {{ migrateProgress.totalEntries }} 条记录
+        </div>
+        <div style="margin-top:6px;font-size:12px;color:#909399;">
+          <span style="color:#67c23a;">成功 {{ migrateProgress.successImages }} 张</span>
+          <span style="margin:0 8px;color:#dcdfe6;">|</span>
+          <span style="color:#f56c6c;">失败 {{ migrateProgress.failedImages }} 张</span>
+        </div>
+        <div v-if="migrateProgress.currentEntry" style="margin-top:8px;font-size:12px;color:#909399;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          当前：{{ migrateProgress.currentEntry }}
+        </div>
+      </div>
+    </div>
     <div class="query-bar">
       <el-form :model="queryForm" inline size="small">
         <el-form-item label="名称">
@@ -45,7 +63,7 @@
         </template>
           <template v-else>
             <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
-            <el-button type="success" size="small" @click="onInsertClick">
+            <el-button type="success" size="small" :loading="inserting" @click="onInsertClick">
               <el-icon><Upload /></el-icon>插入待生成清单
             </el-button>
             <el-button type="info" size="small" :disabled="!props.isEditing" :loading="importing" @click="onImportExcelClick">
@@ -91,7 +109,7 @@
            <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll" size="small" />
          </div>
        </div>
-       <div class="vcol" style="min-width:200px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ totalEntryCount }}条记录</span></div>
+        <div class="vcol" style="min-width:200px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ productCount }}个产品 / {{ totalEntryCount }}条记录</span></div>
        <div class="vcol" style="width:80px;">审批</div>
        <div class="vcol" style="width:80px;">状态</div>
        <div class="vcol" style="width:100px;">产品经理</div>
@@ -250,16 +268,19 @@
             <el-form-item label="版本划分">
               <div class="version-options">
                 <div class="version-row">
-                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing">A-曜系列</el-checkbox>
+                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing || verNonStd">A-曜系列</el-checkbox>
                   <el-checkbox v-if="verYao" v-model="minYao" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
-                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing">B-远系列</el-checkbox>
+                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing || verNonStd">B-远系列</el-checkbox>
                   <el-checkbox v-if="verYuan" v-model="minYuan" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
-                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing">C-驰系列</el-checkbox>
+                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing || verNonStd">C-驰系列</el-checkbox>
                   <el-checkbox v-if="verChi" v-model="minChi" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
+                </div>
+                <div class="version-row">
+                  <el-checkbox v-model="verNonStd" size="small" :disabled="!props.isEditing || verYao || verYuan || verChi">非标配</el-checkbox>
                 </div>
               </div>
             </el-form-item>
@@ -311,12 +332,17 @@
           </template>
         </el-tabs>
         <el-row :gutter="16" style="margin-top:12px;">
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="软著">
               <el-input v-model="editForm.colCopyright" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
+            <el-form-item label="产品线">
+              <el-input v-model="editForm.colProductLine" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
             <el-form-item label="资产类型">
               <el-input v-model="editForm.colAssetType" :disabled="!props.isEditing" />
             </el-form-item>
@@ -399,7 +425,7 @@
       </el-dialog>
       <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="insertImage" />
        <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="replaceImageCard" />
-<el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
+<el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" append-to-body :style="{ maxWidth: '90vw' }">
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
         </div>
@@ -421,7 +447,7 @@ import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImagePicker from './ImagePicker.vue'
-import { updateImage, migrateImages } from '../api/image'
+import { updateImage, migrateImages, getMigrationProgress } from '../api/image'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -437,6 +463,7 @@ const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc', 'open
 const authStore = useAuthStore()
 const tableData = ref([])
 const totalEntryCount = ref(0)
+const productCount = ref(0)
 const showEditDialog = ref(false)
 const isNew = ref(false)
 const editingId = ref(null)
@@ -456,7 +483,10 @@ const batchCatL1Options = ref([])
 const batchCatL2Options = ref([])
 const selectedIds = ref([])
 const migrating = ref(false)
+const migrateProgress = ref(null)
+let migratePollTimer = null
 const importing = ref(false)
+const inserting = ref(false)
 const fileInput = ref(null)
 const batchLoading = ref(false)
 const activeEditorTab = ref('feature')
@@ -480,7 +510,7 @@ const statusList = ref([])
 const appRoleSelections = ref([])
 const editStatusSelections = ref([])
  const solutionSelections = ref([])
- const versionDivList = ref(['A-曜系列', 'B-远系列', 'C-驰系列'])
+ const versionDivList = ref(['A-曜系列', 'B-远系列', 'C-驰系列', '非标配系统'])
  const collapsedDomains = ref(new Set())
  const displayData = ref([])
  const expandedNodeIds = ref(new Set())
@@ -1369,20 +1399,25 @@ function levelTagType(level) {
   return 'info'
  }
 
- const verYao = ref(false)
- const verYuan = ref(false)
- const verChi = ref(false)
- const minYao = ref(false)
+  const verYao = ref(false)
+  const verYuan = ref(false)
+  const verChi = ref(false)
+  const verNonStd = ref(false)
+  const minYao = ref(false)
  const minYuan = ref(false)
  const minChi = ref(false)
 const versionSelections = ref([])
 
 function syncVersionToForm() {
-  const parts = []
-  if (verYao.value) parts.push('A-曜系列')
-  if (verYuan.value) parts.push('B-远系列')
-  if (verChi.value) parts.push('C-驰系列')
-  editForm.colVersionDivision = parts.join(' ')
+  if (verNonStd.value) {
+    editForm.colVersionDivision = '非标配系统'
+  } else {
+    const parts = []
+    if (verYao.value) parts.push('A-曜系列')
+    if (verYuan.value) parts.push('B-远系列')
+    if (verChi.value) parts.push('C-驰系列')
+    editForm.colVersionDivision = parts.join(' ')
+  }
   editForm.colYao = minYao.value ? '是' : '否'
   editForm.colYuan = minYuan.value ? '是' : '否'
   editForm.colChi = minChi.value ? '是' : '否'
@@ -1393,6 +1428,7 @@ function syncVersionToForm() {
 
 function syncVersionFromForm() {
   const div = editForm.colVersionDivision || ''
+  verNonStd.value = div === '非标配系统'
   verYao.value = div.includes('A-曜系列')
   verYuan.value = div.includes('B-远系列')
   verChi.value = div.includes('C-驰系列')
@@ -1467,7 +1503,7 @@ const productLabel = computed(() => {
 const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
   colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
-  colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colAssetType: '', colRemark: '',
+  colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colProductLine: '', colAssetType: '', colRemark: '',
   colYao: '', colYuan: '', colChi: ''
 })
 
@@ -1619,6 +1655,8 @@ function onInsertClick() {
     ElMessage.warning('请先勾选条目')
     return
   }
+  if (inserting.value) return
+  inserting.value = true
   emit('insertToList', [...selectedIds.value])
 }
 
@@ -1630,6 +1668,7 @@ function onRemoveClick() {
   const ids = collectSelectedWithDescendants()
   selectedIds.value = []
   manuallySelectedIds.value = new Set()
+  batchLoading.value = true
   emit('removeFromList', ids)
 }
 
@@ -1648,33 +1687,70 @@ async function onMigrateImages() {
     return
   }
   migrating.value = true
+  migrateProgress.value = { totalEntries: selectedIds.value.length, processedEntries: 0, successImages: 0, failedImages: 0, currentEntry: '', status: 'RUNNING', percentage: 0 }
   try {
     const res = await migrateImages([...selectedIds.value])
-    if (res.code === 200) {
-      const data = res.data
-      let html = `<div style="line-height:2;"><b>迁移完成</b></div>`
-      html += `<div style="margin:8px 0;color:#67c23a;">成功：${data.successImages} 张图片</div>`
-      html += `<div style="margin:8px 0;color:#f56c6c;">失败：${data.failedImages} 张图片</div>`
-      if (data.failures && data.failures.length > 0) {
-        html += `<div style="margin-top:12px;font-weight:bold;">失败明细：</div>`
-        html += `<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;">`
-        html += `<tr style="background:#f5f7fa;text-align:left;"><th style="padding:6px 8px;">章节</th><th style="padding:6px 8px;text-align:center;">失败/总数</th></tr>`
-        data.failures.forEach(f => {
-          html += `<tr><td style="padding:6px 8px;">${f.productName || '(ID:' + f.entryId + ')'}</td><td style="padding:6px 8px;text-align:center;color:#f56c6c;">${f.failedImageCount}/${f.totalImageCount}</td></tr>`
-        })
-        html += `</table>`
-      }
-      ElMessageBox.alert(html, '迁移结果', {
-        dangerouslyUseHTMLString: true,
-        confirmButtonText: '确定',
-        customClass: 'migration-result-dialog'
-      })
-      handleQuery()
+    if (res.code === 200 && res.data.taskId) {
+      pollMigrationProgress(res.data.taskId)
     }
   } catch {
-  } finally {
     migrating.value = false
+    migrateProgress.value = null
+    ElMessage.error('启动迁移任务失败')
   }
+}
+
+function pollMigrationProgress(taskId) {
+  if (migratePollTimer) clearInterval(migratePollTimer)
+  migratePollTimer = setInterval(async () => {
+    try {
+      const res = await getMigrationProgress(taskId)
+      if (res.code === 200 && res.data) {
+        const p = res.data
+        p.percentage = p.totalEntries > 0 ? Math.round(p.processedEntries / p.totalEntries * 100) : 0
+        migrateProgress.value = p
+        if (p.status === 'COMPLETED' || p.status === 'FAILED') {
+          clearInterval(migratePollTimer)
+          migratePollTimer = null
+          showMigrationResult(p)
+        }
+      }
+    } catch {
+      clearInterval(migratePollTimer)
+      migratePollTimer = null
+      migrating.value = false
+      migrateProgress.value = null
+      ElMessage.error('查询迁移进度失败')
+    }
+  }, 1500)
+}
+
+function showMigrationResult(data) {
+  let html = `<div style="line-height:2;"><b>迁移完成</b></div>`
+  html += `<div style="margin:8px 0;color:#67c23a;">成功：${data.successImages} 张图片</div>`
+  html += `<div style="margin:8px 0;color:#f56c6c;">失败：${data.failedImages} 张图片</div>`
+  if (data.failures && data.failures.length > 0) {
+    html += `<div style="margin-top:12px;font-weight:bold;">失败明细：</div>`
+    html += `<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;">`
+    html += `<tr style="background:#f5f7fa;text-align:left;"><th style="padding:6px 8px;">章节</th><th style="padding:6px 8px;text-align:center;">失败/总数</th></tr>`
+    data.failures.forEach(f => {
+      html += `<tr><td style="padding:6px 8px;">${f.productName || '(ID:' + f.entryId + ')'}</td><td style="padding:6px 8px;text-align:center;color:#f56c6c;">${f.failedImageCount}/${f.totalImageCount}</td></tr>`
+    })
+    html += `</table>`
+  }
+  ElMessageBox.alert(html, '迁移结果', {
+    dangerouslyUseHTMLString: true,
+    confirmButtonText: '确定',
+    customClass: 'migration-result-dialog'
+  }).then(() => {
+    migrating.value = false
+    migrateProgress.value = null
+    handleQuery()
+  }).catch(() => {
+    migrating.value = false
+    migrateProgress.value = null
+    handleQuery()
+  })
 }
 
 function onImportExcelClick() {
@@ -1802,8 +1878,9 @@ async function handleQuery(preserveExpand = false) {
        bizCategory: props.selectedNode?.id !== 'all' ? (props.selectedNode?.categoryLabel || undefined) : undefined,
        bizDomain: props.selectedNode?.id !== 'all' ? (props.selectedNode?.domainLabel || undefined) : undefined
      })
-     const entries = res.data || []
-       totalEntryCount.value = entries.length
+      const entries = res.data || []
+        totalEntryCount.value = entries.length
+        productCount.value = entries.filter(e => e.level === 3).length
        tableData.value = buildTree(entries)
       if (!preserveExpand) {
         collapsedDomains.value = new Set()
@@ -1825,6 +1902,7 @@ async function handleQuery(preserveExpand = false) {
     tableData.value = []
     displayData.value = []
     totalEntryCount.value = 0
+    productCount.value = 0
    }
 }
 
@@ -1990,11 +2068,34 @@ watch(() => props.versionId, () => {
         if (action === 'addChild') addChildRow(row)
         else editRow(row)
       }
-    }
+    },
+    setInserting(val) { inserting.value = val },
+    setBatchLoading(val) { batchLoading.value = val }
   })
  </script>
 
   <style scoped>
+.migrate-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+.migrate-overlay-content {
+  background: #fff;
+  border-radius: 12px;
+  padding: 32px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
 .coming-soon-placeholder {
   display: flex;
   flex-direction: column;

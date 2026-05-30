@@ -72,4 +72,12 @@ public class AuthController {
         userService.changePassword(authentication.getName(), oldPassword, newPassword);
         return Result.success();
     }
+
+    @PutMapping("/nickname")
+    public Result<Void> changeNickname(@RequestBody Map<String, String> body, Authentication authentication) {
+        String nickname = body.get("nickname");
+        if (nickname == null || nickname.isBlank()) throw new BusinessException("姓名不能为空");
+        userService.updateNickname(authentication.getName(), nickname);
+        return Result.success();
+    }
 }

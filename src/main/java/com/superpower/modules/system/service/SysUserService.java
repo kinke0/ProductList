@@ -79,6 +79,12 @@ public class SysUserService {
         userRepository.save(user);
     }
 
+    public void updateNickname(String username, String nickname) {
+        SysUser user = findByUsername(username);
+        user.setNickname(nickname);
+        userRepository.save(user);
+    }
+
     private UserDTO toDTO(SysUser user) {
         UserDTO dto = new UserDTO();
         dto.setId(user.getId());

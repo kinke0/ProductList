@@ -63,8 +63,8 @@ public class CustomTabController {
     @PostMapping("/{id}/entries")
     public Result<Void> addEntries(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked")
-        List<Integer> rawIds = (List<Integer>) body.get("entryIds");
-        List<Long> entryIds = rawIds.stream().map(Long::valueOf).collect(java.util.stream.Collectors.toList());
+        List<Number> rawIds = (List<Number>) body.get("entryIds");
+        List<Long> entryIds = rawIds.stream().map(Number::longValue).collect(java.util.stream.Collectors.toList());
         customTabService.addEntries(id, entryIds);
         return Result.success();
     }

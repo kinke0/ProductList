@@ -990,7 +990,8 @@ public class DataEntryService {
 
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
             + "*{margin:0;padding:0;box-sizing:border-box;}"
-            + ".layout{display:flex;height:100vh;}"
+            + "body{font-family:'SimSun','宋体',serif;font-size:10.5pt;line-height:1.5;color:#000;display:flex;flex-direction:column;height:100vh;overflow:hidden;}"
+            + ".layout{display:flex;flex:1;overflow:hidden;}"
             + ".sidebar{width:260px;flex-shrink:0;overflow-y:auto;border-right:1px solid #e2e8f0;background:#f8fafc;padding:12px 0;font-family:'Microsoft YaHei',sans-serif;}"
             + ".sidebar a{display:block;padding:6px 12px 6px 16px;color:#334155;text-decoration:none;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}"
             + ".sidebar a:hover{background:#e2e8f0;color:#1e293b;}"
@@ -1001,7 +1002,7 @@ public class DataEntryService {
             + ".sidebar .lvl3{padding-left:56px;}"
             + ".sidebar .lvl4{padding-left:72px;}"
             + ".content{flex:1;overflow-y:auto;padding:36px 48px;}"
-            + "body{font-family:'SimSun','宋体',serif;font-size:10.5pt;line-height:1.5;color:#000;}"
+            + ".layout{display:flex;flex:1;overflow:hidden;}"
             + "h3{font-size:16pt;font-weight:bold;margin:12pt 0 6pt;line-height:1.5;scroll-margin-top:12px;display:flex;align-items:center;}"
             + ".p{text-indent:2em;margin:0;line-height:1.5;font-size:10.5pt;}"
             + ".img-wrap{text-align:center;margin:6pt 0;}"
@@ -1020,7 +1021,19 @@ public class DataEntryService {
             + ".ea-btn-danger{color:#f56c6c;border-color:#fde2e2;background:#fef0f0;}"
             + ".ea-btn-danger:hover{background:#fde2e2;}"
             + "@keyframes highlightFlash{0%{background-color:#d4edda;box-shadow:0 0 12px rgba(103,194,58,0.3)}30%{background-color:#d4edda}100%{background-color:transparent;box-shadow:none}}"
-            + "</style></head><body><div class='layout'>"
+            + ".nav-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:middle;position:relative;top:-1px;}"
+            + ".legend-bar{display:flex;align-items:center;gap:12px;padding:6px 12px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;font-family:'Microsoft YaHei',sans-serif;}"
+            + ".legend-item{display:flex;align-items:center;gap:3px;}"
+            + ".legend-dot{display:inline-block;width:6px;height:6px;border-radius:50%;}"
+            + "</style></head><body>"
+            + "<div class='legend-bar'>"
+            + "<span style='font-weight:600;color:#475569;margin-right:4px;'>审批状态：</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#409eff;'></span>待提交</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#e6a23c;'></span>待审批</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#f56c6c;'></span>驳回</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#67c23a;'></span>通过</span>"
+            + "</div>"
+            + "<div class='layout'>"
             + "<div class='sidebar' id='sidebar'>" + nav + "</div>"
             + "<div class='content' id='content'>" + body + "</div>"
             + "</div><script>"
@@ -1041,6 +1054,8 @@ public class DataEntryService {
                                   Map<Long, String> rejectReasons, boolean isEditing, String role, String mode) {
         String nodeId = "e" + node.getId();
         String label = node.getColProductSystem() != null ? node.getColProductSystem() : "";
+        String colStatus = node.getColStatus();
+        String nodeApprovalStatus = node.getApprovalStatus();
         List<DataEntry> children = childrenMap.getOrDefault(node.getId(), new ArrayList<>());
         children.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
         boolean hasChildren = !children.isEmpty();
@@ -1051,6 +1066,9 @@ public class DataEntryService {
         } else {
             nav.append("<span class='toggle toggle-empty'></span>");
         }
+        if (nodeApprovalStatus != null && !nodeApprovalStatus.isEmpty() && colStatus != null && colStatus.contains("可交付") && node.getLevel() != null && node.getLevel() >= 3) {
+            nav.append("<span class='nav-dot' style='background:").append(getApprovalDotColor(nodeApprovalStatus)).append("'></span>");
+        }
         nav.append(label).append("</a>");
         body.append("<h3 id='").append(nodeId).append("' style='display:flex;align-items:center;'>")
             .append("<span>").append(label).append("</span>");
@@ -1058,7 +1076,6 @@ public class DataEntryService {
         if (productManager != null && !productManager.isEmpty()) {
             body.append("<span style='font-size:10pt;color:#909399;margin-left:8px;'>（").append(productManager).append("）</span>");
         }
-        String colStatus = node.getColStatus();
         String approvalStatus = node.getApprovalStatus();
         if (approvalStatus != null && !approvalStatus.isEmpty() && colStatus != null && colStatus.contains("可交付")) {
             body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
@@ -1115,6 +1132,7 @@ public class DataEntryService {
         String cleaned = cleanImageCardsToText(desc);
         cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
         StringBuilder sb = new StringBuilder();
+        Pattern bracketUrlPattern = Pattern.compile("\\[(https?://[^\\]]+)\\]");
         for (String line : cleaned.split("\n")) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) continue;
@@ -1125,10 +1143,30 @@ public class DataEntryService {
                 if (pipeIdx > 0) { caption = url.substring(pipeIdx + 1); url = url.substring(0, pipeIdx); }
                 String enc = encodeUrl(url);
                 sb.append("<div class='img-wrap'>")
-                  .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                  .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
                 if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption).append("</div>");
                 else sb.append("<div class='img-caption'></div>");
                 sb.append("</div>");
+            } else if (bracketUrlPattern.matcher(trimmed).find()) {
+                Matcher bm = bracketUrlPattern.matcher(trimmed);
+                int lastEnd = 0;
+                while (bm.find()) {
+                    if (bm.start() > lastEnd) {
+                        String textBefore = trimmed.substring(lastEnd, bm.start()).trim();
+                        if (!textBefore.isEmpty()) sb.append("<p class='p'>").append(textBefore.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+                    }
+                    String url = bm.group(1);
+                    String enc = encodeUrl(url);
+                    sb.append("<div class='img-wrap'>")
+                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />")
+                      .append("<div class='img-caption'></div>")
+                      .append("</div>");
+                    lastEnd = bm.end();
+                }
+                if (lastEnd < trimmed.length()) {
+                    String textAfter = trimmed.substring(lastEnd).trim();
+                    if (!textAfter.isEmpty()) sb.append("<p class='p'>").append(textAfter.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+                }
             } else {
                 sb.append("<p class='p'>").append(trimmed.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
             }
@@ -1228,6 +1266,16 @@ public class DataEntryService {
             default -> "#909399";
         };
         return "display:inline-block;font-size:10pt;vertical-align:baseline;margin-left:8px;padding:2px 8px;border-radius:3px;background:" + color + "22;color:" + color + ";border:1px solid " + color + "44;line-height:1;position:relative;top:-1px;";
+    }
+
+    private String getApprovalDotColor(String status) {
+        return switch (status) {
+            case "待提交" -> "#409eff";
+            case "待审核" -> "#e6a23c";
+            case "审核通过" -> "#67c23a";
+            case "驳回" -> "#f56c6c";
+            default -> "#909399";
+        };
     }
 
     private SysUser findUserByUsername(String username) {

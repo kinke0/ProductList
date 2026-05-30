@@ -109,8 +109,6 @@ public class CustomTabService {
             customTabEntryRepository.save(entry);
             maxSort++;
         }
-        fixNullSort(tabId, existing);
-        reorderTabByHierarchy(tabId);
     }
 
     private void fixNullSort(Long tabId, List<CustomTabEntry> existing) {

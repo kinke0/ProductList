@@ -6,6 +6,13 @@
     </div>
     <el-empty v-else-if="!bizSection.length && !infraSection.length" description="暂无可交付产品数据" />
     <template v-else>
+      <div class="status-legend-bar">
+        <span class="legend-item"><span class="status-dot status-draft"></span>待提交</span>
+        <span class="legend-item"><span class="status-dot status-pending"></span>待审批</span>
+        <span class="legend-item"><span class="status-dot status-rejected"></span>驳回</span>
+        <span class="legend-item"><span class="status-dot status-approved"></span>通过</span>
+      </div>
+      <div class="panorama-scroll">
       <div v-for="section in sections" :key="section.key" class="panorama-section">
         <div class="section-title" :class="section.titleClass">{{ section.title }}<span class="section-count">{{ section.count }} 个产品</span></div>
         <div class="section-body">
@@ -19,8 +26,8 @@
                 <div v-for="l2 in row.l1.children" :key="l2.name" class="l2-group">
                   <div class="l2-tag" @click="onL2Click(row.l1.name, l2.name)">{{ stripPrefix(l2.name) }}</div>
                   <div class="l3-list" :class="{ 'l3-vertical': l2.children.length < 3 }">
-                    <div v-for="l3 in l2.children" :key="l3.id" class="l3-card" @click="onL3Click(l3)">{{ l3.displayName }}</div>
-                  </div>
+                    <div v-for="l3 in l2.children" :key="l3.id" class="l3-card" @click="onL3Click(l3)"><span v-if="l3.approvalStatus" class="status-dot" :class="'status-' + approvalClass(l3.approvalStatus)"></span>{{ l3.displayName }}</div>
+                   </div>
                 </div>
               </div>
             </div>
@@ -34,7 +41,7 @@
                   <div v-for="l2 in l1.children" :key="l2.name" class="l2-group">
                     <div class="l2-tag" @click="onL2Click(l1.name, l2.name)">{{ stripPrefix(l2.name) }}</div>
                     <div class="l3-list" :class="{ 'l3-vertical': l2.children.length < 3 }">
-                      <div v-for="l3 in l2.children" :key="l3.id" class="l3-card" @click="onL3Click(l3)">{{ l3.displayName }}</div>
+                      <div v-for="l3 in l2.children" :key="l3.id" class="l3-card" @click="onL3Click(l3)"><span v-if="l3.approvalStatus" class="status-dot" :class="'status-' + approvalClass(l3.approvalStatus)"></span>{{ l3.displayName }}</div>
                     </div>
                   </div>
                 </div>
@@ -42,6 +49,7 @@
             </div>
           </template>
         </div>
+      </div>
       </div>
     </template>
   </div>
@@ -79,6 +87,13 @@ const sections = computed(() => {
 function stripPrefix(name) {
   if (!name) return ''
   return name.replace(/^[\d.]+\s*/, '')
+}
+
+function approvalClass(status) {
+  if (status === '审核通过') return 'approved'
+  if (status === '待审核') return 'pending'
+  if (status === '驳回') return 'rejected'
+  return 'draft'
 }
 
 function getPrefixNumber(name) {
@@ -132,7 +147,8 @@ function buildSections(entries) {
     l1Map[l1Name][l2Name].push({
       id: item.id,
       displayName,
-      colProductSystem: item.colProductSystem
+      colProductSystem: item.colProductSystem,
+      approvalStatus: item.approvalStatus || ''
     })
   }
 
@@ -190,10 +206,17 @@ watch(() => props.versionId, loadData, { immediate: true })
 
 <style scoped>
 .panorama-tab {
-  padding: 12px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   background: #F8FAFC;
+  overflow: hidden;
+}
+
+.panorama-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
 }
 
 .panorama-loading {
@@ -359,4 +382,35 @@ watch(() => props.versionId, loadData, { immediate: true })
   border-color: #2563EB;
   color: #2563EB;
 }
+
+.status-legend-bar {
+  display: flex;
+  gap: 16px;
+  padding: 6px 16px;
+  font-size: 11px;
+  color: #94A3B8;
+  border-bottom: 1px solid #E2E8F0;
+  flex-shrink: 0;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.status-draft { background: #409EFF; }
+.status-pending { background: #E6A23C; }
+.status-rejected { background: #F56C6C; }
+.status-approved { background: #67C23A; }
 </style>

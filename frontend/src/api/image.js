@@ -38,6 +38,10 @@ export function migrateImages(ids) {
   return request.post('/images/migrate-external-images', ids)
 }
 
+export function getMigrationProgress(taskId) {
+  return request.get(`/images/migrate-task/${taskId}`)
+}
+
 export function batchDeleteImages(ids) {
   return request.post('/images/batch-delete', ids)
 }

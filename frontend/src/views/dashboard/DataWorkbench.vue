@@ -620,12 +620,14 @@ function onInsertToList(entryIds) {
 
 function onSelectInsertTarget(tab) {
   if (tab) {
+    showInsertDialog.value = false
     addEntriesToTab(tab.id, insertEntryIds.value).then(() => {
       ElMessage.success('插入成功')
-      showInsertDialog.value = false
       customTabRefresh.value++
     }).catch(() => {
       ElMessage.error('插入失败')
+    }).finally(() => {
+      if (dataListRef.value) dataListRef.value.setInserting(false)
     })
   }
 }
@@ -639,6 +641,7 @@ async function onRemoveFromList(tabId, entryIds) {
       removed++
     } catch {} 
   }
+  if (dataListRef.value) dataListRef.value.setBatchLoading(false)
   if (removed > 0) {
     ElMessage.success(`已移除 ${removed} 条记录`)
     customTabRefresh.value++
