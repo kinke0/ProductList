@@ -223,6 +223,22 @@ function removeDropLine() {
   document.querySelectorAll('.drop-line').forEach(el => el.remove())
 }
 
+async function reloadKeepingSelection(type) {
+  const selL1Id = selectedL1.value?.id
+  const selL2Id = selectedL2.value?.id
+  await loadL1()
+  if (selL1Id) {
+    const found = l1List.value.find(c => c.id === selL1Id)
+    selectedL1.value = found || null
+    if (found) {
+      await loadL2(found.id)
+      if (selL2Id && type === 'l2') {
+        selectedL2.value = l2List.value.find(d => d.id === selL2Id) || null
+      }
+    }
+  }
+}
+
 async function reorderList(type, fromIdx, toIdx) {
   const list = type === 'l1' ? l1List : l2List
   const items = [...list.value]
@@ -234,8 +250,7 @@ async function reorderList(type, fromIdx, toIdx) {
     sortOrder: i
   }))
   await updateCategorySort(versionId, sortList)
-  if (type === 'l1') await loadL1()
-  else { await loadL1(); await loadL2(selectedL1.value?.id) }
+  await reloadKeepingSelection(type)
 }
 
 async function moveUp(type) {
@@ -251,8 +266,7 @@ async function moveUp(type) {
     sortOrder: i
   }))
   await updateCategorySort(versionId, sortList)
-  if (type === 'l1') await loadL1()
-  else { await loadL1(); await loadL2(selectedL1.value.id) }
+  await reloadKeepingSelection(type)
   selectedL2.value = null
 }
 
@@ -269,8 +283,7 @@ async function moveDown(type) {
     sortOrder: i
   }))
   await updateCategorySort(versionId, sortList)
-  if (type === 'l1') await loadL1()
-  else { await loadL1(); await loadL2(selectedL1.value.id) }
+  await reloadKeepingSelection(type)
   selectedL2.value = null
 }
 
