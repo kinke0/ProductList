@@ -968,6 +968,10 @@ public class DocumentService {
     }
 
     private byte[] generateExcel(String docType, List<DataEntry> entries, Long recordId) throws Exception {
+        entries = entries.stream()
+                .filter(e -> e.getLevel() != null && e.getLevel() >= 3)
+                .collect(Collectors.toList());
+
         Workbook wb = new XSSFWorkbook();
         Sheet sheet = wb.createSheet("处理后清单");
 
