@@ -1,12 +1,12 @@
 <template>
   <el-dialog v-model="visible" title="选择图片" width="70%" top="5vh" append-to-body @close="emit('close')">
     <div class="picker-body">
-      <div class="picker-sidebar">
+      <div v-if="treeData.length > 0" class="picker-sidebar">
         <el-tree
           ref="treeRef"
           :data="treeData"
           :props="{ children: 'children', label: 'label' }"
-          node-key="label"
+          node-key="key"
           highlight-current
           default-expand-all
           @node-click="onNodeClick"
@@ -40,8 +40,8 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { getImages, uploadImage, getImageTree } from '../api/image'
-import { getVersions } from '../api/version'
+import { getImages, uploadImage } from '../api/image'
+import { PLATFORM_MODULES } from '../constants/platformModules'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 
@@ -49,7 +49,8 @@ const props = defineProps({
   modelValue: Boolean,
   defaultCategory: { type: String, default: null },
   defaultDomain: { type: String, default: null },
-  defaultProduct: { type: String, default: null }
+  defaultProduct: { type: String, default: null },
+  fixedCategory: { type: String, default: null }
 })
 const emit = defineEmits(['update:modelValue', 'select', 'close'])
 
@@ -59,7 +60,6 @@ const images = ref([])
 const selectedId = ref(null)
 const selectedImage = ref(null)
 const loading = ref(false)
-const versionId = ref(null)
 const curCategory = ref(null)
 const curDomain = ref(null)
 const curProduct = ref(null)
@@ -69,51 +69,79 @@ const treeRef = ref(null)
 watch(() => props.modelValue, async (v) => {
   visible.value = v
   if (v) {
-    await loadVersion()
+    selectedId.value = null
+    selectedImage.value = null
     await loadTree()
+    await loadInitialImages()
   }
 })
 watch(visible, (v) => { emit('update:modelValue', v) })
 
-async function loadVersion() {
-  const res = await getVersions()
-  const draft = res.data.find(v => v.status === 'draft')
-  versionId.value = draft ? draft.id : (res.data[res.data.length - 1]?.id)
-}
-
 async function loadTree() {
-  if (!versionId.value) return
-  const res = await getImageTree(versionId.value)
-  treeData.value = res.data || []
-}
-
-function onNodeClick(data, node) {
-  const path = []
-  let n = node
-  while (n && n.data && n.data.label) { path.unshift(n.data.label); n = n.parent }
-  if (path.length >= 3) {
-    curCategory.value = path[0]
-    curDomain.value = path[1]
-    curProduct.value = path[2]
-  } else if (path.length === 2) {
-    curCategory.value = path[0]
-    curDomain.value = path[1]
+  if (props.fixedCategory) {
+    const cat = props.fixedCategory
+    const imgRes = await getImages({ category: cat })
+    const allImages = imgRes.data || []
+    const imageCountMap = {}
+    allImages.forEach(img => {
+      const key = img.domain || ''
+      imageCountMap[key] = (imageCountMap[key] || 0) + 1
+    })
+    const mod = PLATFORM_MODULES.find(m => m.value === cat)
+    const children = (mod?.children || []).map(sub => ({
+      key: cat + '/' + sub.value,
+      label: sub.value + (imageCountMap[sub.value] ? ` (${imageCountMap[sub.value]})` : ''),
+      _category: cat,
+      _domain: sub.value
+    }))
+    let totalCount = allImages.length
+    treeData.value = [{
+      key: cat,
+      label: cat + (totalCount > 0 ? ` (${totalCount})` : ''),
+      _category: cat,
+      _domain: '',
+      children: children.length > 0 ? children : undefined
+    }]
+    curCategory.value = cat
+    curDomain.value = null
     curProduct.value = null
   } else {
-    curCategory.value = path[0]
+    treeData.value = []
+    curCategory.value = props.defaultCategory
     curDomain.value = null
     curProduct.value = null
   }
-  loadImages()
 }
 
-async function loadImages() {
+async function loadInitialImages() {
   loading.value = true
   try {
-    const params = { versionId: versionId.value }
-    if (curProduct.value) { params.category = curCategory.value; params.domain = curDomain.value; params.product = curProduct.value }
-    else if (curDomain.value) { params.category = curCategory.value; params.domain = curDomain.value }
-    else if (curCategory.value) { params.category = curCategory.value }
+    if (props.fixedCategory) {
+      const params = { category: props.fixedCategory }
+      if (curDomain.value) params.domain = curDomain.value
+      const res = await getImages(params)
+      images.value = res.data || []
+    } else {
+      images.value = []
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+function onNodeClick(data) {
+  curCategory.value = data._category || props.fixedCategory
+  curDomain.value = data._domain || null
+  curProduct.value = null
+  loadFilteredImages()
+}
+
+async function loadFilteredImages() {
+  loading.value = true
+  try {
+    const params = {}
+    if (curCategory.value) params.category = curCategory.value
+    if (curDomain.value) params.domain = curDomain.value
     const res = await getImages(params)
     images.value = res.data || []
   } finally {
@@ -145,9 +173,9 @@ function triggerUpload() {
 async function handleFileUpload(e) {
   const files = Array.from(e.target.files || [])
   if (files.length === 0) return
-  const uploadCategory = curCategory.value || props.defaultCategory
-  const uploadDomain = curDomain.value || props.defaultDomain
-  const uploadProduct = curProduct.value || props.defaultProduct
+  const uploadCategory = curCategory.value || props.fixedCategory || props.defaultCategory
+  const uploadDomain = curDomain.value || props.defaultDomain || ''
+  const uploadProduct = curProduct.value || props.defaultProduct || ''
   if (files.length === 1) {
     const file = files[0]
     const defaultName = file.name.replace(/\.[^.]+$/, '')
@@ -159,7 +187,7 @@ async function handleFileUpload(e) {
         inputPlaceholder: '请输入名称'
       })
       const displayName = value || defaultName
-      await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
+      await uploadImage(file, uploadCategory, uploadDomain, uploadProduct || null, null, displayName)
       ElMessage.success('上传成功')
     } catch (err) {
       if (err !== 'cancel' && err !== 'close') {
@@ -174,7 +202,7 @@ async function handleFileUpload(e) {
     for (const file of files) {
       const displayName = file.name.replace(/\.[^.]+$/, '')
       try {
-        await uploadImage(file, uploadCategory, uploadDomain, uploadProduct, versionId.value, displayName)
+        await uploadImage(file, uploadCategory, uploadDomain, uploadProduct || null, null, displayName)
         success++
       } catch {
         failed++
@@ -184,13 +212,10 @@ async function handleFileUpload(e) {
     else ElMessage.error('全部上传失败')
   }
   await loadTree()
-  curCategory.value = uploadCategory
-  curDomain.value = uploadDomain
-  curProduct.value = uploadProduct
   if (uploadProduct && treeRef.value) {
     treeRef.value.setCurrentKey(uploadProduct)
   }
-  await loadImages()
+  await loadFilteredImages()
   e.target.value = ''
 }
 </script>

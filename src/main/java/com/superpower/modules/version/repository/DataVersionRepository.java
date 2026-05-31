@@ -14,4 +14,6 @@ public interface DataVersionRepository extends JpaRepository<DataVersion, Long> 
     java.util.List<DataVersion> findAllReleased();
 
     boolean existsByStatus(String status);
+
+    java.util.List<DataVersion> findByStatus(String status);
 }

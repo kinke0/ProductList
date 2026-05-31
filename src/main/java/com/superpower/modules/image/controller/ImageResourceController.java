@@ -7,6 +7,7 @@ import com.superpower.modules.image.dto.MigrationResult;
 import com.superpower.modules.image.dto.MigrationTaskProgress;
 import com.superpower.modules.image.entity.ImageResource;
 import com.superpower.modules.image.service.ImageResourceService;
+import com.superpower.modules.requirement.entity.ReqItem;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -70,6 +71,12 @@ public class ImageResourceController {
         return Result.success(imageResourceService.update(id, body));
     }
 
+    @PutMapping("/{id}/file")
+    public Result<ImageResource> replaceFile(@PathVariable Long id,
+                                             @RequestParam("file") MultipartFile file) {
+        return Result.success(imageResourceService.replaceFile(id, file));
+    }
+
     @PostMapping("/migrate-external-images")
     @PreAuthorize("hasRole('ADMIN')")
     public Result<Map<String, String>> migrateExternalImages(@RequestBody List<Long> entryIds) {
@@ -85,5 +92,10 @@ public class ImageResourceController {
     @GetMapping("/{id}/references")
     public Result<List<DataEntry>> findReferences(@PathVariable Long id) {
         return Result.success(imageResourceService.findReferences(id));
+    }
+
+    @GetMapping("/{id}/req-references")
+    public Result<List<ReqItem>> findReqReferences(@PathVariable Long id) {
+        return Result.success(imageResourceService.findReqReferences(id));
     }
 }

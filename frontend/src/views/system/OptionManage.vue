@@ -8,10 +8,6 @@
       <el-table-column label="排序" width="100" align="center">
         <template #default="{ row }">
           <span class="drag-icon" @mousedown="startDrag($event, row)" :style="{ cursor: versionStatus === 'released' ? 'default' : 'grab' }">⠿</span>
-          <span class="sort-btns">
-            <span class="sort-btn" @click="moveUp(row)" :style="{ cursor: versionStatus === 'released' ? 'default' : 'pointer', opacity: versionStatus === 'released' ? 0.3 : 1 }">↑</span>
-            <span class="sort-btn" @click="moveDown(row)" :style="{ cursor: versionStatus === 'released' ? 'default' : 'pointer', opacity: versionStatus === 'released' ? 0.3 : 1 }">↓</span>
-          </span>
         </template>
       </el-table-column>
       <el-table-column prop="value" label="名称" />
@@ -107,20 +103,6 @@ async function reorderList(fromIdx, toIdx) {
   const sortList = list.map((item, i) => ({ id: item.id, sortOrder: i }))
   await updateOptionSort(sortList)
   await loadData()
-}
-
-async function moveUp(row) {
-  if (versionStatus.value === 'released') return
-  const idx = items.value.findIndex(r => r.id === row.id)
-  if (idx <= 0) return
-  await reorderList(idx, idx - 1)
-}
-
-async function moveDown(row) {
-  if (versionStatus.value === 'released') return
-  const idx = items.value.findIndex(r => r.id === row.id)
-  if (idx < 0 || idx >= items.value.length - 1) return
-  await reorderList(idx, idx + 1)
 }
 
 function startDrag(e, row) {

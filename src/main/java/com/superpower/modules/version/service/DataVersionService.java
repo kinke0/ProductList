@@ -148,9 +148,41 @@ public class DataVersionService {
         if (!"draft".equals(version.getStatus())) {
             throw new BusinessException("版本状态不正确");
         }
+        if (version.getRollbackCount() != null && version.getRollbackCount() > 0) {
+            String baseNo = version.getVersionNo();
+            int dotCount = 0;
+            for (char c : baseNo.toCharArray()) {
+                if (c == '.') dotCount++;
+            }
+            if (dotCount < 2) {
+                version.setVersionNo(baseNo + ".1");
+            } else {
+                int lastDot = baseNo.lastIndexOf('.');
+                String prefix = baseNo.substring(0, lastDot + 1);
+                String suffix = baseNo.substring(lastDot + 1);
+                int patch = Integer.parseInt(suffix) + 1;
+                version.setVersionNo(prefix + patch);
+            }
+        }
         version.setStatus("released");
         version.setReleasedAt(LocalDateTime.now());
         version.setReleasedBy(userId);
+        return versionRepository.save(version);
+    }
+
+    @Transactional
+    public DataVersion rollbackVersion(Long versionId) {
+        DataVersion version = findById(versionId);
+        if (!"released".equals(version.getStatus())) {
+            throw new BusinessException("只能退回已发布的版本");
+        }
+        if (versionRepository.existsByStatus("draft")) {
+            throw new BusinessException("已存在编辑中的版本，请先处理后再退回");
+        }
+        version.setStatus("draft");
+        version.setRollbackCount(version.getRollbackCount() != null ? version.getRollbackCount() + 1 : 1);
+        version.setReleasedAt(null);
+        version.setReleasedBy(null);
         return versionRepository.save(version);
     }
 }

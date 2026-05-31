@@ -41,7 +41,7 @@ public class AuthController {
         SysRole role = user.getRole();
         String token = jwtTokenProvider.generateToken(user.getUsername(), user.getId(), role.getCode());
 
-        return Result.success(new LoginResponse(token, user.getUsername(), user.getNickname(),
+        return Result.success(new LoginResponse(token, user.getUsername(), user.getId(), user.getNickname(),
                 role.getCode(), role.getName()));
     }
 

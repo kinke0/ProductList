@@ -9,8 +9,6 @@
           <strong>业务分类 (L1)</strong>
           <div>
             <el-button size="small" type="primary" @click="openL1Dialog()" :disabled="versionStatus === 'released'">新增</el-button>
-            <el-button size="small" @click="moveUp('l1')" :disabled="versionStatus === 'released'||!selectedL1" style="margin-left:4px;">↑</el-button>
-            <el-button size="small" @click="moveDown('l1')" :disabled="versionStatus === 'released'||!selectedL1">↓</el-button>
           </div>
         </div>
         <el-table
@@ -50,8 +48,6 @@
               当前: {{ selectedL1.label }}
             </span>
             <el-button size="small" type="primary" :disabled="!selectedL1 || versionStatus === 'released'" @click="openL2Dialog()">新增</el-button>
-            <el-button size="small" @click="moveUp('l2')" :disabled="versionStatus === 'released'||!selectedL2" style="margin-left:4px;">↑</el-button>
-            <el-button size="small" @click="moveDown('l2')" :disabled="versionStatus === 'released'||!selectedL2">↓</el-button>
           </div>
         </div>
         <el-table
@@ -260,23 +256,6 @@ async function moveUp(type) {
   if (idx <= 0) return
   const items = [...list.value]
   ;[items[idx - 1], items[idx]] = [items[idx], items[idx - 1]]
-  const sortList = items.map((item, i) => ({
-    type: type === 'l1' ? 'category' : 'domain',
-    id: item.id,
-    sortOrder: i
-  }))
-  await updateCategorySort(versionId, sortList)
-  await reloadKeepingSelection(type)
-  selectedL2.value = null
-}
-
-async function moveDown(type) {
-  const list = type === 'l1' ? l1List : l2List
-  const selected = type === 'l1' ? selectedL1 : selectedL2
-  const idx = list.value.findIndex(r => r.id === selected.value.id)
-  if (idx < 0 || idx >= list.value.length - 1) return
-  const items = [...list.value]
-  ;[items[idx], items[idx + 1]] = [items[idx + 1], items[idx]]
   const sortList = items.map((item, i) => ({
     type: type === 'l1' ? 'category' : 'domain',
     id: item.id,

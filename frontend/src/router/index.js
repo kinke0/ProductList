@@ -18,6 +18,22 @@ const routes = [
         meta: { title: '产品清单' }
       },
       {
+        path: 'requirements',
+        redirect: '/requirements/list'
+      },
+      {
+        path: 'requirements/list',
+        name: 'RequirementManage',
+        component: () => import('../views/requirement/RequirementManage.vue'),
+        meta: { title: '需求清单' }
+      },
+      {
+        path: 'requirements/images',
+        name: 'RequirementImages',
+        component: () => import('../views/requirement/RequirementImages.vue'),
+        meta: { title: '需求图片' }
+      },
+      {
         path: 'users',
         name: 'UserManage',
         component: () => import('../views/system/UserManage.vue'),

@@ -15,3 +15,7 @@ export function createVersion() {
 export function releaseVersion(id) {
   return request.post(`/versions/${id}/release`)
 }
+
+export function rollbackVersion(id) {
+  return request.post(`/versions/${id}/rollback`)
+}

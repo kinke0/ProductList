@@ -12,6 +12,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = res.data
     localStorage.setItem('token', res.data.token)
     localStorage.setItem('username', res.data.username)
+    localStorage.setItem('userId', res.data.userId)
     localStorage.setItem('roleCode', res.data.roleCode)
     localStorage.setItem('nickname', res.data.nickname)
     return res.data
@@ -31,6 +32,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('username')
+    localStorage.removeItem('userId')
     localStorage.removeItem('roleCode')
     localStorage.removeItem('nickname')
   }

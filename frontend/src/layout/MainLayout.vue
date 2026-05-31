@@ -21,6 +21,25 @@
           <el-icon><Monitor /></el-icon>
           <span>产品清单</span>
         </el-menu-item>
+        <el-sub-menu index="requirements">
+          <template #title>
+            <el-icon><List /></el-icon>
+            <span>需求管理</span>
+          </template>
+          <el-menu-item index="/requirements/list">
+            <el-icon><Document /></el-icon>
+            <span>需求清单</span>
+          </el-menu-item>
+          <el-menu-item index="/requirements/images">
+            <el-icon><Picture /></el-icon>
+            <span>需求图片</span>
+          </el-menu-item>
+        </el-sub-menu>
+        <el-menu-item v-if="authStore.isAdmin()" index="/versions">
+          <el-icon><Document /></el-icon>
+          <span>版本管理</span>
+        </el-menu-item>
+        <div class="menu-divider"></div>
         <el-sub-menu v-if="authStore.isAdmin()" index="admin">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -33,10 +52,6 @@
           <el-menu-item index="/roles">
             <el-icon><Ticket /></el-icon>
             <span>权限套餐管理</span>
-          </el-menu-item>
-          <el-menu-item index="/versions">
-            <el-icon><Document /></el-icon>
-            <span>版本管理</span>
           </el-menu-item>
           <el-sub-menu index="base-data">
             <template #title>
@@ -71,7 +86,9 @@
     <div class="si-main">
       <div class="si-header">
         <span class="header-title">{{ route.meta?.title || '工作台' }}</span>
-        <el-dropdown @command="handleCommand">
+        <div class="header-right">
+          <el-button size="small" type="primary" @click="showQuickReqForm = true">需求录入</el-button>
+          <el-dropdown @command="handleCommand">
           <span class="header-user">
             {{ nickname || '用户' }}
             <el-icon><ArrowDown /></el-icon>
@@ -84,12 +101,15 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        </div>
       </div>
 
       <div class="si-content">
         <router-view />
       </div>
     </div>
+
+    <RequirementFormDialog v-model="showQuickReqForm" :prefilled-module="currentModule" @saved="showQuickReqForm = false; reqRefreshKey++" />
 
     <el-dialog v-model="pwdVisible" title="修改密码" width="400px" :close-on-click-modal="false">
       <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="80px" size="large">
@@ -126,16 +146,37 @@
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed, provide } from 'vue'
 import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { changePassword, changeNickname } from '../api/auth'
+import RequirementFormDialog from '../components/RequirementFormDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const nickname = ref(authStore.user?.nickname || localStorage.getItem('nickname') || '用户')
 const isCollapsed = ref(false)
+const showQuickReqForm = ref(false)
+const reqRefreshKey = ref(0)
+provide('reqRefreshKey', reqRefreshKey)
+
+const currentModule = computed(() => {
+  const map = {
+    '/dashboard': { category: '产品清单' },
+    '/requirements/list': { category: '需求管理', domain: '需求清单' },
+    '/requirements/images': { category: '需求管理', domain: '需求图片' },
+    '/versions': { category: '版本管理' },
+    '/users': { category: '系统管理', domain: '用户管理' },
+    '/roles': { category: '系统管理', domain: '权限套餐管理' },
+    '/base-data/category': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/solution': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/app-role': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/status': { category: '系统管理', domain: '基础数据维护' },
+    '/image-gallery': { category: '图床管理' }
+  }
+  return map[route.path] || null
+})
 
 function handleCommand(command) {
   if (command === 'logout') {
@@ -328,6 +369,18 @@ async function handleChangeNickname() {
   font-size: 14px;
   font-weight: 600;
   color: var(--si-text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 6px 12px;
 }
 
 .header-user {

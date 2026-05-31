@@ -1101,7 +1101,7 @@ public class DataEntryService {
         }
         String approvalStatus = node.getApprovalStatus();
         if (approvalStatus != null && !approvalStatus.isEmpty() && colStatus != null && colStatus.contains("可交付")) {
-            body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
+            body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("cursor:pointer;' onclick=\"parent.postMessage({action:'showLogs',entryId:").append(node.getId()).append("},'*')\">").append(approvalStatus).append("</span>");
             if ("驳回".equals(approvalStatus)) {
                 String reason = rejectReasons.get(node.getId());
                 if (reason != null && !reason.isEmpty()) {
@@ -1127,10 +1127,14 @@ public class DataEntryService {
             if (showApproval) {
                 body.append("<div class='ea-label' style='margin-left:16px;'>流程操作：</div>");
                 boolean canSubmit = (apprStatus == null || apprStatus.isEmpty() || "待提交".equals(apprStatus) || "驳回".equals(apprStatus));
+                boolean canWithdraw = "待审核".equals(apprStatus);
                 boolean canApprove = "待审核".equals(apprStatus);
                 boolean canReject = "待审核".equals(apprStatus) || "审核通过".equals(apprStatus);
                 if (("editor".equals(role) || "admin".equals(role)) && canSubmit) {
                     body.append("<a class='ea-btn ea-btn-warning' onclick=\"parent.postMessage({action:'submit',entryId:").append(node.getId()).append("},'*')\">提交</a>");
+                }
+                if (("editor".equals(role) || "admin".equals(role)) && canWithdraw) {
+                    body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'withdraw',entryId:").append(node.getId()).append("},'*')\">撤销</a>");
                 }
                 if (("reviewer".equals(role) || "admin".equals(role)) && canApprove) {
                     body.append("<a class='ea-btn ea-btn-success' onclick=\"parent.postMessage({action:'approve',entryId:").append(node.getId()).append("},'*')\">通过</a>");

@@ -30,8 +30,21 @@ export function updateImage(id, data) {
   return request.put(`/images/${id}`, data)
 }
 
+export function replaceImageFile(id, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.put(`/images/${id}/file`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000
+  })
+}
+
 export function getImageReferences(id) {
   return request.get(`/images/${id}/references`)
+}
+
+export function getImageReqReferences(id) {
+  return request.get(`/images/${id}/req-references`)
 }
 
 export function migrateImages(ids) {

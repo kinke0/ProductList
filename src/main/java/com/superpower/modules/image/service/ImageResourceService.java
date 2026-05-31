@@ -12,6 +12,8 @@ import com.superpower.modules.image.entity.ImageResource;
 import com.superpower.modules.image.dto.MigrationResult;
 import com.superpower.modules.image.dto.MigrationTaskProgress;
 import com.superpower.modules.image.repository.ImageResourceRepository;
+import com.superpower.modules.requirement.entity.ReqItem;
+import com.superpower.modules.requirement.repository.ReqItemRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.Authentication;
@@ -42,6 +44,7 @@ public class ImageResourceService {
     private final DataEntryRepository dataEntryRepository;
     private final BaseCategoryRepository baseCategoryRepository;
     private final BaseDomainRepository baseDomainRepository;
+    private final ReqItemRepository reqItemRepository;
 
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
@@ -55,11 +58,13 @@ public class ImageResourceService {
                                 DataEntryRepository dataEntryRepository,
                                 BaseCategoryRepository baseCategoryRepository,
                                 BaseDomainRepository baseDomainRepository,
+                                ReqItemRepository reqItemRepository,
                                 @Lazy ImageResourceService self) {
         this.imageResourceRepository = imageResourceRepository;
         this.dataEntryRepository = dataEntryRepository;
         this.baseCategoryRepository = baseCategoryRepository;
         this.baseDomainRepository = baseDomainRepository;
+        this.reqItemRepository = reqItemRepository;
         this.self = self;
     }
 
@@ -85,7 +90,16 @@ public class ImageResourceService {
         String storedName = sanitizedBase + "." + ext;
 
         String subPath = buildSubPath(category, domain, product);
-        Path dirPath = Paths.get(storagePath, subPath);
+        String basePath;
+        String urlPrefix;
+        if (category != null && category.startsWith("需求")) {
+            basePath = storagePath.replace("images", "requirements");
+            urlPrefix = "/api/requirements/file/";
+        } else {
+            basePath = storagePath;
+            urlPrefix = "/api/images/file/";
+        }
+        Path dirPath = Paths.get(basePath, subPath);
         try {
             Files.createDirectories(dirPath);
             int waitRetry = 0;
@@ -113,7 +127,7 @@ public class ImageResourceService {
             throw new BusinessException("文件保存失败: " + e.getMessage());
         }
 
-        String urlPath = "/api/images/file/" + subPath + "/" + storedName;
+        String urlPath = urlPrefix + subPath + "/" + storedName;
 
         ImageResource image = new ImageResource();
         image.setFilename(displayName != null && !displayName.isEmpty() ? displayName : originalFilename);
@@ -261,7 +275,9 @@ public class ImageResourceService {
                 image.setPath(newPath.toString());
                 image.setFilename(newName);
                 String subPath = buildSubPath(image.getCategory(), image.getDomain(), image.getProduct());
-                image.setUrl("/api/images/file/" + subPath + "/" + newStored);
+                String prefix = (image.getCategory() != null && image.getCategory().startsWith("需求"))
+                        ? "/api/requirements/file/" : "/api/images/file/";
+                image.setUrl(prefix + subPath + "/" + newStored);
             } else {
                 image.setFilename(newName);
             }
@@ -275,6 +291,27 @@ public class ImageResourceService {
         if (body.getProduct() != null) {
             image.setProduct(body.getProduct());
         }
+        return imageResourceRepository.save(image);
+    }
+
+    @Transactional
+    public ImageResource replaceFile(Long id, MultipartFile file) {
+        ImageResource image = imageResourceRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("图片不存在"));
+        if (file.isEmpty()) throw new BusinessException("文件不能为空");
+        if (file.getSize() > MAX_FILE_SIZE) throw new BusinessException("文件大小不能超过5MB");
+        String contentType = file.getContentType();
+        if (contentType == null || !ALLOWED_TYPES.contains(contentType.toLowerCase())) {
+            throw new BusinessException("只允许上传jpg/png/gif/webp格式的图片");
+        }
+        Path existingPath = Paths.get(image.getPath());
+        try {
+            Files.copy(file.getInputStream(), existingPath, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new BusinessException("文件替换失败: " + e.getMessage());
+        }
+        image.setSize(file.getSize());
+        image.setMimeType(contentType);
         return imageResourceRepository.save(image);
     }
 
@@ -426,6 +463,20 @@ public class ImageResourceService {
         return allEntries.stream()
                 .filter(e -> {
                     String desc = e.getColFeatureDesc();
+                    return desc != null && desc.contains(imageUrl);
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<ReqItem> findReqReferences(Long imageId) {
+        ImageResource image = imageResourceRepository.findById(imageId)
+                .orElseThrow(() -> new BusinessException("图片不存在"));
+        String imageUrl = image.getUrl();
+        List<ReqItem> all = reqItemRepository.findAll();
+        return all.stream()
+                .filter(item -> {
+                    String desc = item.getDescription();
                     return desc != null && desc.contains(imageUrl);
                 })
                 .collect(Collectors.toList());
@@ -756,7 +807,7 @@ public class ImageResourceService {
             Path filePath = dirPath.resolve(storedName);
             Files.write(filePath, data);
 
-            String urlPath = "/api/images/file/" + subPath + "/" + storedName;
+            String migUrlPath = "/api/images/file/" + subPath + "/" + storedName;
 
             ImageResource image = new ImageResource();
             image.setFilename(filename);
@@ -765,7 +816,7 @@ public class ImageResourceService {
             image.setCategory(category);
             image.setDomain(domain);
             image.setProduct(product);
-            image.setUrl(urlPath);
+            image.setUrl(migUrlPath);
             image.setSize((long) data.length);
             image.setMimeType(contentType != null ? contentType : "image/png");
             image.setUploadedBy("migration");

@@ -8,6 +8,7 @@
       当前版本: {{ currentVersion.versionNo }}
       <el-tag v-if="currentVersion.status === 'draft'" type="warning">编辑中</el-tag>
       <el-tag v-else type="success">已发布</el-tag>
+      <el-tag v-if="currentVersion.rollbackCount > 0" type="info" size="small">已退回{{ currentVersion.rollbackCount }}次</el-tag>
     </div>
     <el-table :data="versions" border stripe size="small">
       <el-table-column prop="versionNo" label="版本号" width="100" />
@@ -15,6 +16,11 @@
         <template #default="{ row }">
           <el-tag v-if="row.status === 'draft'" type="warning">编辑中</el-tag>
           <el-tag v-else type="success">已发布</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="发布人" width="100">
+        <template #default="{ row }">
+          {{ row.releasedByName || '-' }}
         </template>
       </el-table-column>
       <el-table-column label="发布日期" width="120">
@@ -29,10 +35,9 @@
       </el-table-column>
       <el-table-column label="操作">
         <template #default="{ row }">
-          <el-button v-if="row.status === 'draft'" size="small" type="success" @click="handleRelease(row.id)">
-            封板发布
-          </el-button>
-          <span v-else>-</span>
+          <el-button v-if="row.status === 'draft'" size="small" type="success" @click="handleRelease(row.id)">封板发布</el-button>
+          <el-button v-if="row.status === 'released'" size="small" type="warning" @click="handleRollback(row.id, row.versionNo)">退回</el-button>
+          <span v-if="row.status === 'released' && row.rollbackCount > 0" style="margin-left: 8px; font-size: 12px; color: #909399;">已退回{{ row.rollbackCount }}次</span>
         </template>
       </el-table-column>
     </el-table>
@@ -41,9 +46,11 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getVersions, createVersion, releaseVersion } from '../../api/version'
+import { getVersions, createVersion, releaseVersion, rollbackVersion } from '../../api/version'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAuthStore } from '../../store/auth'
 
+const authStore = useAuthStore()
 const versions = ref([])
 const currentVersion = ref(null)
 
@@ -61,19 +68,36 @@ async function handleCreateVersion() {
 }
 
 async function handleRelease(id) {
-  ElMessageBox.confirm('确认封板发布？发布后版本将不可再编辑。', '提示', {
+  const version = versions.value.find(v => v.id === id)
+  const versionNo = version?.versionNo || ''
+  const msg = version?.rollbackCount > 0
+    ? `确认封板发布？发布后版本号将升级为 ${getNextVersionNo(versionNo, version.rollbackCount)}`
+    : '确认封板发布？发布后版本将不可再编辑。'
+  ElMessageBox.confirm(msg, '提示', {
     confirmButtonText: '发布',
     type: 'warning'
   }).then(async () => {
-    const version = versions.value.find(v => v.id === id)
     await releaseVersion(id)
-    if (version) {
-      version.status = 'released'
-    }
-    if (currentVersion.value?.id === id) {
-      currentVersion.value = null
-    }
     ElMessage.success('发布成功')
+    loadVersions()
+  }).catch(() => {})
+}
+
+function getNextVersionNo(versionNo, rollbackCount) {
+  const dotCount = (versionNo.match(/\./g) || []).length
+  if (dotCount < 2) return versionNo + '.1'
+  const lastDot = versionNo.lastIndexOf('.')
+  return versionNo.substring(0, lastDot + 1) + (parseInt(versionNo.substring(lastDot + 1)) + 1)
+}
+
+async function handleRollback(id, versionNo) {
+  ElMessageBox.confirm(`确认退回版本 ${versionNo}？退回后版本将变为编辑中状态。`, '提示', {
+    confirmButtonText: '确认退回',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(async () => {
+    await rollbackVersion(id)
+    ElMessage.success('版本已退回')
     loadVersions()
   }).catch(() => {})
 }

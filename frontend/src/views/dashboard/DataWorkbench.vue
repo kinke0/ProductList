@@ -111,6 +111,8 @@
                 @insert-to-list="onInsertToList"
                 @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
                 @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
+                @open-preview="onOpenPreview"
+                @preview-reload="onPreviewReload"
               />
             </el-tab-pane>
             <el-tab-pane name="__add_list" disabled>
@@ -125,6 +127,21 @@
       </div>
     </div>
     <PreviewDialog ref="globalPreviewRef" v-model="globalPreviewVisible" :entry-id="globalPreviewEntryId" :batch-entry-ids="globalPreviewBatchIds" @preview-message="onGlobalPreviewMessage" />
+    <el-dialog v-model="previewLogVisible" :title="previewLogTitle" width="550px">
+      <el-timeline v-if="previewLogData.length > 0">
+        <el-timeline-item v-for="log in previewLogData" :key="log.id" :timestamp="log.createdAt?.substring(0, 16)" placement="top">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span>{{ log.operatorName || '未知' }}</span>
+            <span style="color:#303133;font-weight:500;">{{ actionLabel(log.action) }}</span>
+            <el-tag :type="logTagType(log.fromStatus)" size="small">{{ log.fromStatus }}</el-tag>
+            <span style="color:#909399;">→</span>
+            <el-tag :type="logTagType(log.toStatus)" size="small">{{ log.toStatus }}</el-tag>
+            <span v-if="log.action === 'reject' && log.comment" style="color: #F56C6C;margin-left:4px;">原因: {{ log.comment }}</span>
+          </div>
+        </el-timeline-item>
+      </el-timeline>
+      <div v-else style="color:#909399;text-align:center;padding:20px 0;">暂无审批记录</div>
+    </el-dialog>
   </div>
 
   <el-dialog v-model="showDocDialog" title="生成文档" width="960px" top="2vh">
@@ -271,7 +288,7 @@ import { getVersions } from '../../api/version'
 import { getCustomTabs, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { getOptions } from '../../api/option'
 import { deleteEntry } from '../../api/data'
-import { approveEntry } from '../../api/approval'
+import { approveEntry, getApprovalLogs } from '../../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 
@@ -446,6 +463,20 @@ const globalPreviewBatchIds = ref(null)
 const globalPreviewRef = ref(null)
 const dataListRef = ref(null)
 const customTabRefs = reactive({})
+const previewLogVisible = ref(false)
+const previewLogTitle = ref('')
+const previewLogData = ref([])
+
+const ACTION_LABELS = { submit: '提交', withdraw: '撤销', approve: '通过', reject: '驳回' }
+function actionLabel(action) { return ACTION_LABELS[action] || action }
+
+function logTagType(status) {
+  if (status === '待提交') return 'primary'
+  if (status === '待审核') return 'warning'
+  if (status === '审核通过') return 'success'
+  if (status === '驳回') return 'danger'
+  return 'info'
+}
 
 function onOpenPreview(entryId) {
   globalPreviewEntryId.value = entryId
@@ -489,6 +520,20 @@ async function onGlobalPreviewMessage(msg) {
     } catch (e) {
       if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.message || '驳回失败')
     }
+  } else if (msg?.action === 'withdraw') {
+    try {
+      await approveEntry(msg.entryId, 'withdraw', '')
+      ElMessage.success('已撤销')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { ElMessage.error(e?.response?.data?.message || '操作失败') }
+  } else if (msg?.action === 'showLogs') {
+    try {
+      const res = await getApprovalLogs(msg.entryId)
+      previewLogData.value = res.data || []
+      previewLogTitle.value = '审批记录'
+      previewLogVisible.value = true
+    } catch (e) { ElMessage.error('获取审批记录失败') }
   } else if (msg?.action === 'delete') {
     try {
       await ElMessageBox.confirm('确认删除该记录？', '提示', { type: 'warning' })

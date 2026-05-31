@@ -159,7 +159,7 @@
           </span>
          </div>
          <div class="vcol" style="width:80px;">
-            <el-tag v-if="!row._isSeparator && row.approvalStatus && (row.colStatus || '').includes('可交付')" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
+             <el-tag v-if="!row._isSeparator && row.approvalStatus && (row.colStatus || '').includes('可交付')" :type="approvalTagType(row.approvalStatus)" size="small" style="cursor:pointer" @click="showApprovalLogs(row)">{{ row.approvalStatus }}</el-tag>
          </div>
          <div class="vcol" style="width:80px;">
            <el-tag v-if="!row._isSeparator && row.colStatus" :type="statusTagType(row.colStatus)" size="small">{{ row.colStatus }}</el-tag>
@@ -176,19 +176,20 @@
         </div>
         <div class="vcol vcol-ops" style="width:240px;">
            <template v-if="!row._isSeparator">
-              <template v-if="(row.colStatus || '').includes('可交付') && props.isEditing">
-                <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
-                <span v-else class="op-btn op-add invisible">提交</span>
-                <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
-                <span v-else class="op-btn op-add invisible">通过</span>
-                <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
-                <span v-else class="op-btn op-del invisible">驳回</span>
-              </template>
-             <template v-else>
-               <span class="op-btn op-add invisible">提交</span>
-               <span class="op-btn op-add invisible">通过</span>
-               <span class="op-btn op-del invisible">驳回</span>
-              </template>
+               <template v-if="(row.colStatus || '').includes('可交付') && props.isEditing">
+                 <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
+                 <span v-else-if="canWithdraw(row)" class="op-btn op-edit" @click="handleApprove(row, 'withdraw')">撤销</span>
+                 <span v-else class="op-btn op-add invisible">提交</span>
+                 <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
+                 <span v-else class="op-btn op-add invisible">通过</span>
+                 <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
+                 <span v-else class="op-btn op-del invisible">驳回</span>
+               </template>
+              <template v-else>
+                <span class="op-btn op-add invisible">提交</span>
+                <span class="op-btn op-add invisible">通过</span>
+                <span class="op-btn op-del invisible">驳回</span>
+               </template>
              <span style="display:inline-block;width:1px;height:14px;background:#d0d0d0;margin:0 4px;vertical-align:middle;"></span>
               <span v-if="!props.isEditing" class="op-btn op-edit" @click="viewRow(row)">查看</span>
               <span v-if="row.level === 3" class="op-btn op-add" @click="previewRow(row)">预览</span>
@@ -209,7 +210,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
           <div v-if="!isNew && editingRow && (editForm.colStatus || '').includes('可交付')" style="display:flex;align-items:center;">
-            <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
+             <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;cursor:pointer" @click="showApprovalLogs(editingRow)">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
             <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:14px;">原因：{{ lastRejectReason }}</span>
             <span v-if="editingRow.approvalStatus === '驳回' && lastRejectOperator" style="margin-left:8px;color:#909399;font-size:13px;">（{{ lastRejectOperator }}）</span>
           </div>
@@ -285,19 +286,18 @@
               </div>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="12">
             <el-form-item label="产品经理">
               <el-input v-model="editForm.colProductManager" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
-            <el-form-item label="解决方案">
-              <el-checkbox-group v-model="solutionSelections">
-                <el-checkbox v-for="s in solutions" :key="s" :value="s" size="small" :disabled="!props.isEditing">{{ s }}</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-          </el-col>
         </el-row>
+        <div class="solution-section">
+          <span class="solution-section-label">解决方案</span>
+          <el-checkbox-group v-model="solutionSelections" class="solution-checkbox-group">
+            <el-checkbox v-for="s in solutions" :key="s" :value="s" size="small" :disabled="!props.isEditing">{{ s }}</el-checkbox>
+          </el-checkbox-group>
+        </div>
         <el-tabs v-model="activeEditorTab" type="border-card" style="margin-top:8px;">
           <el-tab-pane label="功能明细" name="feature">
             <el-form-item label="招标参数">
@@ -357,6 +357,7 @@
           <div style="margin-left:120px;">
             <template v-if="props.isEditing && !isNew && (editForm.colStatus || '').includes('可交付')">
               <el-button v-if="canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
+              <el-button v-if="canWithdraw(editingRow)" type="primary" plain @click="handleApprove(editingRow, 'withdraw')">撤销提交</el-button>
               <el-button v-if="canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
               <el-button v-if="canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
             </template>
@@ -432,6 +433,21 @@
 </el-dialog>
       <div v-if="editorTooltip" class="editor-tooltip" :style="{ left: editorTooltip.x + 'px', top: editorTooltip.y + 'px' }">{{ editorTooltip.text }}</div>
       <input ref="fileInput" type="file" accept=".xlsx,.xls" style="display:none" @change="onFileSelected" />
+      <el-dialog v-model="approvalLogVisible" :title="approvalLogTitle" width="550px" append-to-body>
+        <el-timeline v-if="approvalLogData.length > 0">
+          <el-timeline-item v-for="log in approvalLogData" :key="log.id" :timestamp="log.createdAt?.substring(0, 16)" placement="top">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span>{{ log.operatorName || '未知' }}</span>
+              <span style="color:#303133;font-weight:500;">{{ actionLabel(log.action) }}</span>
+              <el-tag :type="approvalTagType(log.fromStatus)" size="small">{{ log.fromStatus }}</el-tag>
+              <span style="color:#909399;">→</span>
+              <el-tag :type="approvalTagType(log.toStatus)" size="small">{{ log.toStatus }}</el-tag>
+              <span v-if="log.action === 'reject' && log.comment" style="color: #F56C6C;margin-left:4px;">原因: {{ log.comment }}</span>
+            </div>
+          </el-timeline-item>
+        </el-timeline>
+        <div v-else style="color:#909399;text-align:center;padding:20px 0;">暂无审批记录</div>
+      </el-dialog>
       </div>
 </template>
 
@@ -884,13 +900,38 @@ function canReject(row) {
   return ['reviewer', 'admin'].includes(approvalRole.value) && (row.approvalStatus === '待审核' || row.approvalStatus === '审核通过')
 }
 
+function canWithdraw(row) {
+  return ['editor', 'admin'].includes(approvalRole.value) && row.approvalStatus === '待审核'
+}
+
 async function handleApprove(row, action) {
   try {
     await approveEntry(row.id, action, '')
-    ElMessage.success(action === 'submit' ? '已提交' : '已通过')
+    const msgMap = { submit: '已提交', approve: '已通过', withdraw: '已撤销' }
+    ElMessage.success(msgMap[action] || '操作成功')
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+const approvalLogVisible = ref(false)
+const approvalLogTitle = ref('')
+const approvalLogData = ref([])
+
+const ACTION_LABELS = { submit: '提交', withdraw: '撤销', approve: '通过', reject: '驳回' }
+function actionLabel(action) { return ACTION_LABELS[action] || action }
+
+async function showApprovalLogs(row) {
+  try {
+    const res = await getApprovalLogs(row.id)
+    approvalLogData.value = res.data || []
+    const name = row.colProductSystem || ''
+    const status = row.approvalStatus || '待提交'
+    approvalLogTitle.value = '审批记录' + (name ? ' - ' + name : '') + '（' + status + '）'
+    approvalLogVisible.value = true
+  } catch (e) {
+    ElMessage.error('获取审批记录失败')
   }
 }
 
@@ -2315,5 +2356,26 @@ watch(() => props.versionId, () => {
   position: fixed; z-index: 9999; background: #303133; color: #fff;
   font-size: 12px; padding: 4px 8px; border-radius: 4px; white-space: nowrap;
   line-height: 1.4; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.solution-section {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--si-border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-top: 4px;
+  background: var(--si-bg-card);
+}
+.solution-section-label {
+  font-size: 14px;
+  color: var(--si-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.solution-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
 }
 </style>
