@@ -19,6 +19,8 @@ public class DataEntryDTO {
     private String colStatus;
     private String colBizCategory;
     private String colBizDomain;
+    private Long categoryId;
+    private Long domainId;
     private String colVersionDivision;
     private String colYuan;
     private String colDeliveryWorkload;

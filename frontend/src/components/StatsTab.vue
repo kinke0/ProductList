@@ -30,17 +30,17 @@
     </div>
     <div class="stat-charts" style="margin-top:16px;">
       <div class="chart-container" style="flex: 1;">
-        <h4 class="chart-title">产品经理审批状态分布</h4>
+        <h4 class="chart-title">产品功能维护任务分布</h4>
         <div ref="pmStackBar" style="height: 300px;"></div>
       </div>
     </div>
     <div class="stat-charts" style="margin-top:16px;">
       <div class="chart-container" style="flex: 1;">
-        <h4 class="chart-title">各业务域产品分布</h4>
+        <h4 class="chart-title">各业务分类产品分布</h4>
         <div ref="pieChart" style="height: 280px;"></div>
       </div>
       <div class="chart-container" style="flex: 1;">
-        <h4 class="chart-title">各状态产品分布</h4>
+        <h4 class="chart-title">各版本产品分布</h4>
         <div ref="barChart" style="height: 280px;"></div>
       </div>
     </div>
@@ -76,7 +76,7 @@ async function loadStats() {
   if (!props.versionId) return
   const res = await queryEntries(props.versionId, {})
   const entries = res.data || []
-  const deliverable = entries.filter(e => e.colStatus === '可交付')
+  const deliverable = entries.filter(e => (e.colStatus || '').includes('可交付'))
 
   stats.value.productCount = deliverable.filter(e => e.level === 3).length
   stats.value.moduleCount = deliverable.filter(e => e.level === 4).length
@@ -84,27 +84,34 @@ async function loadStats() {
   stats.value.subFeatureCount = deliverable.filter(e => e.level === 6).length
 
   const domainMap = {}
-  const statusMap = {}
   deliverable.filter(e => e.level === 3).forEach(e => {
     const domain = e.colBizDomain || '未分类'
     domainMap[domain] = (domainMap[domain] || 0) + 1
-    const status = e.colStatus || '未知'
-    statusMap[status] = (statusMap[status] || 0) + 1
   })
 
-  renderPie(Object.entries(domainMap).map(([name, value]) => ({ name, value })))
-  renderBar(Object.entries(statusMap).map(([name, value]) => ({ name, value })))
+  renderCategoryPie(deliverable.filter(e => e.level === 3))
+  renderVersionBar(deliverable.filter(e => e.level === 3))
 
   const approvedCount = deliverable.filter(e => e.approvalStatus === '审核通过').length
   const notApprovedCount = deliverable.length - approvedCount
   renderApprovalPie(approvedCount, notApprovedCount)
 
+  const approvalOrder = [
+    { key: '待提交', label: '待提交', color: '#409EFF' },
+    { key: '待审核', label: '待审批', color: '#E6A23C' },
+    { key: '驳回', label: '驳回', color: '#F56C6C' },
+    { key: '审核通过', label: '通过', color: '#67C23A' }
+  ]
   const approvalMap = {}
   deliverable.forEach(e => {
     const s = e.approvalStatus || '待提交'
     approvalMap[s] = (approvalMap[s] || 0) + 1
   })
-  renderApprovalBar(Object.entries(approvalMap).map(([name, value]) => ({ name, value })))
+  renderApprovalBar(approvalOrder.map(item => ({
+    name: item.label,
+    value: approvalMap[item.key] || 0,
+    color: item.color
+  })))
 
   const pmMap = {}
   entries.forEach(e => {
@@ -116,13 +123,19 @@ async function loadStats() {
   renderPmStackBar(pmMap)
 }
 
-function renderPie(data) {
+function renderCategoryPie(l3Entries) {
   if (!pieChart.value) return
   if (!pieInstance) pieInstance = echarts.init(pieChart.value)
   if (pieChart.value.clientWidth === 0 || pieChart.value.clientHeight === 0) {
-    nextTick(() => renderPie(data))
+    nextTick(() => renderCategoryPie(l3Entries))
     return
   }
+  const catMap = {}
+  l3Entries.forEach(e => {
+    const cat = e.colBizCategory || '未分类'
+    catMap[cat] = (catMap[cat] || 0) + 1
+  })
+  const data = Object.entries(catMap).map(([name, value]) => ({ name, value }))
   pieInstance.setOption({
     tooltip: { trigger: 'item' },
     series: [{
@@ -135,21 +148,46 @@ function renderPie(data) {
   })
 }
 
-function renderBar(data) {
+function renderVersionBar(l3Entries) {
   if (!barChart.value) return
   if (!barInstance) barInstance = echarts.init(barChart.value)
   if (barChart.value.clientWidth === 0 || barChart.value.clientHeight === 0) {
-    nextTick(() => renderBar(data))
+    nextTick(() => renderVersionBar(l3Entries))
     return
   }
+  const versions = [
+    { key: 'A-曜系列', label: '曜', color: '#409EFF' },
+    { key: 'B-远系列', label: '远', color: '#67C23A' },
+    { key: 'C-驰系列', label: '驰', color: '#E6A23C' },
+    { key: '非标配系统', label: '非标配', color: '#909399' }
+  ]
+  const divMap = {}
+  l3Entries.forEach(e => {
+    const div = e.colVersionDivision || ''
+    if (div) {
+      div.split(' ').filter(Boolean).forEach(part => {
+        divMap[part] = (divMap[part] || 0) + 1
+      })
+    }
+  })
+  const data = versions.map(v => ({
+    name: v.label,
+    value: divMap[v.key] || 0,
+    color: v.color
+  }))
   barInstance.setOption({
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: data.map(d => d.name) },
-    yAxis: { type: 'value' },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: 80, right: 30, top: 10, bottom: 20 },
+    xAxis: { type: 'value' },
+    yAxis: { type: 'category', data: data.map(d => d.name), axisLabel: { fontSize: 13 } },
     series: [{
       type: 'bar',
-      data: data.map(d => d.value),
-      itemStyle: { color: '#2563EB' }
+      data: data.map(d => ({
+        value: d.value,
+        itemStyle: { color: d.color }
+      })),
+      barWidth: 24,
+      label: { show: true, position: 'right', formatter: '{c}', color: '#606266', fontSize: 13 }
     }]
   })
 }
@@ -194,7 +232,6 @@ function renderApprovalBar(data) {
     nextTick(() => renderApprovalBar(data))
     return
   }
-  const colorMap = { '待提交': '#409EFF', '待审核': '#E6A23C', '审核通过': '#67C23A', '驳回': '#F56C6C' }
   approvalBarInstance.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     grid: { left: 80, right: 30, top: 10, bottom: 20 },
@@ -204,7 +241,7 @@ function renderApprovalBar(data) {
       type: 'bar',
       data: data.map(d => ({
         value: d.value,
-        itemStyle: { color: colorMap[d.name] || '#909399' }
+        itemStyle: { color: d.color || '#909399' }
       })),
       barWidth: 24,
       label: { show: true, position: 'right', formatter: '{c}', color: '#606266', fontSize: 13 }
@@ -225,15 +262,16 @@ function renderPmStackBar(pmMap) {
     return tb - ta
   })
   const statuses = ['待提交', '待审核', '审核通过', '驳回']
-  const colors = ['#409EFF', '#E6A23C', '#67C23A', '#F56C6C']
+  const statusLabels = { '待提交': '待提交', '待审核': '待审批', '审核通过': '通过', '驳回': '驳回' }
+  const colors = ['#409EFF', '#E6A23C', '#F56C6C', '#67C23A']
   pmStackBarInstance.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { data: statuses, top: 0 },
+    legend: { data: statuses.map(s => statusLabels[s]), top: 0 },
     grid: { left: 50, right: 30, top: 30, bottom: 80 },
     xAxis: { type: 'category', data: managers, axisLabel: { fontSize: 11, rotate: 30 } },
     yAxis: { type: 'value' },
     series: statuses.map((s, i) => ({
-      name: s,
+      name: statusLabels[s],
       type: 'bar',
       stack: 'total',
       data: managers.map(pm => pmMap[pm][s]),

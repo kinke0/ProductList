@@ -4,6 +4,10 @@ export function getTree(versionId) {
   return request.get(`/data/tree/${versionId}`)
 }
 
+export function getCategoryTree(versionId) {
+  return request.get(`/tree?versionId=${versionId}`)
+}
+
 export function getChildren(versionId, parentId) {
   return request.get(`/data/children/${versionId}/${parentId}`)
 }
@@ -66,6 +70,14 @@ export function batchDelete(versionId, ids) {
   return request.post(`/data/batch-delete?versionId=${versionId}`, ids)
 }
 
+export function batchUpdateCategory(versionId, entryIds, categoryId, domainId) {
+  return request.put('/data/batch-category', { versionId, entryIds, categoryId, domainId })
+}
+
 export function updateCategorySort(versionId, sortList) {
   return request.put(`/category/sort?versionId=${versionId}`, sortList)
+}
+
+export function previewEntry(id) {
+  return request.get(`/data/${id}/preview`, { responseType: 'text' })
 }

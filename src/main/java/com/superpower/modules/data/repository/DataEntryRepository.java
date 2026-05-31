@@ -23,7 +23,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND (:name IS NULL OR e.colProductSystem LIKE %:name% " +
            "     OR e.colBizCategory LIKE %:name% " +
            "     OR e.colBizDomain LIKE %:name%) " +
-           "AND (:status IS NULL OR e.colStatus = :status) " +
            "AND (:pm IS NULL OR e.colProductManager LIKE %:pm%) " +
            "AND (:solution IS NULL OR e.colOtherSolutionTag = :solution) " +
            "AND (:versionTag IS NULL OR e.colVersionDivision LIKE %:versionTag%) " +
@@ -32,7 +31,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             @Param("versionId") Long versionId,
             @Param("level") Integer level,
             @Param("name") String name,
-            @Param("status") String status,
             @Param("pm") String productManager,
             @Param("solution") String solution,
             @Param("versionTag") String versionTag);
@@ -42,7 +40,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND (:name IS NULL OR e.colProductSystem LIKE %:name% " +
            "     OR e.colBizCategory LIKE %:name% " +
            "     OR e.colBizDomain LIKE %:name%) " +
-           "AND (:status IS NULL OR e.colStatus = :status) " +
            "AND (:pm IS NULL OR e.colProductManager LIKE %:pm%) " +
            "AND (:solution IS NULL OR e.colOtherSolutionTag = :solution) " +
            "AND (:versionTag IS NULL OR e.colVersionDivision LIKE %:versionTag%) " +
@@ -51,7 +48,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             @Param("versionId") Long versionId,
             @Param("parentId") Long parentId,
             @Param("name") String name,
-            @Param("status") String status,
             @Param("pm") String productManager,
             @Param("solution") String solution,
             @Param("versionTag") String versionTag);
@@ -62,7 +58,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND (:name IS NULL OR e.colProductSystem LIKE %:name% " +
            "     OR e.colBizCategory LIKE %:name% " +
            "     OR e.colBizDomain LIKE %:name%) " +
-           "AND (:status IS NULL OR e.colStatus = :status) " +
            "AND (:pm IS NULL OR e.colProductManager LIKE %:pm%) " +
            "AND (:solution IS NULL OR e.colOtherSolutionTag = :solution) " +
            "AND (:versionDivision IS NULL OR e.colVersionDivision LIKE %:versionDivision%) " +
@@ -72,7 +67,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
     List<DataEntry> queryEntries(@Param("versionId") Long versionId,
                                  @Param("customTabId") Long customTabId,
                                  @Param("name") String name,
-                                 @Param("status") String status,
                                  @Param("pm") String productManager,
                                  @Param("solution") String solution,
                                  @Param("versionDivision") String versionDivision,
@@ -109,4 +103,14 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             Long versionId, String colBizCategory, String colBizDomain);
 
     List<DataEntry> findByVersionIdAndColProductSystem(Long versionId, String colProductSystem);
+
+    List<DataEntry> findByVersionIdAndColBizCategory(Long versionId, String colBizCategory);
+
+    List<DataEntry> findByVersionIdAndColBizDomain(Long versionId, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizCategory(Long versionId, Integer level, String colBizCategory);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizDomain(Long versionId, Integer level, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndDomainIdAndLevel(Long versionId, Long domainId, Integer level);
 }

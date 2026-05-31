@@ -37,9 +37,12 @@
 
 <script setup>
 import { ref, watch, nextTick } from 'vue'
-import { getTree } from '../api/data'
+import { getCategoryTree } from '../api/data'
 
-const props = defineProps({ versionId: [Number, String] })
+const props = defineProps({
+  versionId: [Number, String],
+  highlightNode: { type: Object, default: null }
+})
 const emit = defineEmits(['select'])
 const treeRef = ref(null)
 const selectedAll = ref(true)
@@ -55,13 +58,40 @@ watch(filterText, (val) => {
 
 watch(() => props.versionId, async (val) => {
   if (val) {
-    const res = await getTree(val)
+    const res = await getCategoryTree(val)
     treeData.value = res.data
     nodeMap.value = {}
     buildNodeMap(res.data)
     selectAll()
   }
 }, { immediate: true })
+
+watch(() => props.highlightNode, (node) => {
+  if (!node || !treeRef.value) return
+  const key = findNodeKeyByLabel(node.categoryLabel, node.domainLabel)
+  if (key) {
+    selectedAll.value = false
+    treeRef.value.setCurrentKey(key)
+  }
+}, { flush: 'post' })
+
+function findNodeKeyByLabel(categoryLabel, domainLabel) {
+  if (domainLabel) {
+    for (const [, node] of Object.entries(nodeMap.value)) {
+      if (node.label === domainLabel && node.level === 2) {
+        return node.id
+      }
+    }
+  }
+  if (categoryLabel) {
+    for (const [, node] of Object.entries(nodeMap.value)) {
+      if (node.label === categoryLabel && node.level === 1) {
+        return node.id
+      }
+    }
+  }
+  return null
+}
 
 function buildNodeMap(nodes) {
   for (const n of nodes) {

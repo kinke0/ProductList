@@ -39,4 +39,10 @@ public class DataOptionController {
         service.delete(id);
         return Result.success();
     }
+
+    @PutMapping("/sort")
+    public Result<Void> updateSort(@RequestBody List<Map<String, Object>> sortList) {
+        service.updateSortOrders(sortList);
+        return Result.success();
+    }
 }

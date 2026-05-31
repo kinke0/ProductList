@@ -30,17 +30,21 @@ public class CustomTabService {
 
     @Transactional
     public CustomTab createWithFilter(String name, Long versionId, Long userId,
-                                       String entryName, String status, String productManager,
+                                       String entryName, List<String> statusList, String productManager,
                                        String solution, String versionTag) {
         CustomTab tab = create(name, versionId, userId);
         List<DataEntry> entries = dataEntryRepository.queryEntries(
                 versionId, null,
                 (entryName != null && !entryName.isEmpty()) ? entryName : null,
-                (status != null && !status.isEmpty()) ? status : null,
                 (productManager != null && !productManager.isEmpty()) ? productManager : null,
                 (solution != null && !solution.isEmpty()) ? solution : null,
                 (versionTag != null && !versionTag.isEmpty()) ? versionTag : null,
                 null, null);
+        if (statusList != null && !statusList.isEmpty()) {
+            entries = entries.stream()
+                    .filter(e -> e.getColStatus() != null && statusList.stream().anyMatch(s -> e.getColStatus().contains(s)))
+                    .toList();
+        }
         List<Long> entryIds = entries.stream().map(DataEntry::getId).collect(Collectors.toList());
         if (!entryIds.isEmpty()) {
             addEntries(tab.getId(), entryIds);
@@ -105,8 +109,6 @@ public class CustomTabService {
             customTabEntryRepository.save(entry);
             maxSort++;
         }
-        fixNullSort(tabId, existing);
-        reorderTabByHierarchy(tabId);
     }
 
     private void fixNullSort(Long tabId, List<CustomTabEntry> existing) {

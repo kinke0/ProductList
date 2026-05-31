@@ -4,6 +4,7 @@ import com.superpower.common.Result;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.image.dto.ImageDirectoryNode;
 import com.superpower.modules.image.dto.MigrationResult;
+import com.superpower.modules.image.dto.MigrationTaskProgress;
 import com.superpower.modules.image.entity.ImageResource;
 import com.superpower.modules.image.service.ImageResourceService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/images")
@@ -70,9 +72,14 @@ public class ImageResourceController {
 
     @PostMapping("/migrate-external-images")
     @PreAuthorize("hasRole('ADMIN')")
-    public Result<MigrationResult> migrateExternalImages(@RequestBody List<Long> entryIds) {
-        MigrationResult result = imageResourceService.migrateExternalImages(entryIds);
-        return Result.success(result);
+    public Result<Map<String, String>> migrateExternalImages(@RequestBody List<Long> entryIds) {
+        String taskId = imageResourceService.startMigration(entryIds);
+        return Result.success(Map.of("taskId", taskId));
+    }
+
+    @GetMapping("/migrate-task/{taskId}")
+    public Result<MigrationTaskProgress> getMigrationProgress(@PathVariable String taskId) {
+        return Result.success(imageResourceService.getMigrationProgress(taskId));
     }
 
     @GetMapping("/{id}/references")

@@ -1,17 +1,22 @@
 package com.superpower.modules.image.service;
 
 import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
 import com.superpower.modules.category.repository.BaseCategoryRepository;
+import com.superpower.modules.category.repository.BaseDomainRepository;
 import com.superpower.common.BusinessException;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.image.dto.ImageDirectoryNode;
 import com.superpower.modules.image.entity.ImageResource;
 import com.superpower.modules.image.dto.MigrationResult;
+import com.superpower.modules.image.dto.MigrationTaskProgress;
 import com.superpower.modules.image.repository.ImageResourceRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -22,6 +27,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -35,16 +41,26 @@ public class ImageResourceService {
     private final ImageResourceRepository imageResourceRepository;
     private final DataEntryRepository dataEntryRepository;
     private final BaseCategoryRepository baseCategoryRepository;
+    private final BaseDomainRepository baseDomainRepository;
 
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
 
+    private final ConcurrentHashMap<String, MigrationTaskProgress> taskStore = new ConcurrentHashMap<>();
+
+    @Lazy
+    private final ImageResourceService self;
+
     public ImageResourceService(ImageResourceRepository imageResourceRepository,
                                 DataEntryRepository dataEntryRepository,
-                                BaseCategoryRepository baseCategoryRepository) {
+                                BaseCategoryRepository baseCategoryRepository,
+                                BaseDomainRepository baseDomainRepository,
+                                @Lazy ImageResourceService self) {
         this.imageResourceRepository = imageResourceRepository;
         this.dataEntryRepository = dataEntryRepository;
         this.baseCategoryRepository = baseCategoryRepository;
+        this.baseDomainRepository = baseDomainRepository;
+        this.self = self;
     }
 
     @Transactional
@@ -292,31 +308,58 @@ public class ImageResourceService {
         Map<String, List<String>> catToDomains = new LinkedHashMap<>();
         Map<String, List<String>> domToProducts = new LinkedHashMap<>();
 
-        Map<Long, DataEntry> entryMap = new HashMap<>();
-        for (DataEntry e : entries) entryMap.put(e.getId(), e);
+        if (versionId != null) {
+            List<BaseCategory> baseCategories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+            for (BaseCategory cat : baseCategories) {
+                String catName = cat.getName();
+                catNames.put(catName, catName);
 
-        for (DataEntry entry : entries) {
-            String cat = entry.getColBizCategory();
-            String dom = entry.getColBizDomain();
-            if (cat == null || cat.isEmpty()) continue;
-            cat = cat.trim();
-            catNames.putIfAbsent(cat, cat);
+                List<BaseDomain> domains = baseDomainRepository.findByVersionIdAndCategoryIdOrderBySortOrderAsc(versionId, cat.getId());
+                for (BaseDomain dom : domains) {
+                    String domName = dom.getName();
+                    catToDomains.computeIfAbsent(catName, k -> new ArrayList<>());
+                    String domListKey = catName + "||" + domName;
+                    if (catToDomains.get(catName).stream().noneMatch(d -> d.equals(domName))) {
+                        catToDomains.get(catName).add(domName);
+                    }
 
-            if (dom != null && !dom.trim().isEmpty()) {
-                final String domTrimmed = dom.trim();
-                catToDomains.computeIfAbsent(cat, k -> new ArrayList<>());
-                String domListKey = cat + "||" + domTrimmed;
-                if (catToDomains.get(cat).stream().noneMatch(d -> d.equals(domTrimmed))) {
-                    catToDomains.get(cat).add(domTrimmed);
+                    List<DataEntry> level3Entries = dataEntryRepository.findByVersionIdAndDomainIdAndLevel(versionId, dom.getId(), 3);
+                    for (DataEntry e : level3Entries) {
+                        String prod = e.getColProductSystem();
+                        if (prod != null && !prod.trim().isEmpty()) {
+                            prod = prod.trim();
+                            domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
+                            if (!domToProducts.get(domListKey).contains(prod)) {
+                                domToProducts.get(domListKey).add(prod);
+                            }
+                        }
+                    }
                 }
-
-                if (entry.getLevel() != null && entry.getLevel() == 3) {
-                    String prod = entry.getColProductSystem();
-                    if (prod != null && !prod.trim().isEmpty()) {
-                        prod = prod.trim();
-                        domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
-                        if (!domToProducts.get(domListKey).contains(prod)) {
-                            domToProducts.get(domListKey).add(prod);
+            }
+        } else {
+            Map<Long, DataEntry> entryMap = new HashMap<>();
+            for (DataEntry e : entries) entryMap.put(e.getId(), e);
+            for (DataEntry entry : entries) {
+                String cat = entry.getColBizCategory();
+                String dom = entry.getColBizDomain();
+                if (cat == null || cat.isEmpty()) continue;
+                cat = cat.trim();
+                catNames.putIfAbsent(cat, cat);
+                if (dom != null && !dom.trim().isEmpty()) {
+                    final String domTrimmed = dom.trim();
+                    catToDomains.computeIfAbsent(cat, k -> new ArrayList<>());
+                    String domListKey = cat + "||" + domTrimmed;
+                    if (catToDomains.get(cat).stream().noneMatch(d -> d.equals(domTrimmed))) {
+                        catToDomains.get(cat).add(domTrimmed);
+                    }
+                    if (entry.getLevel() != null && entry.getLevel() == 3) {
+                        String prod = entry.getColProductSystem();
+                        if (prod != null && !prod.trim().isEmpty()) {
+                            prod = prod.trim();
+                            domToProducts.computeIfAbsent(domListKey, k -> new ArrayList<>());
+                            if (!domToProducts.get(domListKey).contains(prod)) {
+                                domToProducts.get(domListKey).add(prod);
+                            }
                         }
                     }
                 }
@@ -324,19 +367,6 @@ public class ImageResourceService {
         }
 
         List<String> orderedCategories = new ArrayList<>(catNames.keySet());
-        if (versionId != null) {
-            List<BaseCategory> baseCategories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
-            Set<String> catSet = new LinkedHashSet<>();
-            for (BaseCategory bc : baseCategories) {
-                if (catNames.containsKey(bc.getName())) {
-                    catSet.add(bc.getName());
-                }
-            }
-            for (String c : orderedCategories) {
-                catSet.add(c);
-            }
-            orderedCategories = new ArrayList<>(catSet);
-        }
 
         List<ImageDirectoryNode> roots = new ArrayList<>();
         for (String catName : orderedCategories) {
@@ -439,144 +469,177 @@ public class ImageResourceService {
         return input.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
 
-    @Transactional
-    public MigrationResult migrateExternalImages(List<Long> ids) {
-        List<DataEntry> entries = dataEntryRepository.findAllById(ids);
-        MigrationResult result = new MigrationResult();
-        int successImages = 0;
-        int failedImages = 0;
+    public String startMigration(List<Long> ids) {
+        String taskId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        MigrationTaskProgress progress = new MigrationTaskProgress();
+        progress.setTaskId(taskId);
+        progress.setStatus("RUNNING");
+        progress.setTotalEntries(ids.size());
+        progress.setProcessedEntries(0);
+        progress.setSuccessImages(0);
+        progress.setFailedImages(0);
+        progress.setCurrentEntry("");
+        taskStore.put(taskId, progress);
+        self.migrateExternalImagesAsync(taskId, ids);
+        return taskId;
+    }
 
-        for (DataEntry entry : entries) {
-            String desc = entry.getColFeatureDesc();
-            if (desc == null || desc.isEmpty()) continue;
-            if (!desc.contains("cloudimgs.jscloud.vip")) continue;
+    public MigrationTaskProgress getMigrationProgress(String taskId) {
+        return taskStore.get(taskId);
+    }
 
-            String category = entry.getColBizCategory();
-            if (category != null) category = category.trim();
-            String domain = entry.getColBizDomain();
-            if (domain != null) domain = domain.trim();
+    @Async
+    public void migrateExternalImagesAsync(String taskId, List<Long> ids) {
+        MigrationTaskProgress progress = taskStore.get(taskId);
+        try {
+            List<DataEntry> entries = dataEntryRepository.findAllById(ids);
+            int successImages = 0;
+            int failedImages = 0;
+            int processedCount = 0;
 
-            DataEntry l3 = entry;
-            while (l3 != null && l3.getLevel() != null && l3.getLevel() > 3) {
-                Long parentId = l3.getParentId();
-                l3 = parentId != null ? dataEntryRepository.findById(parentId).orElse(null) : null;
-            }
-            String product = l3 != null ? l3.getColProductSystem() : entry.getColProductSystem();
-            if (product != null) product = product.trim();
-
-            String newDesc = desc;
-            int entryMigrated = 0;
-
-            Pattern extUrlPattern = Pattern.compile("https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\"<>\\]]+");
-            Map<String, ImageResource> downloaded = new HashMap<>();
-            Matcher urlMatcher = extUrlPattern.matcher(newDesc);
-            while (urlMatcher.find()) {
-                String extUrl = urlMatcher.group();
-                if (!downloaded.containsKey(extUrl)) {
-                    ImageResource image = downloadAndStoreImage(extUrl, category, domain, product, entry.getVersionId());
-                    downloaded.put(extUrl, image);
+            for (DataEntry entry : entries) {
+                progress.setCurrentEntry(entry.getColProductSystem() != null ? entry.getColProductSystem() : "ID:" + entry.getId());
+                String desc = entry.getColFeatureDesc();
+                if (desc == null || desc.isEmpty() || !desc.contains("cloudimgs.jscloud.vip")) {
+                    processedCount++;
+                    progress.setProcessedEntries(processedCount);
+                    continue;
                 }
-            }
 
-            Pattern cardOpenPattern = Pattern.compile(
-                "<span\\s+class=\"image-card\"[^>]*?>", Pattern.DOTALL);
-            Matcher cardMatcher = cardOpenPattern.matcher(newDesc);
-            StringBuffer sbCards = new StringBuffer();
-            int lastEnd = 0;
-            while (cardMatcher.find()) {
-                int matchStart = cardMatcher.start();
-                sbCards.append(newDesc, lastEnd, matchStart);
-                String blockStart = cardMatcher.group();
-                String afterStart = newDesc.substring(cardMatcher.end());
-                String fullBlock = extractImageCardBlock(blockStart, afterStart);
-                lastEnd = matchStart + fullBlock.length();
+                String category = entry.getColBizCategory();
+                if (category != null) category = category.trim();
+                String domain = entry.getColBizDomain();
+                if (domain != null) domain = domain.trim();
 
-                Matcher urlInCard = extUrlPattern.matcher(fullBlock);
-                if (urlInCard.find()) {
-                    String extUrl = urlInCard.group();
-                    ImageResource image = downloaded.get(extUrl);
-                    if (image != null) {
-                        sbCards.append(updateImageCardUrls(fullBlock, extUrl, image));
-                        entryMigrated++;
-                        continue;
+                DataEntry l3 = entry;
+                while (l3 != null && l3.getLevel() != null && l3.getLevel() > 3) {
+                    Long parentId = l3.getParentId();
+                    l3 = parentId != null ? dataEntryRepository.findById(parentId).orElse(null) : null;
+                }
+                String product = l3 != null ? l3.getColProductSystem() : entry.getColProductSystem();
+                if (product != null) product = product.trim();
+
+                String newDesc = desc;
+                newDesc = newDesc.replaceAll("<\\s+(https?://)", "<$1");
+                newDesc = newDesc.replaceAll("<\\s*<\\s*(span\\s+class=\"image-card\")", "<$1");
+                int entryMigrated = 0;
+
+                Pattern extUrlPattern = Pattern.compile("https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\"<>\\]]+");
+                Map<String, ImageResource> downloaded = new HashMap<>();
+                Matcher urlMatcher = extUrlPattern.matcher(newDesc);
+                while (urlMatcher.find()) {
+                    String extUrl = urlMatcher.group();
+                    if (!downloaded.containsKey(extUrl)) {
+                        ImageResource image = downloadAndStoreImage(extUrl, category, domain, product, entry.getVersionId());
+                        downloaded.put(extUrl, image);
                     }
                 }
-                sbCards.append(fullBlock);
-            }
-            sbCards.append(newDesc, lastEnd, newDesc.length());
-            newDesc = sbCards.toString();
 
-            Pattern bracketPattern = Pattern.compile("\\[(https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\\]]+)\\]");
-            Matcher bracketMatcher = bracketPattern.matcher(newDesc);
-            StringBuffer sbBracket = new StringBuffer();
-            while (bracketMatcher.find()) {
-                String extUrl = bracketMatcher.group(1);
-                ImageResource image = downloaded.get(extUrl);
-                if (image != null) {
-                    bracketMatcher.appendReplacement(sbBracket, Matcher.quoteReplacement(buildImageCard(image)));
-                    entryMigrated++;
-                } else {
-                    bracketMatcher.appendReplacement(sbBracket, Matcher.quoteReplacement(bracketMatcher.group(0)));
+                Pattern cardOpenPattern = Pattern.compile(
+                    "<span\\s+class=\"image-card\"[^>]*?>", Pattern.DOTALL);
+                Matcher cardMatcher = cardOpenPattern.matcher(newDesc);
+                StringBuffer sbCards = new StringBuffer();
+                int lastEnd = 0;
+                while (cardMatcher.find()) {
+                    int matchStart = cardMatcher.start();
+                    sbCards.append(newDesc, lastEnd, matchStart);
+                    String blockStart = cardMatcher.group();
+                    String afterStart = newDesc.substring(cardMatcher.end());
+                    String fullBlock = extractImageCardBlock(blockStart, afterStart);
+                    lastEnd = matchStart + fullBlock.length();
+
+                    Matcher urlInCard = extUrlPattern.matcher(fullBlock);
+                    if (urlInCard.find()) {
+                        String extUrl = urlInCard.group();
+                        ImageResource image = downloaded.get(extUrl);
+                        if (image != null) {
+                            sbCards.append(updateImageCardUrls(fullBlock, extUrl, image));
+                            entryMigrated++;
+                            continue;
+                        }
+                    }
+                    sbCards.append(fullBlock);
                 }
-            }
-            bracketMatcher.appendTail(sbBracket);
-            newDesc = sbBracket.toString();
+                sbCards.append(newDesc, lastEnd, newDesc.length());
+                newDesc = sbCards.toString();
 
-            Pattern anglePattern = Pattern.compile("<(https?://cloudimgs\\.jscloud\\.vip:\\d+/[^>]+)>");
-            Matcher angleMatcher = anglePattern.matcher(newDesc);
-            StringBuffer sbAngle = new StringBuffer();
-            while (angleMatcher.find()) {
-                String extUrl = angleMatcher.group(1);
-                ImageResource image = downloaded.get(extUrl);
-                if (image != null) {
-                    angleMatcher.appendReplacement(sbAngle, Matcher.quoteReplacement(buildImageCard(image)));
-                    entryMigrated++;
-                } else {
-                    angleMatcher.appendReplacement(sbAngle, Matcher.quoteReplacement(angleMatcher.group(0)));
+                Pattern bracketPattern = Pattern.compile("\\[(https?://cloudimgs\\.jscloud\\.vip:\\d+/[^\\]]+)\\]");
+                Matcher bracketMatcher = bracketPattern.matcher(newDesc);
+                StringBuffer sbBracket = new StringBuffer();
+                while (bracketMatcher.find()) {
+                    String extUrl = bracketMatcher.group(1);
+                    ImageResource image = downloaded.get(extUrl);
+                    if (image != null) {
+                        bracketMatcher.appendReplacement(sbBracket, Matcher.quoteReplacement(buildImageCard(image)));
+                        entryMigrated++;
+                    } else {
+                        bracketMatcher.appendReplacement(sbBracket, Matcher.quoteReplacement(bracketMatcher.group(0)));
+                    }
                 }
-            }
-            angleMatcher.appendTail(sbAngle);
-            newDesc = sbAngle.toString();
+                bracketMatcher.appendTail(sbBracket);
+                newDesc = sbBracket.toString();
 
-            Matcher plainUrlMatcher = extUrlPattern.matcher(newDesc);
-            StringBuffer sbPlain = new StringBuffer();
-            while (plainUrlMatcher.find()) {
-                String extUrl = plainUrlMatcher.group();
-                ImageResource image = downloaded.get(extUrl);
-                if (image != null) {
-                    plainUrlMatcher.appendReplacement(sbPlain, Matcher.quoteReplacement(buildImageCard(image)));
-                    entryMigrated++;
-                } else {
-                    plainUrlMatcher.appendReplacement(sbPlain, Matcher.quoteReplacement(extUrl));
+                Pattern anglePattern = Pattern.compile("<(https?://cloudimgs\\.jscloud\\.vip:\\d+/[^>]+)>");
+                Matcher angleMatcher = anglePattern.matcher(newDesc);
+                StringBuffer sbAngle = new StringBuffer();
+                while (angleMatcher.find()) {
+                    String extUrl = angleMatcher.group(1);
+                    ImageResource image = downloaded.get(extUrl);
+                    if (image != null) {
+                        angleMatcher.appendReplacement(sbAngle, Matcher.quoteReplacement(buildImageCard(image)));
+                        entryMigrated++;
+                    } else {
+                        angleMatcher.appendReplacement(sbAngle, Matcher.quoteReplacement(angleMatcher.group(0)));
+                    }
                 }
-            }
-            plainUrlMatcher.appendTail(sbPlain);
-            newDesc = sbPlain.toString();
+                angleMatcher.appendTail(sbAngle);
+                newDesc = sbAngle.toString();
 
-            if (!newDesc.equals(desc)) {
-                entry.setColFeatureDesc(newDesc);
-                dataEntryRepository.save(entry);
+                Matcher plainUrlMatcher = extUrlPattern.matcher(newDesc);
+                StringBuffer sbPlain = new StringBuffer();
+                while (plainUrlMatcher.find()) {
+                    String extUrl = plainUrlMatcher.group();
+                    ImageResource image = downloaded.get(extUrl);
+                    if (image != null) {
+                        plainUrlMatcher.appendReplacement(sbPlain, Matcher.quoteReplacement(buildImageCard(image)));
+                        entryMigrated++;
+                    } else {
+                        plainUrlMatcher.appendReplacement(sbPlain, Matcher.quoteReplacement(extUrl));
+                    }
+                }
+                plainUrlMatcher.appendTail(sbPlain);
+                newDesc = sbPlain.toString();
+
+                if (!newDesc.equals(desc)) {
+                    entry.setColFeatureDesc(newDesc);
+                    dataEntryRepository.save(entry);
+                }
+
+                int entryFailed = 0;
+                for (ImageResource img : downloaded.values()) {
+                    if (img == null) entryFailed++;
+                }
+                successImages += entryMigrated;
+                failedImages += entryFailed;
+                if (entryFailed > 0) {
+                    MigrationResult.EntryFailDetail detail = new MigrationResult.EntryFailDetail();
+                    detail.setEntryId(entry.getId());
+                    detail.setProductName(entry.getColProductSystem() != null ? entry.getColProductSystem() : (product != null ? product : "ID:" + entry.getId()));
+                    detail.setFailedImageCount(entryFailed);
+                    detail.setTotalImageCount(downloaded.size());
+                    progress.getFailures().add(detail);
+                }
+
+                processedCount++;
+                progress.setProcessedEntries(processedCount);
+                progress.setSuccessImages(successImages);
+                progress.setFailedImages(failedImages);
             }
 
-            int entryTotal = downloaded.size();
-            int entryFailed = 0;
-            for (ImageResource img : downloaded.values()) {
-                if (img == null) entryFailed++;
-            }
-            successImages += entryMigrated;
-            failedImages += entryFailed;
-            if (entryFailed > 0) {
-                MigrationResult.EntryFailDetail detail = new MigrationResult.EntryFailDetail();
-                detail.setEntryId(entry.getId());
-                detail.setProductName(entry.getColProductSystem() != null ? entry.getColProductSystem() : (product != null ? product : "ID:" + entry.getId()));
-                detail.setFailedImageCount(entryFailed);
-                detail.setTotalImageCount(entryTotal);
-                result.getFailures().add(detail);
-            }
+            progress.setStatus("COMPLETED");
+        } catch (Exception e) {
+            progress.setStatus("FAILED");
         }
-        result.setSuccessImages(successImages);
-        result.setFailedImages(failedImages);
-        return result;
     }
 
     private String extractImageCardBlock(String blockStart, String after) {

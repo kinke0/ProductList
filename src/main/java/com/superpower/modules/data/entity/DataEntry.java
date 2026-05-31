@@ -52,6 +52,12 @@ public class DataEntry {
     @Column(name = "col_业务域", length = 200)
     private String colBizDomain;
 
+    @Column(name = "category_id")
+    private Long categoryId;
+
+    @Column(name = "domain_id")
+    private Long domainId;
+
     @Column(name = "col_版本划分", length = 200)
     private String colVersionDivision;
 

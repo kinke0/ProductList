@@ -1,0 +1,213 @@
+<template>
+  <el-dialog v-model="visible" title="预览" width="80%" top="5vh" :close-on-click-modal="true" @close="onClose">
+    <template #header>
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+        <div style="display:flex;align-items:center;gap:16px;">
+          <span>预览</span>
+          <el-radio-group v-model="previewMode" size="small" @change="onModeChange">
+            <el-radio-button value="feature">功能说明</el-radio-button>
+            <el-radio-button value="bid">招标参数</el-radio-button>
+          </el-radio-group>
+        </div>
+        <el-button type="primary" size="small" :loading="downloadLoading" @click="downloadPreview">下载Word</el-button>
+      </div>
+    </template>
+    <div style="position:relative;">
+      <iframe ref="frameRef" :srcdoc="html" @load="onFrameLoad" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
+      <div v-if="previewLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
+        <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
+        <span style="margin-top:12px;color:#666;font-size:14px;">正在加载预览...</span>
+      </div>
+      <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
+        <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
+        <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档...</span>
+      </div>
+    </div>
+  </el-dialog>
+</template>
+
+<script setup>
+import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { Loading } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+
+const props = defineProps({
+  entryId: { type: Number, default: null },
+  batchEntryIds: { type: Array, default: null },
+  modelValue: { type: Boolean, default: false }
+})
+
+const emit = defineEmits(['update:modelValue'])
+
+const visible = ref(false)
+const html = ref('')
+const previewLoading = ref(false)
+const downloadLoading = ref(false)
+const frameRef = ref(null)
+const previewMode = ref('feature')
+let pendingScrollTop = 0
+let pendingScrollToId = null
+let pendingHighlightId = null
+let messageHandler = null
+
+watch(() => props.modelValue, (val) => {
+  visible.value = val
+  if (val && (props.entryId || (props.batchEntryIds && props.batchEntryIds.length > 0))) {
+    loadPreview()
+  }
+})
+
+watch(visible, (val) => {
+  emit('update:modelValue', val)
+})
+
+watch(() => props.entryId, (newId) => {
+  if (visible.value && newId) {
+    loadPreview()
+  }
+})
+
+onMounted(() => {
+  messageHandler = (e) => {
+    if (!visible.value) return
+    emit('preview-message', e.data)
+  }
+  window.addEventListener('message', messageHandler)
+})
+
+onUnmounted(() => {
+  if (messageHandler) window.removeEventListener('message', messageHandler)
+})
+
+async function loadPreview(timestamp) {
+  html.value = ''
+  previewLoading.value = true
+  try {
+    const token = localStorage.getItem('token')
+    const params = new URLSearchParams()
+    params.set('mode', previewMode.value)
+    if (timestamp) params.set('_t', timestamp)
+    let url
+    if (props.batchEntryIds && props.batchEntryIds.length > 0) {
+      url = `/api/data/preview-batch?entryIds=${props.batchEntryIds.join(',')}&` + params.toString()
+    } else {
+      url = `/api/data/${props.entryId}/preview?` + params.toString()
+    }
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (resp.ok) {
+      html.value = await resp.text()
+    } else {
+      html.value = '<p>加载预览失败</p>'
+    }
+  } catch {
+    html.value = '<p>加载预览失败</p>'
+  }
+}
+
+async function downloadPreview() {
+  if (!props.entryId || downloadLoading.value) return
+  downloadLoading.value = true
+  try {
+    const token = localStorage.getItem('token')
+    const resp = await fetch(`/api/data/${props.entryId}/preview-download?mode=${previewMode.value}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!resp.ok) {
+      ElMessage.error('生成失败')
+      return
+    }
+    const blob = await resp.blob()
+    const disposition = resp.headers.get('Content-Disposition')
+    let filename = '预览文档.docx'
+    if (disposition) {
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?(.+)/i)
+      if (match) filename = decodeURIComponent(match[1].replace(/['"]/g, ''))
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('下载失败')
+  } finally {
+    downloadLoading.value = false
+  }
+}
+
+function findNearestHeadingId() {
+  try {
+    const doc = frameRef.value?.contentWindow?.document
+    if (!doc) return null
+    const content = doc.querySelector('.content')
+    if (!content) return null
+    const scrollTop = content.scrollTop
+    const headings = doc.querySelectorAll('h3[id]')
+    let nearest = null
+    let nearestTop = -1
+    for (const h of headings) {
+      const top = h.offsetTop
+      if (top <= scrollTop + 100 && top > nearestTop) {
+        nearestTop = top
+        nearest = h.id
+      }
+    }
+    return nearest
+  } catch { return null }
+}
+
+function onModeChange() {
+  if (!props.entryId) return
+  pendingScrollToId = findNearestHeadingId()
+  pendingHighlightId = null
+  pendingScrollTop = 0
+  loadPreview(Date.now())
+}
+
+function onFrameLoad() {
+  if (!html.value) return
+  previewLoading.value = false
+  try {
+    var doc = frameRef.value?.contentWindow?.document
+    if (!doc?.querySelector('.content')) return
+  } catch { return }
+  if (pendingScrollToId) {
+    try {
+      const el = doc.getElementById(pendingScrollToId)
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' })
+    } catch {}
+    pendingScrollToId = null
+    pendingScrollTop = 0
+    return
+  }
+  if (pendingScrollTop > 0) {
+    try { frameRef.value?.contentWindow?.document?.querySelector?.('.content')?.scrollTo(0, pendingScrollTop) } catch {}
+    pendingScrollTop = 0
+  }
+  if (pendingHighlightId) {
+    frameRef.value?.contentWindow?.postMessage({ action: 'highlightEntry', entryId: pendingHighlightId }, '*')
+    pendingHighlightId = null
+  }
+}
+
+function onClose() {
+  html.value = ''
+  previewMode.value = 'feature'
+}
+
+function reload(highlightEntryId) {
+  if (!props.entryId) return
+  try { pendingScrollTop = frameRef.value?.contentWindow?.document?.querySelector?.('.content')?.scrollTop || 0 } catch {}
+  pendingHighlightId = highlightEntryId || null
+  pendingScrollToId = null
+  loadPreview(Date.now())
+}
+
+function notifyUpdate(data) {
+  if (!frameRef.value?.contentWindow) return
+  frameRef.value.contentWindow.postMessage(data, '*')
+}
+
+defineExpose({ reload, notifyUpdate })
+</script>

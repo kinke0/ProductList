@@ -29,12 +29,12 @@ public class CustomTabController {
         Long versionId = Long.valueOf(body.get("versionId").toString());
         Long userId = body.get("userId") != null ? Long.valueOf(body.get("userId").toString()) : null;
         String entryName = (String) body.getOrDefault("entryName", "");
-        String status = (String) body.getOrDefault("status", "");
+        List<String> statusList = body.get("statusList") != null ? (List<String>) body.get("statusList") : List.of();
         String productManager = (String) body.getOrDefault("productManager", "");
         String solution = (String) body.getOrDefault("solution", "");
         String versionTag = (String) body.getOrDefault("versionTag", "");
         CustomTab tab = customTabService.createWithFilter(name, versionId, userId,
-                entryName, status, productManager, solution, versionTag);
+                entryName, statusList, productManager, solution, versionTag);
         return Result.success(tab);
     }
 
@@ -63,8 +63,8 @@ public class CustomTabController {
     @PostMapping("/{id}/entries")
     public Result<Void> addEntries(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked")
-        List<Integer> rawIds = (List<Integer>) body.get("entryIds");
-        List<Long> entryIds = rawIds.stream().map(Long::valueOf).collect(java.util.stream.Collectors.toList());
+        List<Number> rawIds = (List<Number>) body.get("entryIds");
+        List<Long> entryIds = rawIds.stream().map(Number::longValue).collect(java.util.stream.Collectors.toList());
         customTabService.addEntries(id, entryIds);
         return Result.success();
     }

@@ -44,7 +44,7 @@ public class DataEntryController {
     public Result<List<TreeNodeDTO>> getTree(
             @PathVariable Long versionId,
             @RequestParam(required = false) String name,
-            @RequestParam(required = false) String status,
+            @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) String productManager,
             @RequestParam(required = false) String solution,
             @RequestParam(required = false) String versionTag) {
@@ -56,7 +56,7 @@ public class DataEntryController {
             @PathVariable Long versionId,
             @PathVariable Long parentId,
             @RequestParam(required = false) String name,
-            @RequestParam(required = false) String status,
+            @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) String productManager,
             @RequestParam(required = false) String solution,
             @RequestParam(required = false) String versionTag) {
@@ -69,22 +69,31 @@ public class DataEntryController {
     }
 
     @GetMapping(value = "/{id}/preview", produces = "text/html;charset=UTF-8")
-    public String preview(@PathVariable Long id, Authentication auth) {
+    public String preview(@PathVariable Long id, @RequestParam(defaultValue = "feature") String mode, Authentication auth) {
         boolean isEditing = versionService.isEditable(dataEntryService.getById(id).getVersionId());
         String roleCode = auth != null ? auth.getName() : null;
-        return dataEntryService.getPreviewHtml(id, isEditing, roleCode);
+        return dataEntryService.getPreviewHtml(id, isEditing, roleCode, mode);
     }
 
     @GetMapping("/{id}/preview-download")
-    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id) throws Exception {
+    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id, @RequestParam(defaultValue = "feature") String mode) throws Exception {
         DataEntry entry = dataEntryService.getById(id);
         List<Long> ids = dataEntryService.collectL3AndDescendantIds(id);
-        byte[] data = documentService.generateDocument("feature", "word", ids);
-        String filename = (entry.getColProductSystem() != null ? entry.getColProductSystem() : "预览") + ".docx";
+        byte[] data = documentService.generateDocument(mode, "word", ids);
+        String suffix = "bid".equals(mode) ? "_招标参数" : "_功能说明";
+        String filename = (entry.getColProductSystem() != null ? entry.getColProductSystem() : "预览") + suffix + ".docx";
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + java.net.URLEncoder.encode(filename, "UTF-8") + "\"")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(data);
+    }
+
+    @GetMapping(value = "/preview-batch", produces = "text/html;charset=UTF-8")
+    public String previewBatch(@RequestParam String entryIds, @RequestParam(defaultValue = "feature") String mode, Authentication auth) {
+        List<Long> ids = java.util.Arrays.stream(entryIds.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).map(Long::parseLong).toList();
+        String roleCode = auth != null ? auth.getName() : null;
+        return dataEntryService.getPreviewHtml(ids, false, roleCode, mode);
     }
 
     @GetMapping("/query/{versionId}")
@@ -92,14 +101,15 @@ public class DataEntryController {
             @PathVariable Long versionId,
             @RequestParam(required = false) Long customTabId,
             @RequestParam(required = false) String name,
-            @RequestParam(required = false) String status,
+            @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) String productManager,
             @RequestParam(required = false) String solution,
             @RequestParam(required = false) String versionTag,
             @RequestParam(required = false) String bizCategory,
-            @RequestParam(required = false) String bizDomain) {
+            @RequestParam(required = false) String bizDomain,
+            @RequestParam(required = false) Integer level) {
         return Result.success(dataEntryService.query(versionId, customTabId, name, status, productManager,
-                solution, versionTag, bizCategory, bizDomain));
+                solution, versionTag, bizCategory, bizDomain, level));
     }
 
     @PostMapping
@@ -211,5 +221,16 @@ public class DataEntryController {
         checkVersionEditPermission(versionId);
         dataEntryService.batchDelete(ids);
         return Result.success();
+    }
+
+    @PutMapping("/batch-category")
+    public Result<Integer> batchUpdateCategory(@RequestBody Map<String, Object> body) {
+        Long versionId = Long.valueOf(body.get("versionId").toString());
+        checkVersionEditPermission(versionId);
+        List<Long> entryIds = ((List<Number>) body.get("entryIds")).stream().map(Number::longValue).toList();
+        Long categoryId = body.get("categoryId") != null ? Long.valueOf(body.get("categoryId").toString()) : null;
+        Long domainId = body.get("domainId") != null ? Long.valueOf(body.get("domainId").toString()) : null;
+        int count = dataEntryService.batchUpdateCategory(versionId, entryIds, categoryId, domainId);
+        return Result.success(count);
     }
 }

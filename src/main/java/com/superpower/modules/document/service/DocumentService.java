@@ -6,9 +6,11 @@ import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.document.entity.DocGenRecord;
 import com.superpower.modules.document.repository.DocGenRecordRepository;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.xmlbeans.XmlCursor;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
@@ -160,12 +162,6 @@ public class DocumentService {
             r.setUpdatedAt(LocalDateTime.now());
             genRecordRepository.save(r);
         });
-        byte[] data;
-        if ("word".equals(format)) {
-            data = generateWord(docType, entries, recordId);
-        } else {
-            data = generateExcel(docType, entries, recordId);
-        }
 
         Path dir = Paths.get(docStoragePath);
         Files.createDirectories(dir);
@@ -173,7 +169,13 @@ public class DocumentService {
         String ext = "word".equals(format) ? ".docx" : ".xlsx";
         String filename = docType + "_" + timestamp + "_" + recordId + ext;
         Path filePath = dir.resolve(filename);
-        Files.write(filePath, data);
+
+        if ("word".equals(format)) {
+            generateWordToFile(docType, entries, recordId, filePath);
+        } else {
+            byte[] data = generateExcel(docType, entries, recordId);
+            Files.write(filePath, data);
+        }
 
         updateGenRecordSuccess(recordId, filePath.toString(), Files.size(filePath));
         return filePath.toString();
@@ -205,17 +207,28 @@ public class DocumentService {
     }
 
     private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId) throws Exception {
+        ZipSecureFile.setMinInflateRatio(0.001);
+        ZipSecureFile.setMaxFileCount(100000);
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
-        if ("bid".equals(docType)) {
-            generateBidWord(doc, entries, recordId);
-        } else {
-            generateFeatureWord(doc, entries, recordId);
-        }
+        generateFeatureWord(doc, entries, recordId, docType);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
         doc.close();
         return out.toByteArray();
+    }
+
+    private void generateWordToFile(String docType, List<DataEntry> entries, Long recordId, Path filePath) throws Exception {
+        ZipSecureFile.setMinInflateRatio(0.001);
+        ZipSecureFile.setMaxFileCount(100000);
+        XWPFDocument doc = new XWPFDocument();
+        ensureBuiltinHeadingStyles(doc);
+        generateFeatureWord(doc, entries, recordId, docType);
+        try (OutputStream out = Files.newOutputStream(filePath)) {
+            doc.write(out);
+        } finally {
+            doc.close();
+        }
     }
 
     private void addParagraph(XWPFDocument doc, String text) {
@@ -255,7 +268,7 @@ public class DocumentService {
         }
     }
 
-    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId) {
+    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId, String docType) {
         int totalSize = entries.size();
         int[] progressCounter = {0};
         log.info("generateFeatureWord: total entries={}, recordId={}", totalSize, recordId);
@@ -306,7 +319,7 @@ public class DocumentService {
 
                 for (int i = 0; i < roots.size(); i++) {
                     String nodeNumber = domainNumber + "." + (i + 1);
-                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize);
+                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize, docType);
                 }
             }
         }
@@ -314,12 +327,12 @@ public class DocumentService {
 
     private void writeNode(XWPFDocument doc, DataEntry entry, String number, int level,
                            Map<Long, List<DataEntry>> childrenByParent,
-                           Long recordId, int[] progressCounter, int totalSize) {
+                           Long recordId, int[] progressCounter, int totalSize, String docType) {
         int docLevel = Math.min(level, MAX_HEADING_LEVEL);
         String name = extractName(entry.getColProductSystem());
         addNumberedHeading(doc, name, docLevel, number);
 
-        String desc = entry.getColFeatureDesc();
+        String desc = "bid".equals(docType) ? entry.getColBidParamDesc() : entry.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
             processDescriptionWithImages(doc, desc);
         }
@@ -332,7 +345,7 @@ public class DocumentService {
             children.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
             for (int i = 0; i < children.size(); i++) {
                 String childNumber = number + "." + (i + 1);
-                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize);
+                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize, docType);
             }
         }
     }
@@ -421,7 +434,7 @@ public class DocumentService {
                             if (imgData != null) {
                                 insertSingleImage(doc, url, imgData);
                             } else {
-                                insertFallbackText(doc, url);
+                                insertFallbackImage(doc);
                             }
                         }
                     }
@@ -431,7 +444,7 @@ public class DocumentService {
                     if (imgData != null) {
                         insertSingleImage(doc, url, imgData);
                     } else {
-                        insertFallbackText(doc, url);
+                        insertFallbackImage(doc);
                     }
                 }
 
@@ -689,7 +702,7 @@ public class DocumentService {
             captionRun.setColor("808080");
         } catch (Exception e) {
             log.warn("Failed to insert image: {}", url, e);
-            insertFallbackText(doc, url);
+            insertFallbackImage(doc);
         }
     }
 
@@ -760,14 +773,46 @@ public class DocumentService {
         border.setColor("FFFFFF");
     }
 
-    private void insertFallbackText(XWPFDocument doc, String url) {
+    private void insertFallbackImage(XWPFDocument doc) {
+        try {
+            java.nio.file.Path errorPath = java.nio.file.Paths.get("uploads/error/error.png");
+            if (java.nio.file.Files.exists(errorPath)) {
+                byte[] errorData = java.nio.file.Files.readAllBytes(errorPath);
+                BufferedImage bimg = javax.imageio.ImageIO.read(new ByteArrayInputStream(errorData));
+                if (bimg != null) {
+                    double targetWidthPx = 200;
+                    double aspectRatio = (double) bimg.getHeight() / bimg.getWidth();
+                    double targetHeightPx = targetWidthPx * aspectRatio;
+                    int widthEMU = (int) (targetWidthPx * 9525);
+                    int heightEMU = (int) (targetHeightPx * 9525);
+
+                    XWPFParagraph para = doc.createParagraph();
+                    para.setAlignment(ParagraphAlignment.CENTER);
+                    XWPFRun run = para.createRun();
+                    run.addPicture(new ByteArrayInputStream(errorData),
+                            XWPFDocument.PICTURE_TYPE_PNG, "error.png", widthEMU, heightEMU);
+
+                    XWPFParagraph captionPara = doc.createParagraph();
+                    captionPara.setAlignment(ParagraphAlignment.CENTER);
+                    captionPara.setSpacingBetween(1.5);
+                    XWPFRun captionRun = captionPara.createRun();
+                    captionRun.setText("缺失图片");
+                    captionRun.setFontSize(10);
+                    setFontStyle(captionRun);
+                    captionRun.setColor("808080");
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load error.png fallback image", e);
+        }
         XWPFParagraph para = doc.createParagraph();
-        para.setIndentationFirstLine(420);
-        para.setAlignment(ParagraphAlignment.LEFT);
+        para.setAlignment(ParagraphAlignment.CENTER);
         para.setSpacingBetween(1.5);
         XWPFRun run = para.createRun();
-        run.setText("<" + url + ">");
+        run.setText("缺失图片");
         setFontStyle(run);
+        run.setColor("808080");
     }
 
     String extractText(String codeText) {
@@ -939,22 +984,98 @@ public class DocumentService {
     }
 
     private byte[] generateExcel(String docType, List<DataEntry> entries, Long recordId) throws Exception {
-        Workbook wb = new XSSFWorkbook();
-        Sheet sheet;
+        entries = entries.stream()
+                .filter(e -> e.getLevel() != null && e.getLevel() >= 3)
+                .collect(Collectors.toList());
 
-        if ("bid".equals(docType)) {
-            sheet = wb.createSheet("招标参数");
-            String[] headers = {"产品/系统", "应用角色", "状态", "业务分类", "业务域", "版本划分", "产品经理", "招标参数说明", "功能说明", "软著"};
-            String[] fields = {"colProductSystem", "colAppRole", "colStatus", "colBizCategory", "colBizDomain",
-                    "colVersionDivision", "colProductManager", "colBidParamDesc", "colFeatureDesc", "colCopyright"};
-            fillSheet(sheet, headers, fields, entries, recordId);
-        } else {
-            sheet = wb.createSheet("功能说明");
-            String[] headers = {"产品/系统", "应用角色", "状态", "业务分类", "业务域", "产品经理", "功能说明", "招标参数说明"};
-            String[] fields = {"colProductSystem", "colAppRole", "colStatus", "colBizCategory", "colBizDomain",
-                    "colProductManager", "colFeatureDesc", "colBidParamDesc"};
-            fillSheet(sheet, headers, fields, entries, recordId);
+        Workbook wb = new XSSFWorkbook();
+        Sheet sheet = wb.createSheet("处理后清单");
+
+        CellStyle headerStyle = createExcelStyle(wb, true, HorizontalAlignment.CENTER);
+        CellStyle centerStyle = createExcelStyle(wb, false, HorizontalAlignment.CENTER);
+        CellStyle leftStyle = createExcelStyle(wb, false, HorizontalAlignment.LEFT);
+
+        String[] headers = {"业务分类", "业务域", "系统", "模块", "状态", "曜系列最小集", "驰系列最小集", "远系列最小集"};
+        Row headerRow = sheet.createRow(0);
+        for (int i = 0; i < headers.length; i++) {
+            Cell cell = headerRow.createCell(i);
+            cell.setCellValue(headers[i]);
+            cell.setCellStyle(headerStyle);
         }
+
+        Set<Long> entryIds = new HashSet<>();
+        Map<Long, DataEntry> entryMap = new HashMap<>();
+        for (DataEntry e : entries) {
+            entryIds.add(e.getId());
+            entryMap.put(e.getId(), e);
+        }
+
+        LinkedHashMap<String, LinkedHashMap<String, List<DataEntry>>> grouped = new LinkedHashMap<>();
+        for (DataEntry e : entries) {
+            String cat = e.getColBizCategory() != null ? e.getColBizCategory().trim() : "";
+            String dom = e.getColBizDomain() != null ? e.getColBizDomain().trim() : "";
+            grouped.computeIfAbsent(cat, k -> new LinkedHashMap<>())
+                    .computeIfAbsent(dom, k -> new ArrayList<>()).add(e);
+        }
+
+        int rowIdx = 1;
+        for (Map.Entry<String, LinkedHashMap<String, List<DataEntry>>> catEntry : grouped.entrySet()) {
+            String catName = extractText(catEntry.getKey());
+            int catStart = rowIdx;
+
+            for (Map.Entry<String, List<DataEntry>> domEntry : catEntry.getValue().entrySet()) {
+                String domName = extractText(domEntry.getKey());
+                List<DataEntry> domEntries = domEntry.getValue();
+                int domStart = rowIdx;
+
+                Map<Long, List<DataEntry>> childrenByParent = new LinkedHashMap<>();
+                List<DataEntry> roots = new ArrayList<>();
+                for (DataEntry e : domEntries) {
+                    if (e.getParentId() == null || e.getParentId() == 0 || !entryIds.contains(e.getParentId())) {
+                        roots.add(e);
+                    } else {
+                        childrenByParent.computeIfAbsent(e.getParentId(), k -> new ArrayList<>()).add(e);
+                    }
+                }
+                roots.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
+
+                for (DataEntry l3 : roots) {
+                    List<DataEntry> l4List = childrenByParent.getOrDefault(l3.getId(), new ArrayList<>());
+                    l4List.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
+                    int sysStart = rowIdx;
+
+                    if (l4List.isEmpty()) {
+                        Row row = sheet.createRow(rowIdx);
+                        writeExcelRow(row, catName, domName, extractName(l3.getColProductSystem()), "", l3, centerStyle, leftStyle);
+                        rowIdx++;
+                    } else {
+                        for (DataEntry l4 : l4List) {
+                            Row row = sheet.createRow(rowIdx);
+                            writeExcelRow(row, catName, domName, extractName(l3.getColProductSystem()), extractName(l4.getColProductSystem()), l4, centerStyle, leftStyle);
+                            rowIdx++;
+                        }
+                    }
+                    if (rowIdx - 1 > sysStart) {
+                        sheet.addMergedRegion(new CellRangeAddress(sysStart, rowIdx - 1, 2, 2));
+                    }
+                }
+                if (rowIdx - 1 > domStart) {
+                    sheet.addMergedRegion(new CellRangeAddress(domStart, rowIdx - 1, 1, 1));
+                }
+            }
+            if (rowIdx - 1 > catStart) {
+                sheet.addMergedRegion(new CellRangeAddress(catStart, rowIdx - 1, 0, 0));
+            }
+        }
+
+        sheet.setColumnWidth(0, 20 * 256);
+        sheet.setColumnWidth(1, 18 * 256);
+        sheet.setColumnWidth(2, 25 * 256);
+        sheet.setColumnWidth(3, 25 * 256);
+        sheet.setColumnWidth(4, 10 * 256);
+        sheet.setColumnWidth(5, 14 * 256);
+        sheet.setColumnWidth(6, 14 * 256);
+        sheet.setColumnWidth(7, 14 * 256);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         wb.write(out);
@@ -962,40 +1083,55 @@ public class DocumentService {
         return out.toByteArray();
     }
 
-    private void fillSheet(Sheet sheet, String[] headers, String[] fields, List<DataEntry> entries, Long recordId) {
-        Row headerRow = sheet.createRow(0);
-        for (int i = 0; i < headers.length; i++) {
-            headerRow.createCell(i).setCellValue(headers[i]);
-        }
-
-        for (int r = 0; r < entries.size(); r++) {
-            Row row = sheet.createRow(r + 1);
-            DataEntry e = entries.get(r);
-            for (int c = 0; c < fields.length; c++) {
-                String val = getFieldValue(e, fields[c]);
-                row.createCell(c).setCellValue(val != null ? val : "");
-            }
-            updateGenRecordProgress(recordId, r + 1, entries.size());
-        }
-
-        for (int i = 0; i < headers.length; i++) {
-            sheet.autoSizeColumn(i);
-        }
+    private CellStyle createExcelStyle(Workbook wb, boolean bold, HorizontalAlignment align) {
+        CellStyle style = wb.createCellStyle();
+        Font font = wb.createFont();
+        font.setFontName("宋体");
+        font.setFontHeightInPoints((short) 11);
+        font.setBold(bold);
+        style.setFont(font);
+        style.setAlignment(align);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        style.setWrapText(true);
+        style.setBorderTop(BorderStyle.THIN);
+        style.setBorderBottom(BorderStyle.THIN);
+        style.setBorderLeft(BorderStyle.THIN);
+        style.setBorderRight(BorderStyle.THIN);
+        return style;
     }
 
-    private String getFieldValue(DataEntry e, String field) {
-        return switch (field) {
-            case "colProductSystem" -> e.getColProductSystem();
-            case "colAppRole" -> e.getColAppRole();
-            case "colStatus" -> e.getColStatus();
-            case "colBizCategory" -> e.getColBizCategory();
-            case "colBizDomain" -> e.getColBizDomain();
-            case "colVersionDivision" -> e.getColVersionDivision();
-            case "colProductManager" -> e.getColProductManager();
-            case "colBidParamDesc" -> e.getColBidParamDesc();
-            case "colFeatureDesc" -> e.getColFeatureDesc();
-            case "colCopyright" -> e.getColCopyright();
-            default -> "";
-        };
+    private void writeExcelRow(Row row, String catName, String domName, String sysName, String modName,
+                                DataEntry target, CellStyle centerStyle, CellStyle leftStyle) {
+        Cell c0 = row.createCell(0);
+        c0.setCellValue(catName);
+        c0.setCellStyle(centerStyle);
+
+        Cell c1 = row.createCell(1);
+        c1.setCellValue(domName);
+        c1.setCellStyle(centerStyle);
+
+        Cell c2 = row.createCell(2);
+        c2.setCellValue(sysName);
+        c2.setCellStyle(centerStyle);
+
+        Cell c3 = row.createCell(3);
+        c3.setCellValue(modName);
+        c3.setCellStyle(leftStyle);
+
+        Cell c4 = row.createCell(4);
+        c4.setCellValue(target.getColStatus() != null ? target.getColStatus() : "");
+        c4.setCellStyle(leftStyle);
+
+        Cell c5 = row.createCell(5);
+        c5.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
+        c5.setCellStyle(leftStyle);
+
+        Cell c6 = row.createCell(6);
+        c6.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
+        c6.setCellStyle(leftStyle);
+
+        Cell c7 = row.createCell(7);
+        c7.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
+        c7.setCellStyle(leftStyle);
     }
 }

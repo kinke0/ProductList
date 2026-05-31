@@ -4,6 +4,7 @@ import com.superpower.common.Result;
 import com.superpower.modules.document.dto.DocGenerateRequest;
 import com.superpower.modules.document.entity.DocGenRecord;
 import com.superpower.modules.document.service.DocumentService;
+import com.superpower.modules.system.service.SysUserService;
 import jakarta.validation.Valid;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -23,9 +24,11 @@ import java.util.List;
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final SysUserService sysUserService;
 
-    public DocumentController(DocumentService documentService) {
+    public DocumentController(DocumentService documentService, SysUserService sysUserService) {
         this.documentService = documentService;
+        this.sysUserService = sysUserService;
     }
 
     @PostMapping("/generate")
@@ -35,6 +38,13 @@ public class DocumentController {
         if (auth != null && auth.getPrincipal() instanceof org.springframework.security.core.userdetails.User user) {
             userName = user.getUsername();
         }
+        String displayName = userName;
+        try {
+            com.superpower.modules.system.entity.SysUser sysUser = sysUserService.findByUsername(userName);
+            if (sysUser != null && sysUser.getNickname() != null && !sysUser.getNickname().isEmpty()) {
+                displayName = sysUser.getNickname();
+            }
+        } catch (Exception ignored) {}
 
         List<Long> entryIds = (request.getEntryIds() != null && !request.getEntryIds().isEmpty())
                 ? request.getEntryIds() : List.of();
@@ -42,7 +52,7 @@ public class DocumentController {
         Long customTabId = request.getCustomTabId();
 
         DocGenRecord record = documentService.createGenRecord(
-                request.getVersionId(), request.getDocType(), request.getFormat(), entryIds, userId, userName);
+                request.getVersionId(), request.getDocType(), request.getFormat(), entryIds, userId, displayName);
 
         Long recordId = record.getId();
         new Thread(() -> {
@@ -50,7 +60,11 @@ public class DocumentController {
                 documentService.generateAndSaveDocument(
                         recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId);
             } catch (Exception e) {
-                documentService.updateGenRecordError(recordId, e.getMessage());
+                try {
+                    documentService.updateGenRecordError(recordId, e.getMessage());
+                } catch (Exception ex) {
+                    try { documentService.updateGenRecordError(recordId, "生成失败: " + e.getClass().getSimpleName()); } catch (Exception ignored) {}
+                }
             }
         }).start();
 
