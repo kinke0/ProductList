@@ -30,8 +30,8 @@ public class ApprovalService {
 
     private static final Map<String, Set<String>> ACTION_ROLES = Map.of(
         "submit", Set.of("editor", "admin"),
-        "approve", Set.of("reviewer", "admin"),
-        "reject", Set.of("reviewer", "admin"),
+        "approve", Set.of("admin"),
+        "reject", Set.of("admin"),
         "withdraw", Set.of("editor", "admin")
     );
 
@@ -44,9 +44,7 @@ public class ApprovalService {
 
     private static final Map<String, String> ROLE_CODE_MAP = Map.of(
         "ADMIN", "admin",
-        "USER", "editor",
-        "REVIEWER", "reviewer",
-        "ADVANCED", "editor"
+        "USER", "editor"
     );
 
     private final DataEntryRepository entryRepository;

@@ -1,7 +1,10 @@
 <template>
   <div class="login-container">
     <div class="login-card">
-      <h2 class="login-title">添翼产品清单管理</h2>
+      <div class="login-title-row">
+        <h2 class="login-title">添翼解决方案管理平台</h2>
+        <span class="login-version">Version 1.0.1</span>
+      </div>
       <el-form ref="formRef" :model="form" :rules="rules" size="large">
         <el-form-item prop="username">
           <el-input ref="usernameRef" v-model="form.username" placeholder="用户名" :prefix-icon="User" @keyup.enter="focusPassword" />
@@ -151,12 +154,26 @@ async function handleRegister() {
   box-shadow: var(--si-shadow-lg);
 }
 
-.login-title {
+.login-title-row {
+  display: flex;
+  align-items: baseline;
   margin: 0 0 6px;
+}
+
+.login-title {
+  margin: 0;
   color: var(--si-text-primary);
   font-size: 22px;
   font-weight: 600;
   font-family: var(--si-font);
+}
+
+.login-version {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--si-text-tertiary, #aaa);
+  white-space: nowrap;
+  padding-right: 4px;
 }
 
 .login-footer {

@@ -11,6 +11,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -52,7 +53,7 @@ public class DocumentController {
         Long customTabId = request.getCustomTabId();
 
         DocGenRecord record = documentService.createGenRecord(
-                request.getVersionId(), request.getDocType(), request.getFormat(), entryIds, userId, displayName);
+                request.getVersionId(), request.getDocName(), request.getDocType(), request.getFormat(), entryIds, userId, displayName);
 
         Long recordId = record.getId();
         new Thread(() -> {
@@ -105,6 +106,7 @@ public class DocumentController {
     }
 
     @DeleteMapping("/records/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public Result<Void> deleteRecord(@PathVariable Long id) {
         documentService.deleteGenRecord(id);
         return Result.success();

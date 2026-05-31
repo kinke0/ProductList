@@ -33,6 +33,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/images/file/**").permitAll()
                 .requestMatchers("/api/requirements/file/**").permitAll()
+                .requestMatchers("/api/users/**").hasRole("ADMIN")
+                .requestMatchers("/api/roles/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.GET, "/api/**").authenticated()
                 .requestMatchers("/api/**").authenticated()
             )

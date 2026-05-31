@@ -41,9 +41,5 @@ export const useAuthStore = defineStore('auth', () => {
     return localStorage.getItem('roleCode') === 'ADMIN'
   }
 
-  function isAdvanced() {
-    return localStorage.getItem('roleCode') === 'ADVANCED'
-  }
-
-  return { token, user, login, fetchUser, logout, isAdmin, isAdvanced }
+  return { token, user, login, fetchUser, logout, isAdmin }
 })

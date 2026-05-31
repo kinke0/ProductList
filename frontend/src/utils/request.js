@@ -50,10 +50,12 @@ request.interceptors.response.use(
   },
   error => {
     const msg = error.response?.data?.message || error.message || '网络错误'
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    if (error.response?.status === 401) {
       ElMessage.error(msg)
       localStorage.removeItem('token')
       router.push('/login')
+    } else if (error.response?.status === 403) {
+      ElMessage.error(msg || '无权限操作')
     } else {
       ElMessage.error(msg)
     }

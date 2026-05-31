@@ -35,6 +35,10 @@
             <span>需求图片</span>
           </el-menu-item>
         </el-sub-menu>
+        <el-menu-item index="/image-gallery">
+          <el-icon><Picture /></el-icon>
+          <span>图床管理</span>
+        </el-menu-item>
         <el-menu-item v-if="authStore.isAdmin()" index="/versions">
           <el-icon><Document /></el-icon>
           <span>版本管理</span>
@@ -76,10 +80,6 @@
             </el-menu-item>
           </el-sub-menu>
         </el-sub-menu>
-        <el-menu-item v-if="authStore.isAdmin()" index="/image-gallery">
-          <el-icon><Picture /></el-icon>
-          <span>图床管理</span>
-        </el-menu-item>
       </el-menu>
     </div>
 

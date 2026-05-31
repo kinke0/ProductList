@@ -49,12 +49,6 @@ public class SuperPowerApplication implements CommandLineRunner {
         userRole.setDescription("数据维护人员");
         roleRepository.save(userRole);
 
-        SysRole advancedRole = new SysRole();
-        advancedRole.setName("高级用户");
-        advancedRole.setCode("ADVANCED");
-        advancedRole.setDescription("高级用户，可查询和生成文档");
-        roleRepository.save(advancedRole);
-
         SysUser admin = new SysUser();
         admin.setUsername("admin");
         admin.setPassword(passwordEncoder.encode("123456"));
@@ -70,14 +64,6 @@ public class SuperPowerApplication implements CommandLineRunner {
         user1.setRole(userRole);
         user1.setStatus(1);
         userRepository.save(user1);
-
-        SysUser advanced = new SysUser();
-        advanced.setUsername("advanced");
-        advanced.setPassword(passwordEncoder.encode("123456"));
-        advanced.setNickname("高级用户");
-        advanced.setRole(advancedRole);
-        advanced.setStatus(1);
-        userRepository.save(advanced);
 
         DataVersion version = new DataVersion();
         version.setVersionNo("1.0");

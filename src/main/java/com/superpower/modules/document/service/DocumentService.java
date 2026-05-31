@@ -73,10 +73,11 @@ public class DocumentService {
         this.customTabEntryRepository = customTabEntryRepository;
     }
 
-    public DocGenRecord createGenRecord(Long versionId, String docType, String format,
+    public DocGenRecord createGenRecord(Long versionId, String docName, String docType, String format,
                                         List<Long> entryIds, Long userId, String userName) {
         DocGenRecord record = new DocGenRecord();
         record.setVersionId(versionId);
+        record.setDocName(docName);
         record.setDocType(docType);
         record.setFormat(format);
         record.setEntryIds(entryIds.stream().map(String::valueOf).collect(Collectors.joining(",")));

@@ -1136,10 +1136,10 @@ public class DataEntryService {
                 if (("editor".equals(role) || "admin".equals(role)) && canWithdraw) {
                     body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'withdraw',entryId:").append(node.getId()).append("},'*')\">撤销</a>");
                 }
-                if (("reviewer".equals(role) || "admin".equals(role)) && canApprove) {
+                if ("admin".equals(role) && canApprove) {
                     body.append("<a class='ea-btn ea-btn-success' onclick=\"parent.postMessage({action:'approve',entryId:").append(node.getId()).append("},'*')\">通过</a>");
                 }
-                if (("reviewer".equals(role) || "admin".equals(role)) && canReject) {
+                if ("admin".equals(role) && canReject) {
                     body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'reject',entryId:").append(node.getId()).append("},'*')\">驳回</a>");
                 }
             }
@@ -1398,7 +1398,6 @@ public class DataEntryService {
 
     private String mapRoleCode(String code) {
         if ("ADMIN".equals(code)) return "admin";
-        if ("REVIEWER".equals(code)) return "reviewer";
         return "editor";
     }
 

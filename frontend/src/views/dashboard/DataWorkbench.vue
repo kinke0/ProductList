@@ -94,10 +94,10 @@
               v-for="tab in customTabs"
               :key="'custom-' + tab.id"
               :name="'custom-' + tab.id"
-              :closable="true"
+              :closable="isAdmin || String(tab.userId) === String(currentUserId)"
             >
               <template #label>
-                <span @dblclick.stop="onRenameTab(tab)">{{ tab.name }}</span>
+                <span @dblclick.stop="(isAdmin || String(tab.userId) === String(currentUserId)) && onRenameTab(tab)">{{ tab.name }}</span>
               </template>
               <DataListTab
                 v-if="activeTab === 'custom-' + tab.id"
@@ -144,8 +144,11 @@
     </el-dialog>
   </div>
 
-  <el-dialog v-model="showDocDialog" title="生成文档" width="960px" top="2vh">
-    <el-form label-width="100px" size="small">
+  <el-dialog v-model="showDocDialog" title="生成文档" width="1100px" top="2vh">
+    <el-form v-if="isAdmin" label-width="100px" size="small">
+      <el-form-item label="文档名称">
+        <el-input v-model="docName" placeholder="请输入文档名称" style="max-width:400px;" />
+      </el-form-item>
       <el-form-item label="文档类型">
         <el-radio-group v-model="docType">
           <el-radio value="bid">招标参数</el-radio>
@@ -178,12 +181,12 @@
         <el-radio-button value="30">近30天</el-radio-button>
         <el-radio-button value="">全部</el-radio-button>
       </el-radio-group>
-      <div style="margin-left:auto;">
+      <div style="margin-left:auto;" v-if="isAdmin">
         <el-button type="danger" size="small" :disabled="selectedRecIds.length === 0" @click="batchDeleteRecords">删除 ({{ selectedRecIds.length }})</el-button>
       </div>
     </div>
     <el-table :data="pagedRecords" size="small" max-height="380" v-loading="recordsLoading" @selection-change="onRecSelectionChange" ref="recTable" style="width:100%">
-      <el-table-column type="selection" width="40" />
+      <el-table-column type="selection" width="40" v-if="isAdmin" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'generating' || row.status === 'processing'" type="warning" size="small">
@@ -194,9 +197,19 @@
           <el-tag v-else type="info" size="small">{{ row.status || '未知' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="文档类型" min-width="160">
+      <el-table-column prop="docName" label="名称" min-width="160">
+        <template #default="{ row }">
+          {{ row.docName || (row.format === 'word' ? 'Word' : 'Excel') + '版' + (row.docType === 'bid' ? '招标参数' : '功能说明') }}
+        </template>
+      </el-table-column>
+      <el-table-column label="文档类型" min-width="130">
         <template #default="{ row }">
           {{ row.format === 'word' ? 'Word' : 'Excel' }}版{{ row.docType === 'bid' ? '招标参数' : '功能说明' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="版本" min-width="80">
+        <template #default="{ row }">
+          v{{ (versions.find(v => v.id === row.versionId) || {}).versionNo || '-' }}
         </template>
       </el-table-column>
       <el-table-column label="生成时间" min-width="170">
@@ -214,9 +227,9 @@
         <template #default="{ row }">
           <template v-if="row.status === 'completed' || row.status === 'success'">
             <el-button type="primary" link size="small" @click="handleDownload(row)">下载</el-button>
-            <el-button type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
+            <el-button v-if="isAdmin" type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
           </template>
-          <el-button v-else type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
+          <el-button v-else-if="isAdmin" type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -232,7 +245,7 @@
 
     <template #footer>
       <el-button @click="showDocDialog = false">取消</el-button>
-      <el-button type="primary" :loading="docLoading" @click="handleGenerate">生成</el-button>
+      <el-button v-if="isAdmin" type="primary" :loading="docLoading" @click="handleGenerate">生成</el-button>
     </template>
   </el-dialog>
 
@@ -285,7 +298,7 @@ import PanoramaTab from '../../components/PanoramaTab.vue'
 import PreviewDialog from '../../components/PreviewDialog.vue'
 import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
 import { getVersions } from '../../api/version'
-import { getCustomTabs, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
+import { getCustomTabs, createCustomTab, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { getOptions } from '../../api/option'
 import { deleteEntry } from '../../api/data'
 import { approveEntry, getApprovalLogs } from '../../api/approval'
@@ -294,6 +307,8 @@ import { Plus } from '@element-plus/icons-vue'
 
 const versions = ref([])
 const currentUserRole = localStorage.getItem('roleCode') || 'USER'
+const isAdmin = currentUserRole === 'ADMIN'
+const currentUserId = localStorage.getItem('userId')
 const selectedVersion = ref(null)
 const showVersionDialog = ref(false)
 const selectedNode = ref(null)
@@ -304,9 +319,10 @@ const docType = ref('feature')
 const docFormat = ref('word')
 const dataScope = ref('all')
 const selectedEntryIds = ref([])
- const docCustomTabId = ref(null)
-  const docLoading = ref(false)
- const genRecords = ref([])
+const docCustomTabId = ref(null)
+const docLoading = ref(false)
+const docName = ref('')
+const genRecords = ref([])
 const recordsLoading = ref(false)
 const filterCreator = ref('')
 const filterTime = ref('')
@@ -425,6 +441,14 @@ watch(showDocDialog, (val) => {
     progressProcessed.value = 0
     progressStatus.value = ''
   }
+})
+
+watch(docType, (val) => {
+  if (!showDocDialog.value) return
+  const typeLabel = val === 'bid' ? '招标参数' : '功能说明'
+  const tabId = docCustomTabId.value
+  const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
+  docName.value = tabName ? tabName + '-' + typeLabel : typeLabel
 })
 
 watch(selectedVersion, async (version) => {
@@ -593,15 +617,29 @@ async function handleAddList() {
   }
   addListLoading.value = true
   try {
-    await createCustomTabWithFilter({
-      name: addListForm.name.trim(),
-      versionId: selectedVersion.value.id,
-      entryName: addListForm.entryName || undefined,
-      statusList: addListForm.statusList.length > 0 ? addListForm.statusList : undefined,
-      productManager: addListForm.productManager || undefined,
-      solution: addListForm.solution || undefined,
-      versionTag: addListForm.versionTag || undefined
-    })
+    const hasFilter = (addListForm.entryName && addListForm.entryName.trim()) ||
+      (addListForm.statusList && addListForm.statusList.length > 0) ||
+      (addListForm.productManager && addListForm.productManager.trim()) ||
+      (addListForm.solution && addListForm.solution.trim()) ||
+      (addListForm.versionTag && addListForm.versionTag.trim())
+    if (hasFilter) {
+      await createCustomTabWithFilter({
+        name: addListForm.name.trim(),
+        versionId: selectedVersion.value.id,
+        userId: currentUserId ? Number(currentUserId) : undefined,
+        entryName: addListForm.entryName || undefined,
+        statusList: addListForm.statusList.length > 0 ? addListForm.statusList : undefined,
+        productManager: addListForm.productManager || undefined,
+        solution: addListForm.solution || undefined,
+        versionTag: addListForm.versionTag || undefined
+      })
+    } else {
+      await createCustomTab({
+        name: addListForm.name.trim(),
+        versionId: selectedVersion.value.id,
+        userId: currentUserId ? Number(currentUserId) : undefined
+      })
+    }
     ElMessage.success('清单创建成功')
     showAddListDialog.value = false
     await loadCustomTabs()
@@ -711,6 +749,8 @@ async function onRemoveFromList(tabId, entryIds) {
 function onGenerateDoc(ids, tabId) {
   selectedEntryIds.value = ids
   docCustomTabId.value = tabId || null
+  const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
+  docName.value = tabName ? tabName + '-功能说明' : '功能说明'
   showDocDialog.value = true
 }
 
@@ -792,6 +832,7 @@ async function handleGenerate() {
   try {
     const res = await generateDocument({
       versionId: selectedVersion.value.id,
+      docName: docName.value,
       docType: docType.value,
       format: docFormat.value,
       dataScope: dataScope.value,
@@ -819,7 +860,7 @@ async function handleDownload(row) {
   try {
     const res = await downloadDocument(row.id)
     const ext = row.format === 'word' ? 'docx' : 'xlsx'
-    const label = row.docType === 'bid' ? '招标参数' : '功能说明'
+    const fileName = row.docName || (row.docType === 'bid' ? '招标参数' : '功能说明')
     const blob = new Blob([res], {
       type: row.format === 'word'
         ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -828,7 +869,7 @@ async function handleDownload(row) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${label}.${ext}`
+    a.download = `${fileName}.${ext}`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {

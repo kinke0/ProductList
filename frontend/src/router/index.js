@@ -79,7 +79,7 @@ const routes = [
         path: 'image-gallery',
         name: 'ImageGallery',
         component: () => import('../views/system/ImageGallery.vue'),
-        meta: { title: '图床管理', roles: ['ADMIN'] }
+        meta: { title: '图床管理' }
       }
     ]
   }

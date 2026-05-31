@@ -66,13 +66,13 @@
             <el-button type="success" size="small" :loading="inserting" @click="onInsertClick">
               <el-icon><Upload /></el-icon>插入待生成清单
             </el-button>
-            <el-button type="info" size="small" :disabled="!props.isEditing" :loading="importing" @click="onImportExcelClick">
+            <el-button v-if="approvalRole === 'admin'" type="info" size="small" :disabled="!props.isEditing" :loading="importing" @click="onImportExcelClick">
               <el-icon><FolderOpened /></el-icon>导入本地Excel
             </el-button>
-          </template>
-           <el-button v-if="props.isEditing" type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
-            <el-button v-if="props.isEditing" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
-            <el-button v-if="props.isEditing" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+           </template>
+            <el-button v-if="props.isEditing" type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+             <el-button v-if="props.isEditing && approvalRole === 'admin'" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+             <el-button v-if="props.isEditing && approvalRole === 'admin'" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
              <el-dropdown @command="onBatchCommand">
               <el-button type="warning" size="small" plain>
                 <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -873,7 +873,6 @@ async function toggleVer(row, ver) {
 const approvalRole = computed(() => {
   const code = props.userRole || localStorage.getItem('roleCode') || 'USER'
   if (code === 'ADMIN') return 'admin'
-  if (code === 'REVIEWER') return 'reviewer'
   return 'editor'
 })
 
@@ -893,11 +892,11 @@ function canSubmit(row) {
 }
 
 function canApprove(row) {
-  return ['reviewer', 'admin'].includes(approvalRole.value) && row.approvalStatus === '待审核'
+  return approvalRole.value === 'admin' && row.approvalStatus === '待审核'
 }
 
 function canReject(row) {
-  return ['reviewer', 'admin'].includes(approvalRole.value) && (row.approvalStatus === '待审核' || row.approvalStatus === '审核通过')
+  return approvalRole.value === 'admin' && (row.approvalStatus === '待审核' || row.approvalStatus === '审核通过')
 }
 
 function canWithdraw(row) {
