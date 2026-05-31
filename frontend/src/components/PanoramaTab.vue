@@ -6,6 +6,9 @@
     </div>
     <el-empty v-else-if="!bizSection.length && !infraSection.length" description="暂无可交付产品数据" />
     <template v-else>
+      <div class="chart-fixed-top">
+        <CostProfitChart :version-id="versionId" :l2-names="l2Names" />
+      </div>
       <div class="status-legend-bar">
         <span class="legend-item"><span class="status-dot status-draft"></span>待提交</span>
         <span class="legend-item"><span class="status-dot status-pending"></span>待审批</span>
@@ -59,6 +62,7 @@
 import { ref, computed, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { queryEntries } from '../api/data'
+import CostProfitChart from './CostProfitChart.vue'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -70,6 +74,16 @@ const emit = defineEmits(['navigate-to-list', 'openPreview'])
 const loading = ref(false)
 const bizSection = ref([])
 const infraSection = ref([])
+
+const l2Names = computed(() => {
+  const names = new Set()
+  for (const l1 of [...bizSection.value, ...infraSection.value]) {
+    for (const l2 of l1.children) {
+      names.add(l2.name)
+    }
+  }
+  return [...names].sort((a, b) => getPrefixNumber(a) - getPrefixNumber(b))
+})
 
 const sections = computed(() => {
   const result = []
@@ -217,6 +231,13 @@ watch(() => props.versionId, loadData, { immediate: true })
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+  padding-top: 8px;
+}
+
+.chart-fixed-top {
+  flex-shrink: 0;
+  padding-top: 12px;
+  background: #F8FAFC;
 }
 
 .panorama-loading {
@@ -389,7 +410,7 @@ watch(() => props.versionId, loadData, { immediate: true })
   padding: 6px 16px;
   font-size: 11px;
   color: #94A3B8;
-  border-bottom: 1px solid #E2E8F0;
+  border-top: 1px solid #CBD5E1;
   flex-shrink: 0;
 }
 
