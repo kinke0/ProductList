@@ -421,26 +421,9 @@
             </el-select>
           </el-form-item>
           <el-form-item label="业务域">
-            <el-select v-model="batchDomainId" placeholder="请先选择业务分类" style="width:100%;" @change="onBatchL2Change">
+            <el-select v-model="batchDomainId" placeholder="请先选择业务分类" style="width:100%;">
               <el-option v-for="d in batchCatL2Options" :key="d.id" :label="d.label" :value="d.id" />
             </el-select>
-          </el-form-item>
-          <el-form-item v-if="batchDomainId" label="目标节点">
-            <div class="batch-tree-container" v-loading="batchTreeLoading">
-              <div v-if="batchTreeNodeLabel" class="batch-tree-selected">已选: {{ batchTreeNodeLabel }} <el-button link type="danger" @click="clearBatchTreeNode">清除</el-button></div>
-              <div v-else class="batch-tree-hint">不选择节点时，选中的条目将作为该业务域下的L3级条目</div>
-              <el-empty v-if="!batchTreeLoading && batchDomainTreeData.length === 0" description="该业务域下暂无产品数据" :image-size="60" />
-              <el-tree
-                v-if="batchDomainTreeData.length > 0"
-                :data="batchDomainTreeData"
-                :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
-                node-key="id"
-                highlight-current
-                default-expand-all
-                @node-click="onBatchTreeNodeClick"
-                style="max-height: 240px; overflow-y: auto;"
-              />
-            </div>
           </el-form-item>
         </el-form>
         <template #footer>
@@ -477,7 +460,7 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getDomainTree, getSubTree, fixDataHierarchy } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -521,10 +504,6 @@ const batchCategoryId = ref(null)
 const batchDomainId = ref(null)
 const batchCatL1Options = ref([])
 const batchCatL2Options = ref([])
-const batchDomainTreeData = ref([])
-const batchTreeNodeId = ref(null)
-const batchTreeNodeLabel = ref('')
-const batchTreeLoading = ref(false)
 const selectedIds = ref([])
 const migrating = ref(false)
 const migrateProgress = ref(null)
@@ -560,9 +539,9 @@ const editStatusSelections = ref([])
  const displayData = ref([])
  const expandedNodeIds = ref(new Set())
   const scrollerRef = ref(null)
-  const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, ghostEl: null })
- let dragMoveHandler = null
-let dragUpHandler = null
+const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, mode: 'sort', nestTargetId: null, siblingTargetId: null, sortEnd: false, ghostEl: null })
+  let dragMoveHandler = null
+ let dragUpHandler = null
 
 const imagePickerProduct = computed(() => {
   if (editForm.level === 3) return editForm.colProductSystem
@@ -639,6 +618,10 @@ watch(showEditDialog, (val) => {
     dragState.active = true
     dragState.sourceIndex = rowIndex
     dragState.targetIndex = rowIndex
+    dragState.mode = 'sort'
+    dragState.nestTargetId = null
+    dragState.siblingTargetId = null
+    dragState.sortEnd = false
 
     const sourceDomain = row.colBizDomain || ''
 
@@ -667,33 +650,80 @@ watch(showEditDialog, (val) => {
        ghost.style.top = (ev.clientY - offsetY) + 'px'
        const scrollerEl = scrollerRef.value?.$el
        if (!scrollerEl) return
-       const wrapper = scrollerEl.querySelector('.vue-recycle-scroller__item-wrapper')
-       if (!wrapper) return
-       const rows = wrapper.querySelectorAll('.vrow:not(.drag-source-hidden)')
+       const scrollerRect = scrollerEl.getBoundingClientRect()
+       const itemSize = 36
+       const rawIdx = Math.floor((ev.clientY - scrollerRect.top + scrollerEl.scrollTop) / itemSize)
+       const clampedIdx = Math.max(0, Math.min(rawIdx, displayData.value.length - 1))
+
        let targetIdx = -1
-       for (const r of rows) {
-         const rRect = r.getBoundingClientRect()
-         const mid = rRect.top + rRect.height / 2
-         const cls = r.className
-         const m = cls.match(/row-id-(\S+)/)
-         if (!m) continue
-         const idStr = m[1]
-         const idx = displayData.value.findIndex(d => String(d.id) === idStr)
-         if (idx === -1) continue
-         if (displayData.value[idx]._isSeparator) continue
-         if (displayData.value[idx].colBizDomain !== sourceDomain) continue
-         if (ev.clientY < mid) { targetIdx = idx; break }
-         let nextIdx = idx + 1
-         while (nextIdx < displayData.value.length && (displayData.value[nextIdx]._isSeparator || displayData.value[nextIdx].colBizDomain !== sourceDomain)) {
-           nextIdx++
+       let detectedMode = 'sort'
+       let detectedNestId = null
+       let detectedSiblingId = null
+       let detectedSortEnd = false
+
+       const rowY = ev.clientY - scrollerRect.top - (clampedIdx * itemSize - scrollerEl.scrollTop)
+       const relY = rowY / itemSize
+
+       const entry = displayData.value[clampedIdx]
+       if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
+         if (relY < 0.25) {
+           targetIdx = clampedIdx
+           detectedMode = 'sort'
+         } else if (relY < 0.5) {
+           targetIdx = clampedIdx
+           detectedMode = 'sibling'
+           detectedSiblingId = entry.id
+         } else if (relY < 0.75) {
+           targetIdx = clampedIdx
+           detectedMode = 'nest'
+           detectedNestId = entry.id
+         } else {
+           let nextIdx = clampedIdx + 1
+           while (nextIdx < displayData.value.length && (displayData.value[nextIdx]._isSeparator || (displayData.value[nextIdx].colBizDomain || '') !== sourceDomain)) {
+             nextIdx++
+           }
+           if (nextIdx < displayData.value.length && (displayData.value[nextIdx].colBizDomain || '') === sourceDomain && nextIdx !== dragState.sourceIndex) {
+             targetIdx = nextIdx
+             detectedMode = 'sort'
+           } else {
+             targetIdx = clampedIdx
+             detectedMode = 'sort'
+             detectedSortEnd = true
+           }
          }
-         if (nextIdx < displayData.value.length && displayData.value[nextIdx].colBizDomain === sourceDomain) {
-           targetIdx = nextIdx
+       } else if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx === dragState.sourceIndex) {
+         // 鼠标在源行上，不改变target
+       } else {
+         let searchIdx = clampedIdx
+         while (searchIdx >= 0 && searchIdx < displayData.value.length) {
+           const s = displayData.value[searchIdx]
+           if (!s._isSeparator && (s.colBizDomain || '') === sourceDomain && searchIdx !== dragState.sourceIndex) {
+             targetIdx = searchIdx
+             detectedMode = 'sort'
+             detectedSortEnd = true
+             break
+           }
+           searchIdx--
          }
        }
-       if (targetIdx === -1) targetIdx = dragState.sourceIndex
+
+       if (targetIdx === -1) { targetIdx = dragState.sourceIndex; detectedMode = 'sort'; detectedSortEnd = false }
+       const sourceRow = displayData.value[dragState.sourceIndex]
+       const targetRow = displayData.value[targetIdx]
+       if (detectedMode === 'nest' && sourceRow && targetRow && !isNestAllowed(sourceRow, targetRow)) {
+         detectedMode = 'sort'
+         detectedNestId = null
+       }
+       if (detectedMode === 'sibling' && sourceRow && targetRow && !isSiblingAllowed(sourceRow, targetRow)) {
+         detectedMode = 'sort'
+         detectedSiblingId = null
+       }
        dragState.targetIndex = targetIdx
-       updateDragIndicator(wrapper)
+       dragState.mode = detectedMode
+       dragState.nestTargetId = detectedNestId
+       dragState.siblingTargetId = detectedSiblingId
+       dragState.sortEnd = detectedSortEnd
+       updateDragIndicator(scrollerEl)
      }
 
     dragUpHandler = () => {
@@ -707,56 +737,140 @@ watch(showEditDialog, (val) => {
       document.removeEventListener('mouseup', dragUpHandler)
       dragMoveHandler = null
       dragUpHandler = null
-      if (dragState.sourceIndex !== dragState.targetIndex && dragState.targetIndex >= 0) {
-        applyDragDrop(dragState.sourceIndex, dragState.targetIndex)
+      if (dragState.mode === 'nest' && dragState.nestTargetId) {
+        applyNestMove(dragState.sourceIndex, dragState.nestTargetId)
+      } else if (dragState.mode === 'sibling' && dragState.siblingTargetId) {
+        applySiblingMove(dragState.sourceIndex, dragState.siblingTargetId)
+      } else if (dragState.sourceIndex !== dragState.targetIndex && dragState.targetIndex >= 0) {
+        applyDragDrop(dragState.sourceIndex, dragState.targetIndex, dragState.sortEnd)
       }
       dragState.sourceIndex = -1
       dragState.targetIndex = -1
+      dragState.mode = 'sort'
+      dragState.nestTargetId = null
+      dragState.siblingTargetId = null
+      dragState.sortEnd = false
     }
 
     document.addEventListener('mousemove', dragMoveHandler)
     document.addEventListener('mouseup', dragUpHandler)
   }
 
-  function updateDragIndicator(wrapper) {
-    removeDragIndicator(wrapper)
+  function isNestAllowed(sourceRow, targetRow) {
+    if (!sourceRow || !targetRow) return false
+    if (sourceRow.id === targetRow.id) return false
+    if (targetRow._isSeparator) return false
+    if ((targetRow.level || 3) < 3) return false
+    let node = nodeMap.value.get(targetRow.id)
+    while (node) {
+      if (node.id === sourceRow.id) return false
+      node = node.parentId ? nodeMap.value.get(node.parentId) : null
+    }
+    return true
+  }
+
+  async function applyNestMove(sourceIdx, targetId) {
+    const sourceRow = displayData.value[sourceIdx]
+    if (!sourceRow) return
+    try {
+      await moveToParent(sourceRow.id, targetId)
+      ElMessage.success('层级变更成功')
+      handleQuery(true)
+    } catch (e) {
+      console.error('层级变更失败:', e)
+      ElMessage.error(e.message || '层级变更失败')
+      rebuildDisplayData()
+    }
+  }
+
+  function isSiblingAllowed(sourceRow, targetRow) {
+    if (!sourceRow || !targetRow) return false
+    if (sourceRow.id === targetRow.id) return false
+    if (targetRow._isSeparator) return false
+    if ((targetRow.level || 3) < 3) return false
+    if (!targetRow.parentId) return false
+    let node = nodeMap.value.get(targetRow.id)
+    while (node) {
+      if (node.id === sourceRow.id) return false
+      node = node.parentId ? nodeMap.value.get(node.parentId) : null
+    }
+    return true
+  }
+
+  async function applySiblingMove(sourceIdx, targetId) {
+    const sourceRow = displayData.value[sourceIdx]
+    if (!sourceRow) return
+    try {
+      await moveToSibling(sourceRow.id, targetId)
+      ElMessage.success('层级变更成功')
+      handleQuery(true)
+    } catch (e) {
+      console.error('层级变更失败:', e)
+      ElMessage.error(e.message || '层级变更失败')
+      rebuildDisplayData()
+    }
+  }
+
+  function updateDragIndicator(scrollerEl) {
+    removeDragIndicator()
     const ti = dragState.targetIndex
-    if (ti < 0 || ti > displayData.value.length) return
-    let actualTi = ti
-    while (actualTi < displayData.value.length && displayData.value[actualTi]?._isSeparator) {
-      actualTi++
-    }
-    if (actualTi >= displayData.value.length && ti > dragState.sourceIndex) {
-      actualTi = ti - 1
-      while (actualTi >= 0 && displayData.value[actualTi]?._isSeparator) {
-        actualTi--
-      }
-    }
-    const targetRow = wrapper.querySelector(`.row-id-${CSS.escape(String(displayData.value[Math.min(actualTi, displayData.value.length - 1)]?.id || ''))}`)
-    if (!targetRow) return
+    if (ti < 0 || ti >= displayData.value.length) return
+    const targetData = displayData.value[ti]
+    if (!targetData || targetData._isSeparator) return
+
+    const scrollerRect = scrollerEl.getBoundingClientRect()
+    const itemSize = 36
+    const rowTop = scrollerRect.top + ti * itemSize - scrollerEl.scrollTop
+    const rowLevel = targetData.level || 3
+    const baseIndent = 54 + (rowLevel - 3) * 20
+
     const indicator = document.createElement('div')
     indicator.className = 'drag-indicator'
-    const tRect = targetRow.getBoundingClientRect()
     indicator.style.position = 'fixed'
-    indicator.style.left = tRect.left + 'px'
-    indicator.style.width = tRect.width + 'px'
     indicator.style.height = '2px'
     indicator.style.background = 'var(--si-primary, #2563EB)'
     indicator.style.zIndex = '10000'
     indicator.style.pointerEvents = 'none'
-    indicator.style.top = tRect.top + 'px'
+
+    if (dragState.mode === 'nest') {
+      const indent = baseIndent + 20
+      indicator.style.left = (scrollerRect.left + indent) + 'px'
+      indicator.style.width = (scrollerRect.width - indent) + 'px'
+      indicator.style.top = (rowTop + itemSize - 1) + 'px'
+      indicator.style.background = '#E6A23C'
+    } else if (dragState.mode === 'sibling') {
+      const indent = Math.max(0, baseIndent - 20)
+      indicator.style.left = (scrollerRect.left + indent) + 'px'
+      indicator.style.width = (scrollerRect.width - indent) + 'px'
+      indicator.style.top = rowTop + 'px'
+      indicator.style.background = '#67C23A'
+    } else {
+      indicator.style.left = (scrollerRect.left + baseIndent) + 'px'
+      indicator.style.width = (scrollerRect.width - baseIndent) + 'px'
+      if (dragState.sortEnd) {
+        indicator.style.top = (rowTop + itemSize) + 'px'
+      } else {
+        indicator.style.top = rowTop + 'px'
+      }
+    }
+
     document.body.appendChild(indicator)
   }
 
-  function removeDragIndicator(wrapper) {
+  function removeDragIndicator() {
     document.querySelectorAll('.drag-indicator').forEach(el => el.remove())
   }
 
-  async function applyDragDrop(fromIdx, toIdx) {
+  async function applyDragDrop(fromIdx, toIdx, sortEnd = false) {
     const arr = [...displayData.value]
     const item = arr.splice(fromIdx, 1)[0]
     if (!item) return
-    const insertIdx = toIdx > fromIdx ? toIdx - 1 : toIdx
+    let insertIdx
+    if (sortEnd) {
+      insertIdx = toIdx > fromIdx ? toIdx : toIdx + 1
+    } else {
+      insertIdx = toIdx > fromIdx ? toIdx - 1 : toIdx
+    }
     arr.splice(insertIdx, 0, item)
     const nonSep = arr.filter(d => !d._isSeparator)
     try {
@@ -1300,9 +1414,6 @@ async function batchReject() {
   } else if (cmd === 'category') {
     batchCategoryId.value = null
     batchDomainId.value = null
-    batchDomainTreeData.value = []
-    batchTreeNodeId.value = null
-    batchTreeNodeLabel.value = ''
     loadBatchCategoryTree()
     showBatchCategoryDialog.value = true
   } else if (cmd === 'delete') {
@@ -1407,9 +1518,6 @@ async function loadBatchCategoryTree() {
 
 function onBatchL1Change(val) {
   batchDomainId.value = null
-  batchDomainTreeData.value = []
-  batchTreeNodeId.value = null
-  batchTreeNodeLabel.value = ''
   if (!val) { batchCatL2Options.value = []; return }
   const cat = batchCatL1Options.value.find(c => c.id == val)
   if (!cat) { batchCatL2Options.value = []; return }
@@ -1426,72 +1534,15 @@ function onBatchL1Change(val) {
   })
 }
 
-function mapTreeNode(n) {
-  return {
-    id: n.id,
-    label: n.label,
-    level: n.level,
-    isLeaf: !!n.isLeaf,
-    children: (n.children && n.children.length > 0) ? n.children.map(c => mapTreeNode(c)) : undefined
-  }
-}
-
-async function onBatchL2Change(val) {
-  batchTreeNodeId.value = null
-  batchTreeNodeLabel.value = ''
-  batchDomainTreeData.value = []
-  if (!val) return
-  batchTreeLoading.value = true
-  try {
-    const res = await getDomainTree(props.versionId, val, batchCategoryId.value)
-    batchDomainTreeData.value = (res.data || []).map(n => mapTreeNode(n))
-  } catch (e) {
-    console.error('加载域树失败:', e)
-    batchDomainTreeData.value = []
-  } finally {
-    batchTreeLoading.value = false
-  }
-}
-
-function onBatchTreeNodeClick(data) {
-  batchTreeNodeId.value = data.id
-  batchTreeNodeLabel.value = data.label
-}
-
-function clearBatchTreeNode() {
-  batchTreeNodeId.value = null
-  batchTreeNodeLabel.value = ''
-}
-
 async function confirmBatchCategory() {
   if (!batchCategoryId.value) { ElMessage.warning('请选择业务分类'); return }
   if (!batchDomainId.value) { ElMessage.warning('请选择业务域'); return }
 
   const ids = [...selectedIds.value]
-  const nonSepRows = displayData.value.filter(d => !d._isSeparator)
-  const selectedRows = nonSepRows.filter(r => ids.includes(r.id))
-  const levels = [...new Set(selectedRows.map(r => r.level))]
-  if (levels.length > 1) {
-    ElMessage.warning('所选条目不在同一层级，无法批量移动')
-    return
-  }
-  if (batchTreeNodeId.value) {
-    const targetLevel = selectedRows.length > 0 ? selectedRows[0].level : null
-    if (targetLevel !== null) {
-      const treeNodes = []
-      function findNodeInTree(nodes, id) {
-        for (const n of nodes) {
-          if (n.id === id) return n
-          if (n.children) { const found = findNodeInTree(n.children, id); if (found) return found }
-        }
-        return null
-      }
-    }
-  }
 
   batchLoading.value = true
   try {
-    const res = await batchUpdateCategory(props.versionId, ids, batchCategoryId.value, batchDomainId.value, batchTreeNodeId.value)
+    const res = await batchUpdateCategory(props.versionId, ids, batchCategoryId.value, batchDomainId.value, null)
     if (res.code === 200) {
       showBatchCategoryDialog.value = false
       ElMessage.success(`成功修改 ${res.data} 条记录的业务分类/业务域`)
@@ -2089,9 +2140,11 @@ function buildTree(entries) {
   })
   if (!props.customTabId) {
     function sortChildren(nodes) {
-      nodes.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
       for (const n of nodes) {
-        if (n.children && n.children.length > 0) sortChildren(n.children)
+        if (n.children && n.children.length > 0) {
+          n.children.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+          sortChildren(n.children)
+        }
       }
     }
     sortChildren(roots)

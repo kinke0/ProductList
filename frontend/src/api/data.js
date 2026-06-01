@@ -56,6 +56,14 @@ export function levelDown(id) {
   return request.put(`/data/${id}/level-down`)
 }
 
+export function moveToParent(id, newParentId) {
+  return request.put(`/data/${id}/move-to-parent`, { newParentId })
+}
+
+export function moveToSibling(id, targetId) {
+  return request.put(`/data/${id}/move-to-sibling`, { targetId })
+}
+
 export function importExcel(file, versionId) {
   const formData = new FormData()
   formData.append('file', file)

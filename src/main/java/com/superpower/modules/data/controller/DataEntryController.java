@@ -202,6 +202,30 @@ public class DataEntryController {
         return Result.success();
     }
 
+    @PutMapping("/{id}/move-to-parent")
+    public Result<Void> moveToParent(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        Long newParentId = Long.valueOf(body.get("newParentId").toString());
+        DataEntry entry = dataEntryService.getById(id);
+        if (entry == null) {
+            return Result.failed("记录不存在");
+        }
+        checkVersionEditPermission(entry.getVersionId());
+        dataEntryService.moveToParent(id, newParentId);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/move-to-sibling")
+    public Result<Void> moveToSibling(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        Long targetId = Long.valueOf(body.get("targetId").toString());
+        DataEntry entry = dataEntryService.getById(id);
+        if (entry == null) {
+            return Result.failed("记录不存在");
+        }
+        checkVersionEditPermission(entry.getVersionId());
+        dataEntryService.moveToSibling(id, targetId);
+        return Result.success();
+    }
+
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         DataEntry entry = dataEntryService.getById(id);

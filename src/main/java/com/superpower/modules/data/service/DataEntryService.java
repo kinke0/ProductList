@@ -68,8 +68,8 @@ public class DataEntryService {
 
     public List<TreeNodeDTO> getTree(Long versionId, String name, List<String> statusList, String productManager,
                                      String solution, String versionTag) {
-        List<DataEntry> entries = entryRepository.findByVersionIdAndLevelWithFilter(
-                versionId, 1, name, productManager, solution, versionTag);
+        List<DataEntry> entries = new ArrayList<>(entryRepository.findByVersionIdAndLevelWithFilter(
+                versionId, 1, name, productManager, solution, versionTag));
 
         Map<Long, BaseCategory> catMap = new HashMap<>();
         Map<Long, BaseDomain> domMap = new HashMap<>();
@@ -77,6 +77,11 @@ public class DataEntryService {
             .forEach(c -> catMap.put(c.getId(), c));
         baseDomainRepository.findByVersionId(versionId)
             .forEach(d -> domMap.put(d.getId(), d));
+
+        entries.sort(Comparator.comparingInt(e ->
+                e.getCategoryId() != null && catMap.containsKey(e.getCategoryId())
+                        ? catMap.get(e.getCategoryId()).getSortOrder()
+                        : Integer.MAX_VALUE));
 
         return entries.stream()
                 .filter(e -> matchesStatus(e.getColStatus(), statusList))
@@ -102,7 +107,11 @@ public class DataEntryService {
 
         if (entry.getLevel() < 2) {
             node.setIsLeaf(false);
-            List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId());
+            List<DataEntry> children = new ArrayList<>(entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId()));
+            children.sort(Comparator.comparingInt(c ->
+                    c.getDomainId() != null && domMap.containsKey(c.getDomainId())
+                            ? domMap.get(c.getDomainId()).getSortOrder()
+                            : Integer.MAX_VALUE));
             if (!children.isEmpty()) {
                 node.setChildren(children.stream().map(c -> buildTree(c, versionId, catMap, domMap)).toList());
             }
@@ -406,19 +415,21 @@ public class DataEntryService {
         DataEntry parentEntry = null;
         if (parentId != null) {
             parentEntry = entryRepository.findById(parentId).orElse(null);
-        } else if (domainId != null) {
-            List<DataEntry> level2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
-            if (level2Entries.isEmpty() && domName != null) {
-                level2Entries = entryRepository.findByVersionIdAndLevelAndColBizDomain(versionId, 2, domName);
-            }
-            if (!level2Entries.isEmpty()) {
-                parentEntry = level2Entries.get(0);
-            }
         }
 
         int targetLevel = 3;
         if (parentEntry != null) {
             targetLevel = parentEntry.getLevel() + 1;
+        }
+
+        int nextSortOrder = 0;
+        if (domainId != null) {
+            List<DataEntry> existingL3 = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 3);
+            for (DataEntry e : existingL3) {
+                if (e.getSortOrder() != null && e.getSortOrder() >= nextSortOrder) {
+                    nextSortOrder = e.getSortOrder() + 1;
+                }
+            }
         }
 
         int count = 0;
@@ -441,6 +452,9 @@ public class DataEntryService {
             if (domName != null) {
                 entry.setColBizDomain(domName);
                 entry.setDomainId(domainId);
+            }
+            if (domainId != null && entry.getLevel() == 3) {
+                entry.setSortOrder(nextSortOrder++);
             }
 
             List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
@@ -684,6 +698,181 @@ public class DataEntryService {
     }
 
     @Transactional
+    public void moveToParent(Long id, Long newParentId) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+
+        DataEntry target = entryRepository.findById(newParentId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+
+        if (!entry.getVersionId().equals(target.getVersionId())) {
+            throw new BusinessException("源节点和目标节点不在同一版本");
+        }
+
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("不能将条目移动到L1或L2节点下");
+        }
+
+        if (target.getLevel() + 1 < 4) {
+            throw new BusinessException("移动后的层级不能低于L4");
+        }
+
+        Long entryL2Ancestor = findL2Ancestor(entry);
+        Long targetL2Ancestor = findL2Ancestor(target);
+        if (entryL2Ancestor == null || targetL2Ancestor == null || !entryL2Ancestor.equals(targetL2Ancestor)) {
+            throw new BusinessException("只能在同一业务域内移动");
+        }
+
+        if (isDescendant(entry.getId(), target.getId())) {
+            throw new BusinessException("不能移动到自己的子节点下");
+        }
+
+        if (entry.getParentId() != null && entry.getParentId().equals(newParentId)) {
+            return;
+        }
+
+        Long oldParentId = entry.getParentId();
+        int oldLevel = entry.getLevel();
+        int newLevel = target.getLevel() + 1;
+        int levelDelta = newLevel - oldLevel;
+
+        entry.setParentId(newParentId);
+        entry.setLevel(newLevel);
+
+        List<DataEntry> maxSortChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), newParentId);
+        if (maxSortChildren.isEmpty()) {
+            entry.setSortOrder(0);
+        } else {
+            entry.setSortOrder(maxSortChildren.get(maxSortChildren.size() - 1).getSortOrder() + 1);
+        }
+
+        entryRepository.save(entry);
+
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry d : descendants) {
+            d.setLevel(d.getLevel() + levelDelta);
+            entryRepository.save(d);
+        }
+
+        if (oldParentId != null) {
+            entryRepository.findById(oldParentId).ifPresent(oldParent -> {
+                List<DataEntry> oldParentChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(oldParent.getVersionId(), oldParentId);
+                oldParent.setIsLeaf(oldParentChildren.isEmpty());
+                entryRepository.save(oldParent);
+            });
+        }
+
+        target.setIsLeaf(false);
+        entryRepository.save(target);
+    }
+
+    @Transactional
+    public void moveToSibling(Long id, Long targetId) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+
+        DataEntry target = entryRepository.findById(targetId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+
+        if (!entry.getVersionId().equals(target.getVersionId())) {
+            throw new BusinessException("源节点和目标节点不在同一版本");
+        }
+
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("目标节点层级不能低于L3");
+        }
+
+        if (target.getParentId() == null) {
+            throw new BusinessException("目标节点没有父节点");
+        }
+
+        Long entryL2Ancestor = findL2Ancestor(entry);
+        Long targetL2Ancestor = findL2Ancestor(target);
+        if (entryL2Ancestor == null || targetL2Ancestor == null || !entryL2Ancestor.equals(targetL2Ancestor)) {
+            throw new BusinessException("只能在同一业务域内移动");
+        }
+
+        if (isDescendant(entry.getId(), target.getId())) {
+            throw new BusinessException("不能移动到自己的子节点同级");
+        }
+
+        Long newParentId = target.getParentId();
+        if (entry.getParentId() != null && entry.getParentId().equals(newParentId) && entry.getId().equals(target.getId())) {
+            return;
+        }
+
+        Long oldParentId = entry.getParentId();
+        int oldLevel = entry.getLevel();
+        int newLevel = target.getLevel();
+        int levelDelta = newLevel - oldLevel;
+
+        entry.setParentId(newParentId);
+        entry.setLevel(newLevel);
+        entry.setSortOrder(target.getSortOrder() + 1);
+        entryRepository.save(entry);
+
+        List<DataEntry> siblings = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), newParentId);
+        for (DataEntry s : siblings) {
+            if (s.getId().equals(entry.getId())) continue;
+            if (s.getSortOrder() >= target.getSortOrder() + 1) {
+                s.setSortOrder(s.getSortOrder() + 1);
+                entryRepository.save(s);
+            }
+        }
+
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry d : descendants) {
+            d.setLevel(d.getLevel() + levelDelta);
+            entryRepository.save(d);
+        }
+
+        if (oldParentId != null && !oldParentId.equals(newParentId)) {
+            entryRepository.findById(oldParentId).ifPresent(oldParent -> {
+                List<DataEntry> oldParentChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(oldParent.getVersionId(), oldParentId);
+                oldParent.setIsLeaf(oldParentChildren.isEmpty());
+                entryRepository.save(oldParent);
+            });
+        }
+
+        entryRepository.findById(newParentId).ifPresent(newParent -> {
+            newParent.setIsLeaf(false);
+            entryRepository.save(newParent);
+        });
+    }
+
+    private Long findL2Ancestor(DataEntry entry) {
+        DataEntry current = entry;
+        while (current != null) {
+            if (current.getLevel() != null && current.getLevel() == 2) {
+                return current.getId();
+            }
+            if (current.getParentId() == null) return null;
+            current = entryRepository.findById(current.getParentId()).orElse(null);
+        }
+        return null;
+    }
+
+    private boolean isDescendant(Long ancestorId, Long nodeId) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(
+                entryRepository.findById(ancestorId).map(DataEntry::getVersionId).orElse(null), ancestorId);
+        for (DataEntry child : children) {
+            if (child.getId().equals(nodeId)) return true;
+            if (isDescendant(child.getId(), nodeId)) return true;
+        }
+        return false;
+    }
+
+    private List<DataEntry> collectDescendantsList(Long versionId, Long parentId) {
+        List<DataEntry> result = new ArrayList<>();
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(versionId, parentId);
+        for (DataEntry child : children) {
+            result.add(child);
+            result.addAll(collectDescendantsList(versionId, child.getId()));
+        }
+        return result;
+    }
+
+    @Transactional
     public void levelUp(Long id) {
         DataEntry entry = getById(id);
         ensureVersionEditable(entry.getVersionId());
@@ -724,21 +913,40 @@ public class DataEntryService {
 
     private List<DataEntry> reorderByCustomTabSort(Long customTabId, List<DataEntry> entries) {
         List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
+
+        Map<String, Integer> catOrder = new HashMap<>();
+        Map<String, Integer> domOrder = new HashMap<>();
+        if (!entries.isEmpty()) {
+            Long versionId = entries.get(0).getVersionId();
+            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+            for (int i = 0; i < cats.size(); i++) catOrder.put(cats.get(i).getName(), i);
+            List<BaseDomain> doms = baseDomainRepository.findByVersionId(versionId);
+            doms.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+            for (int i = 0; i < doms.size(); i++) domOrder.put(doms.get(i).getName(), i);
+        }
+
         boolean hasNullSort = tabEntries.stream().anyMatch(te -> te.getSortOrder() == null);
         if (hasNullSort) {
-            Map<Long, Integer> entrySortMap = new HashMap<>();
-            for (DataEntry e : entries) {
-                entrySortMap.put(e.getId(), e.getSortOrder() != null ? e.getSortOrder() : 0);
-            }
+            Map<Long, DataEntry> entryById = new HashMap<>();
+            for (DataEntry e : entries) entryById.put(e.getId(), e);
             tabEntries.sort((a, b) -> {
                 boolean aHasSort = a.getSortOrder() != null;
                 boolean bHasSort = b.getSortOrder() != null;
                 if (aHasSort && bHasSort) return Integer.compare(a.getSortOrder(), b.getSortOrder());
                 if (aHasSort) return -1;
                 if (bHasSort) return 1;
-                Integer sortA = entrySortMap.getOrDefault(a.getEntryId(), 0);
-                Integer sortB = entrySortMap.getOrDefault(b.getEntryId(), 0);
-                if (!sortA.equals(sortB)) return Integer.compare(sortA, sortB);
+                DataEntry eA = entryById.get(a.getEntryId());
+                DataEntry eB = entryById.get(b.getEntryId());
+                if (eA != null && eB != null) {
+                    int cmp = Integer.compare(
+                        catOrder.getOrDefault(eA.getColBizCategory(), Integer.MAX_VALUE),
+                        catOrder.getOrDefault(eB.getColBizCategory(), Integer.MAX_VALUE));
+                    if (cmp != 0) return cmp;
+                    cmp = Integer.compare(
+                        domOrder.getOrDefault(eA.getColBizDomain(), Integer.MAX_VALUE),
+                        domOrder.getOrDefault(eB.getColBizDomain(), Integer.MAX_VALUE));
+                    if (cmp != 0) return cmp;
+                }
                 return Long.compare(a.getEntryId(), b.getEntryId());
             });
             int order = 0;
@@ -752,6 +960,14 @@ public class DataEntryService {
             sortMap.put(te.getEntryId(), te.getSortOrder() != null ? te.getSortOrder() : 0);
         }
         entries.sort((a, b) -> {
+            int cmp = Integer.compare(
+                catOrder.getOrDefault(a.getColBizCategory(), Integer.MAX_VALUE),
+                catOrder.getOrDefault(b.getColBizCategory(), Integer.MAX_VALUE));
+            if (cmp != 0) return cmp;
+            cmp = Integer.compare(
+                domOrder.getOrDefault(a.getColBizDomain(), Integer.MAX_VALUE),
+                domOrder.getOrDefault(b.getColBizDomain(), Integer.MAX_VALUE));
+            if (cmp != 0) return cmp;
             Integer sortA = sortMap.get(a.getId());
             Integer sortB = sortMap.get(b.getId());
             if (sortA == null && sortB == null) return Long.compare(a.getId(), b.getId());

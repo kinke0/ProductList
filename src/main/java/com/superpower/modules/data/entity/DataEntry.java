@@ -4,6 +4,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
 
 @Data
 @Entity
@@ -57,6 +60,16 @@ public class DataEntry {
 
     @Column(name = "domain_id")
     private Long domainId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id", insertable = false, updatable = false)
+    @JsonIgnore
+    private BaseCategory category;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "domain_id", insertable = false, updatable = false)
+    @JsonIgnore
+    private BaseDomain domain;
 
     @Column(name = "col_版本划分", length = 200)
     private String colVersionDivision;
