@@ -3,7 +3,7 @@
     <div class="login-card">
       <div class="login-title-row">
         <h2 class="login-title">添翼解决方案管理平台</h2>
-        <span class="login-version">Version 1.0.1</span>
+        <span class="login-version" v-if="appVersion">Version {{ appVersion }}</span>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" size="large">
         <el-form-item prop="username">
@@ -47,18 +47,29 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../store/auth'
 import { User, Lock } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { register } from '../../api/auth'
+import { getAppVersion } from '../../api/version'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const formRef = ref(null)
 const passwordRef = ref(null)
 const loading = ref(false)
+const appVersion = ref('')
+
+onMounted(async () => {
+  try {
+    const res = await getAppVersion()
+    appVersion.value = res.data || ''
+  } catch (e) {
+    appVersion.value = ''
+  }
+})
 
 const form = reactive({
   username: '',

@@ -223,6 +223,21 @@ public class DataEntryController {
         return Result.success();
     }
 
+    @GetMapping("/domain-tree/{versionId}")
+    public Result<List<TreeNodeDTO>> getDomainTree(
+            @PathVariable Long versionId,
+            @RequestParam Long domainId,
+            @RequestParam(required = false) Long categoryId) {
+        return Result.success(dataEntryService.getDomainTree(versionId, domainId, categoryId));
+    }
+
+    @GetMapping("/sub-tree/{versionId}/{parentId}")
+    public Result<List<TreeNodeDTO>> getSubTree(
+            @PathVariable Long versionId,
+            @PathVariable Long parentId) {
+        return Result.success(dataEntryService.getSubTree(versionId, parentId));
+    }
+
     @PutMapping("/batch-category")
     public Result<Integer> batchUpdateCategory(@RequestBody Map<String, Object> body) {
         Long versionId = Long.valueOf(body.get("versionId").toString());
@@ -230,7 +245,15 @@ public class DataEntryController {
         List<Long> entryIds = ((List<Number>) body.get("entryIds")).stream().map(Number::longValue).toList();
         Long categoryId = body.get("categoryId") != null ? Long.valueOf(body.get("categoryId").toString()) : null;
         Long domainId = body.get("domainId") != null ? Long.valueOf(body.get("domainId").toString()) : null;
-        int count = dataEntryService.batchUpdateCategory(versionId, entryIds, categoryId, domainId);
+        Long parentId = body.get("parentId") != null ? Long.valueOf(body.get("parentId").toString()) : null;
+        int count = dataEntryService.batchUpdateCategory(versionId, entryIds, categoryId, domainId, parentId);
         return Result.success(count);
+    }
+
+    @PutMapping("/fix-hierarchy/{versionId}")
+    public Result<Map<String, Object>> fixDataHierarchy(@PathVariable Long versionId) {
+        checkVersionEditPermission(versionId);
+        Map<String, Object> result = dataEntryService.fixDataHierarchy(versionId);
+        return Result.success(result);
     }
 }

@@ -70,12 +70,28 @@ export function batchDelete(versionId, ids) {
   return request.post(`/data/batch-delete?versionId=${versionId}`, ids)
 }
 
-export function batchUpdateCategory(versionId, entryIds, categoryId, domainId) {
-  return request.put('/data/batch-category', { versionId, entryIds, categoryId, domainId })
+export function getDomainTree(versionId, domainId, categoryId) {
+  const params = { domainId }
+  if (categoryId) params.categoryId = categoryId
+  return request.get(`/data/domain-tree/${versionId}`, { params })
+}
+
+export function getSubTree(versionId, parentId) {
+  return request.get(`/data/sub-tree/${versionId}/${parentId}`)
+}
+
+export function batchUpdateCategory(versionId, entryIds, categoryId, domainId, parentId = null) {
+  const body = { versionId, entryIds, categoryId, domainId }
+  if (parentId !== null) body.parentId = parentId
+  return request.put('/data/batch-category', body)
 }
 
 export function updateCategorySort(versionId, sortList) {
   return request.put(`/category/sort?versionId=${versionId}`, sortList)
+}
+
+export function fixDataHierarchy(versionId) {
+  return request.put(`/data/fix-hierarchy/${versionId}`)
 }
 
 export function previewEntry(id) {

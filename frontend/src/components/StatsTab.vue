@@ -263,7 +263,7 @@ function renderPmStackBar(pmMap) {
   })
   const statuses = ['待提交', '待审核', '审核通过', '驳回']
   const statusLabels = { '待提交': '待提交', '待审核': '待审批', '审核通过': '通过', '驳回': '驳回' }
-  const colors = ['#409EFF', '#E6A23C', '#F56C6C', '#67C23A']
+  const colors = ['#409EFF', '#E6A23C', '#67C23A', '#F56C6C']
   pmStackBarInstance.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     legend: { data: statuses.map(s => statusLabels[s]), top: 0 },

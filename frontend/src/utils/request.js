@@ -50,12 +50,10 @@ request.interceptors.response.use(
   },
   error => {
     const msg = error.response?.data?.message || error.message || '网络错误'
-    if (error.response?.status === 401) {
-      ElMessage.error(msg)
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      ElMessage.error(error.response?.status === 401 ? msg : '登录已过期，请重新登录')
       localStorage.removeItem('token')
       router.push('/login')
-    } else if (error.response?.status === 403) {
-      ElMessage.error(msg || '无权限操作')
     } else {
       ElMessage.error(msg)
     }

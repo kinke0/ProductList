@@ -1,5 +1,9 @@
 import request from '../utils/request'
 
+export function getAppVersion() {
+  return request.get('/app-version')
+}
+
 export function getVersions() {
   return request.get('/versions')
 }

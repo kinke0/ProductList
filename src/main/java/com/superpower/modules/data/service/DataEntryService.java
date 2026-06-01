@@ -120,6 +120,55 @@ public class DataEntryService {
                 .toList();
     }
 
+    public List<TreeNodeDTO> getDomainTree(Long versionId, Long domainId, Long categoryId) {
+        List<DataEntry> level2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
+
+        if (level2Entries.isEmpty()) {
+            BaseDomain domain = baseDomainRepository.findById(domainId).orElse(null);
+            if (domain != null) {
+                level2Entries = entryRepository.findByVersionIdAndLevelAndColBizDomain(versionId, 2, domain.getName());
+            }
+        }
+
+        if (level2Entries.isEmpty()) {
+            return List.of();
+        }
+
+        DataEntry level2Entry = level2Entries.get(0);
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, level2Entry.getId());
+        return children.stream().map(child -> buildTreeNode(child, versionId)).toList();
+    }
+
+    private TreeNodeDTO buildTreeNode(DataEntry entry, Long versionId) {
+        TreeNodeDTO node = new TreeNodeDTO();
+        node.setId(entry.getId());
+        node.setParentId(entry.getParentId());
+        node.setLevel(entry.getLevel());
+        node.setLabel(entry.getColProductSystem() != null ? entry.getColProductSystem() : "");
+        node.setSortOrder(entry.getSortOrder());
+        List<DataEntry> childEntries = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId());
+        node.setIsLeaf(childEntries.isEmpty());
+        if (!childEntries.isEmpty()) {
+            node.setChildren(childEntries.stream().map(c -> buildTreeNode(c, versionId)).toList());
+        }
+        return node;
+    }
+
+    public List<TreeNodeDTO> getSubTree(Long versionId, Long parentId) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        return children.stream().map(child -> {
+            TreeNodeDTO node = new TreeNodeDTO();
+            node.setId(child.getId());
+            node.setParentId(child.getParentId());
+            node.setLevel(child.getLevel());
+            node.setLabel(child.getColProductSystem() != null ? child.getColProductSystem() : "");
+            node.setSortOrder(child.getSortOrder());
+            List<DataEntry> grandChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, child.getId());
+            node.setIsLeaf(grandChildren.isEmpty());
+            return node;
+        }).toList();
+    }
+
     public DataEntry getById(Long id) {
         return entryRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("数据条目不存在"));
@@ -340,7 +389,7 @@ public class DataEntryService {
     }
 
     @Transactional
-    public int batchUpdateCategory(Long versionId, List<Long> entryIds, Long categoryId, Long domainId) {
+    public int batchUpdateCategory(Long versionId, List<Long> entryIds, Long categoryId, Long domainId, Long parentId) {
         ensureVersionEditable(versionId);
 
         String catName = null;
@@ -354,11 +403,36 @@ public class DataEntryService {
             if (dom != null) domName = dom.getName();
         }
 
+        DataEntry parentEntry = null;
+        if (parentId != null) {
+            parentEntry = entryRepository.findById(parentId).orElse(null);
+        } else if (domainId != null) {
+            List<DataEntry> level2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
+            if (level2Entries.isEmpty() && domName != null) {
+                level2Entries = entryRepository.findByVersionIdAndLevelAndColBizDomain(versionId, 2, domName);
+            }
+            if (!level2Entries.isEmpty()) {
+                parentEntry = level2Entries.get(0);
+            }
+        }
+
+        int targetLevel = 3;
+        if (parentEntry != null) {
+            targetLevel = parentEntry.getLevel() + 1;
+        }
+
         int count = 0;
         for (Long id : entryIds) {
             DataEntry entry = entryRepository.findById(id).orElse(null);
             if (entry == null) continue;
             if (entry.getLevel() == null || entry.getLevel() < 3) continue;
+
+            int originalLevel = entry.getLevel();
+
+            if (parentEntry != null) {
+                entry.setParentId(parentEntry.getId());
+                entry.setLevel(targetLevel);
+            }
 
             if (catName != null) {
                 entry.setColBizCategory(catName);
@@ -370,13 +444,32 @@ public class DataEntryService {
             }
 
             List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            int levelDelta = originalLevel - targetLevel;
             for (DataEntry d : descendants) {
-                if (catName != null) d.setColBizCategory(catName);
-                if (domName != null) d.setColBizDomain(domName);
+                if (catName != null) {
+                    d.setColBizCategory(catName);
+                    d.setCategoryId(categoryId);
+                }
+                if (domName != null) {
+                    d.setColBizDomain(domName);
+                    d.setDomainId(domainId);
+                }
+                if (parentEntry != null) {
+                    d.setLevel(d.getLevel() - levelDelta);
+                }
                 entryRepository.save(d);
             }
 
             entryRepository.save(entry);
+
+            if (parentEntry != null) {
+                DataEntry p = entryRepository.findById(parentEntry.getId()).orElse(null);
+                if (p != null) {
+                    p.setIsLeaf(false);
+                    entryRepository.save(p);
+                }
+            }
+
             count++;
         }
         return count;
@@ -1446,5 +1539,151 @@ public class DataEntryService {
         }
         cm.appendTail(sb);
         return sb.toString().replaceAll("<[^>]+>", "");
+    }
+
+    private int countSegments(String prefix) {
+        if (prefix == null) return 0;
+        return prefix.split("\\.").length;
+    }
+
+    private String getParentPrefix(String prefix) {
+        if (prefix == null) return null;
+        int lastDot = prefix.lastIndexOf('.');
+        if (lastDot <= 0) return null;
+        return prefix.substring(0, lastDot);
+    }
+
+    @Transactional
+    public Map<String, Object> fixDataHierarchy(Long versionId) {
+        ensureVersionEditable(versionId);
+
+        List<DataEntry> entries = entryRepository.findByVersionId(versionId);
+        List<DataEntry> level1Entries = entries.stream().filter(e -> e.getLevel() != null && e.getLevel() == 1).toList();
+        List<DataEntry> level2Entries = entries.stream().filter(e -> e.getLevel() != null && e.getLevel() == 2).toList();
+
+        Map<String, DataEntry> l1PrefixMap = new HashMap<>();
+        for (DataEntry l1 : level1Entries) {
+            String prefix = extractNumberPrefix(l1.getColProductSystem() != null ? l1.getColProductSystem() : l1.getColBizCategory());
+            if (prefix != null && !prefix.isEmpty()) {
+                l1PrefixMap.put(prefix, l1);
+            }
+        }
+
+        Map<String, DataEntry> l2PrefixMap = new HashMap<>();
+        for (DataEntry l2 : level2Entries) {
+            String prefix = extractNumberPrefix(l2.getColProductSystem() != null ? l2.getColProductSystem() : l2.getColBizDomain());
+            if (prefix != null && !prefix.isEmpty()) {
+                l2PrefixMap.put(prefix, l2);
+            }
+        }
+
+        List<BaseCategory> categories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+        List<BaseDomain> domains = baseDomainRepository.findByVersionId(versionId);
+        Map<String, Long> catNameToId = new HashMap<>();
+        for (BaseCategory cat : categories) catNameToId.put(cat.getName(), cat.getId());
+        Map<String, Long> domNameToId = new HashMap<>();
+        for (BaseDomain dom : domains) domNameToId.put(dom.getName(), dom.getId());
+
+        Map<Long, DataEntry> entryById = new HashMap<>();
+        for (DataEntry e : entries) entryById.put(e.getId(), e);
+
+        Map<String, List<DataEntry>> prefixToEntries = new HashMap<>();
+        for (DataEntry e : entries) {
+            if (e.getLevel() == null) continue;
+            String prefix = extractNumberPrefix(e.getColProductSystem());
+            if (prefix != null && !prefix.isEmpty()) {
+                prefixToEntries.computeIfAbsent(prefix, k -> new ArrayList<>()).add(e);
+            }
+        }
+
+        int levelFixed = 0;
+        int parentFixed = 0;
+        int domainFixed = 0;
+        int categoryFixed = 0;
+        int leafFixed = 0;
+
+        for (DataEntry entry : entries) {
+            if (entry.getLevel() == null) continue;
+
+            String name = entry.getColProductSystem();
+            String prefix = extractNumberPrefix(name);
+            if (prefix == null || prefix.isEmpty()) continue;
+
+            int segments = countSegments(prefix);
+            int correctLevel = segments;
+
+            if (!entry.getLevel().equals(correctLevel)) {
+                entry.setLevel(correctLevel);
+                levelFixed++;
+            }
+
+            String parentPrefix = getParentPrefix(prefix);
+            Long newParentId = null;
+
+            if (parentPrefix != null) {
+                if (segments == 3) {
+                    DataEntry l2 = l2PrefixMap.get(parentPrefix);
+                    if (l2 != null) newParentId = l2.getId();
+                } else if (segments == 2) {
+                    DataEntry l1 = l1PrefixMap.get(prefix);
+                    if (l1 != null) newParentId = l1.getId();
+                } else {
+                    List<DataEntry> candidates = prefixToEntries.get(parentPrefix);
+                    if (candidates != null && !candidates.isEmpty()) {
+                        newParentId = candidates.get(0).getId();
+                    }
+                }
+            }
+
+            if (newParentId != null && !newParentId.equals(entry.getParentId())) {
+                entry.setParentId(newParentId);
+                parentFixed++;
+            }
+
+            if (entry.getColBizDomain() != null && entry.getDomainId() == null) {
+                Long domId = domNameToId.get(entry.getColBizDomain());
+                if (domId != null) {
+                    entry.setDomainId(domId);
+                    domainFixed++;
+                }
+            }
+            if (entry.getColBizCategory() != null && entry.getCategoryId() == null) {
+                Long catId = catNameToId.get(entry.getColBizCategory());
+                if (catId != null) {
+                    entry.setCategoryId(catId);
+                    categoryFixed++;
+                }
+            }
+
+            entryRepository.save(entry);
+        }
+
+        List<DataEntry> allUpdated = entryRepository.findByVersionId(versionId);
+        Set<Long> parentIds = new HashSet<>();
+        for (DataEntry e : allUpdated) {
+            if (e.getParentId() != null) parentIds.add(e.getParentId());
+        }
+        for (DataEntry e : allUpdated) {
+            boolean shouldHaveChildren = parentIds.contains(e.getId());
+            boolean currentIsLeaf = e.getIsLeaf() != null && e.getIsLeaf();
+            if (shouldHaveChildren && currentIsLeaf) {
+                e.setIsLeaf(false);
+                entryRepository.save(e);
+                leafFixed++;
+            } else if (!shouldHaveChildren && !currentIsLeaf) {
+                e.setIsLeaf(true);
+                entryRepository.save(e);
+                leafFixed++;
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("totalEntries", entries.size());
+        result.put("levelFixed", levelFixed);
+        result.put("parentFixed", parentFixed);
+        result.put("domainFixed", domainFixed);
+        result.put("categoryFixed", categoryFixed);
+        result.put("leafFixed", leafFixed);
+        return result;
     }
 }

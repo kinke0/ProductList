@@ -95,6 +95,13 @@
               @click="onMigrateImages">
               <el-icon><Picture /></el-icon>迁移图片
             </el-button>
+            <el-button
+              v-if="approvalRole === 'admin'"
+              type="danger" size="small" plain
+              :loading="fixingHierarchy"
+              @click="onFixHierarchy">
+              <el-icon><Fold /></el-icon>修复层级
+            </el-button>
       </div>
     </div>
 
@@ -406,7 +413,7 @@
           <el-button type="primary" @click="confirmBatchManager">确定</el-button>
         </template>
       </el-dialog>
-      <el-dialog v-model="showBatchCategoryDialog" title="批量修改业务分类/业务域" width="460px">
+      <el-dialog v-model="showBatchCategoryDialog" title="批量修改业务分类/业务域" width="580px">
         <el-form label-width="80px">
           <el-form-item label="业务分类">
             <el-select v-model="batchCategoryId" placeholder="请选择业务分类" style="width:100%;" @change="onBatchL1Change">
@@ -414,9 +421,26 @@
             </el-select>
           </el-form-item>
           <el-form-item label="业务域">
-            <el-select v-model="batchDomainId" placeholder="请先选择业务分类" style="width:100%;">
+            <el-select v-model="batchDomainId" placeholder="请先选择业务分类" style="width:100%;" @change="onBatchL2Change">
               <el-option v-for="d in batchCatL2Options" :key="d.id" :label="d.label" :value="d.id" />
             </el-select>
+          </el-form-item>
+          <el-form-item v-if="batchDomainId" label="目标节点">
+            <div class="batch-tree-container" v-loading="batchTreeLoading">
+              <div v-if="batchTreeNodeLabel" class="batch-tree-selected">已选: {{ batchTreeNodeLabel }} <el-button link type="danger" @click="clearBatchTreeNode">清除</el-button></div>
+              <div v-else class="batch-tree-hint">不选择节点时，选中的条目将作为该业务域下的L3级条目</div>
+              <el-empty v-if="!batchTreeLoading && batchDomainTreeData.length === 0" description="该业务域下暂无产品数据" :image-size="60" />
+              <el-tree
+                v-if="batchDomainTreeData.length > 0"
+                :data="batchDomainTreeData"
+                :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
+                node-key="id"
+                highlight-current
+                default-expand-all
+                @node-click="onBatchTreeNodeClick"
+                style="max-height: 240px; overflow-y: auto;"
+              />
+            </div>
           </el-form-item>
         </el-form>
         <template #footer>
@@ -453,7 +477,7 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getDomainTree, getSubTree, fixDataHierarchy } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -497,6 +521,10 @@ const batchCategoryId = ref(null)
 const batchDomainId = ref(null)
 const batchCatL1Options = ref([])
 const batchCatL2Options = ref([])
+const batchDomainTreeData = ref([])
+const batchTreeNodeId = ref(null)
+const batchTreeNodeLabel = ref('')
+const batchTreeLoading = ref(false)
 const selectedIds = ref([])
 const migrating = ref(false)
 const migrateProgress = ref(null)
@@ -511,6 +539,7 @@ const l1Options = ref([])
 const l2Options = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
+const fixingHierarchy = ref(false)
 const imgPreviewUrl = ref('')
 const editorRef = ref(null)
 
@@ -1271,6 +1300,9 @@ async function batchReject() {
   } else if (cmd === 'category') {
     batchCategoryId.value = null
     batchDomainId.value = null
+    batchDomainTreeData.value = []
+    batchTreeNodeId.value = null
+    batchTreeNodeLabel.value = ''
     loadBatchCategoryTree()
     showBatchCategoryDialog.value = true
   } else if (cmd === 'delete') {
@@ -1375,10 +1407,12 @@ async function loadBatchCategoryTree() {
 
 function onBatchL1Change(val) {
   batchDomainId.value = null
+  batchDomainTreeData.value = []
+  batchTreeNodeId.value = null
+  batchTreeNodeLabel.value = ''
   if (!val) { batchCatL2Options.value = []; return }
   const cat = batchCatL1Options.value.find(c => c.id == val)
   if (!cat) { batchCatL2Options.value = []; return }
-  const res = batchCatL1Options.value
   loadBatchCategoryTree().then(() => {
     const allData = batchCatL1Options.value
     const found = allData.find(c => c.id == val)
@@ -1392,11 +1426,72 @@ function onBatchL1Change(val) {
   })
 }
 
+function mapTreeNode(n) {
+  return {
+    id: n.id,
+    label: n.label,
+    level: n.level,
+    isLeaf: !!n.isLeaf,
+    children: (n.children && n.children.length > 0) ? n.children.map(c => mapTreeNode(c)) : undefined
+  }
+}
+
+async function onBatchL2Change(val) {
+  batchTreeNodeId.value = null
+  batchTreeNodeLabel.value = ''
+  batchDomainTreeData.value = []
+  if (!val) return
+  batchTreeLoading.value = true
+  try {
+    const res = await getDomainTree(props.versionId, val, batchCategoryId.value)
+    batchDomainTreeData.value = (res.data || []).map(n => mapTreeNode(n))
+  } catch (e) {
+    console.error('加载域树失败:', e)
+    batchDomainTreeData.value = []
+  } finally {
+    batchTreeLoading.value = false
+  }
+}
+
+function onBatchTreeNodeClick(data) {
+  batchTreeNodeId.value = data.id
+  batchTreeNodeLabel.value = data.label
+}
+
+function clearBatchTreeNode() {
+  batchTreeNodeId.value = null
+  batchTreeNodeLabel.value = ''
+}
+
 async function confirmBatchCategory() {
   if (!batchCategoryId.value) { ElMessage.warning('请选择业务分类'); return }
+  if (!batchDomainId.value) { ElMessage.warning('请选择业务域'); return }
+
+  const ids = [...selectedIds.value]
+  const nonSepRows = displayData.value.filter(d => !d._isSeparator)
+  const selectedRows = nonSepRows.filter(r => ids.includes(r.id))
+  const levels = [...new Set(selectedRows.map(r => r.level))]
+  if (levels.length > 1) {
+    ElMessage.warning('所选条目不在同一层级，无法批量移动')
+    return
+  }
+  if (batchTreeNodeId.value) {
+    const targetLevel = selectedRows.length > 0 ? selectedRows[0].level : null
+    if (targetLevel !== null) {
+      const treeNodes = []
+      function findNodeInTree(nodes, id) {
+        for (const n of nodes) {
+          if (n.id === id) return n
+          if (n.children) { const found = findNodeInTree(n.children, id); if (found) return found }
+        }
+        return null
+      }
+    }
+  }
+
   batchLoading.value = true
   try {
-    const res = await batchUpdateCategory(props.versionId, [...selectedIds.value], batchCategoryId.value, batchDomainId.value)
+    const res = await batchUpdateCategory(props.versionId, ids, batchCategoryId.value, batchDomainId.value, batchTreeNodeId.value)
     if (res.code === 200) {
       showBatchCategoryDialog.value = false
       ElMessage.success(`成功修改 ${res.data} 条记录的业务分类/业务域`)
@@ -1737,6 +1832,32 @@ async function onMigrateImages() {
     migrating.value = false
     migrateProgress.value = null
     ElMessage.error('启动迁移任务失败')
+  }
+}
+
+async function onFixHierarchy() {
+  try {
+    await ElMessageBox.confirm(
+      '将根据编号前缀修正所有条目的层级(level)、父节点(parent_id)、叶子标记(is_leaf)以及分类/域ID。此操作不可撤销，确认继续？',
+      '修复层级',
+      { confirmButtonText: '确认修复', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  fixingHierarchy.value = true
+  try {
+    const res = await fixDataHierarchy(props.versionId)
+    if (res.code === 200) {
+      const d = res.data
+      ElMessage.success(`修复完成！层级修正: ${d.levelFixed || 0}条, 父节点修正: ${d.parentFixed || 0}条, 域ID修正: ${d.domainFixed || 0}条, 分类ID修正: ${d.categoryFixed || 0}条`)
+      handleQuery(true)
+    }
+  } catch (e) {
+    console.error('修复层级失败:', e)
+    ElMessage.error('修复层级失败')
+  } finally {
+    fixingHierarchy.value = false
   }
 }
 
@@ -2115,6 +2236,22 @@ watch(() => props.versionId, () => {
  </script>
 
   <style scoped>
+.batch-tree-container {
+  width: 100%;
+}
+.batch-tree-selected {
+  font-size: 13px;
+  color: #2563EB;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.batch-tree-hint {
+  font-size: 12px;
+  color: #94A3B8;
+  margin-bottom: 8px;
+}
 .migrate-overlay {
   position: fixed;
   top: 0;
