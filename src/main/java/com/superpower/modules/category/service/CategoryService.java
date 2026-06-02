@@ -3,8 +3,10 @@ package com.superpower.modules.category.service;
 import com.superpower.common.BusinessException;
 import com.superpower.modules.category.entity.BaseCategory;
 import com.superpower.modules.category.entity.BaseDomain;
+import com.superpower.modules.category.entity.BaseProduct;
 import com.superpower.modules.category.repository.BaseCategoryRepository;
 import com.superpower.modules.category.repository.BaseDomainRepository;
+import com.superpower.modules.category.repository.BaseProductRepository;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
@@ -18,13 +20,16 @@ public class CategoryService {
 
     private final BaseCategoryRepository categoryRepository;
     private final BaseDomainRepository domainRepository;
+    private final BaseProductRepository productRepository;
     private final DataEntryRepository dataEntryRepository;
 
     public CategoryService(BaseCategoryRepository categoryRepository,
                            BaseDomainRepository domainRepository,
+                           BaseProductRepository productRepository,
                            DataEntryRepository dataEntryRepository) {
         this.categoryRepository = categoryRepository;
         this.domainRepository = domainRepository;
+        this.productRepository = productRepository;
         this.dataEntryRepository = dataEntryRepository;
     }
 
@@ -49,7 +54,21 @@ public class CategoryService {
                 child.setLevel(2);
                 child.setLabel(dom.getName());
                 child.setSortOrder(dom.getSortOrder());
-                child.setIsLeaf(true);
+                child.setIsLeaf(false);
+
+                List<BaseProduct> products = productRepository.findByVersionIdAndDomainIdOrderBySortOrderAsc(versionId, dom.getId());
+                List<TreeNodeDTO> grandChildren = new ArrayList<>();
+                for (BaseProduct prod : products) {
+                    TreeNodeDTO grandChild = new TreeNodeDTO();
+                    grandChild.setId(prod.getId());
+                    grandChild.setParentId(dom.getId());
+                    grandChild.setLevel(3);
+                    grandChild.setLabel(prod.getName());
+                    grandChild.setSortOrder(prod.getSortOrder());
+                    grandChild.setIsLeaf(true);
+                    grandChildren.add(grandChild);
+                }
+                child.setChildren(grandChildren);
                 children.add(child);
             }
             node.setChildren(children);
@@ -74,6 +93,11 @@ public class CategoryService {
                     .orElseThrow(() -> new BusinessException("业务域不存在"));
                 dom.setSortOrder(sortOrder);
                 domainRepository.save(dom);
+            } else if ("product".equals(type)) {
+                BaseProduct prod = productRepository.findById(id)
+                    .orElseThrow(() -> new BusinessException("产品分类不存在"));
+                prod.setSortOrder(sortOrder);
+                productRepository.save(prod);
             }
         }
     }
@@ -219,6 +243,7 @@ public class CategoryService {
     @Transactional
     public void copyFromVersion(Long sourceVersionId, Long targetVersionId) {
         Map<Long, Long> catIdMap = new HashMap<>();
+        Map<Long, Long> domIdMap = new HashMap<>();
         List<BaseCategory> srcCategories = categoryRepository.findByVersionIdOrderBySortOrderAsc(sourceVersionId);
         for (BaseCategory src : srcCategories) {
             BaseCategory cat = new BaseCategory();
@@ -235,7 +260,18 @@ public class CategoryService {
                 dom.setCategoryId(cat.getId());
                 dom.setName(srcDom.getName());
                 dom.setSortOrder(srcDom.getSortOrder());
-                domainRepository.save(dom);
+                dom = domainRepository.save(dom);
+                domIdMap.put(srcDom.getId(), dom.getId());
+
+                List<BaseProduct> products = productRepository.findByVersionIdAndDomainIdOrderBySortOrderAsc(sourceVersionId, srcDom.getId());
+                for (BaseProduct srcProd : products) {
+                    BaseProduct prod = new BaseProduct();
+                    prod.setVersionId(targetVersionId);
+                    prod.setDomainId(dom.getId());
+                    prod.setName(srcProd.getName());
+                    prod.setSortOrder(srcProd.getSortOrder());
+                    productRepository.save(prod);
+                }
             }
         }
     }

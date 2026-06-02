@@ -5,7 +5,7 @@
       <el-button size="small" type="primary" @click="openDialog()">新增</el-button>
     </div>
     <el-table :data="items" border stripe size="small" @row-click="onRowClick" highlight-current-row ref="tableRef">
-      <el-table-column label="排序" width="100" align="center">
+      <el-table-column label="" width="30" align="center" class-name="drag-col">
         <template #default="{ row }">
           <span class="drag-icon" @mousedown="startDrag($event, row)" :style="{ cursor: versionStatus === 'released' ? 'default' : 'grab' }">⠿</span>
         </template>
@@ -181,13 +181,14 @@ watch(() => route.path, async () => {
 .page-header h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--si-text-primary); }
 :deep(.el-table) { border-radius: var(--si-radius-md); }
 :deep(.el-table th.el-table__cell) { background: var(--si-bg-hover); color: var(--si-text-secondary); font-weight: 600; }
+:deep(.el-table td.el-table__cell.drag-col) { overflow: visible; }
+:deep(.el-table td.el-table__cell.drag-col .cell) { overflow: visible; padding: 0; }
 
 .drag-icon {
   cursor: grab;
   font-size: 14px;
   color: #94A3B8;
   user-select: none;
-  margin-right: 6px;
 }
 
 .drag-icon:hover {

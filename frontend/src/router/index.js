@@ -76,6 +76,18 @@ const routes = [
         meta: { title: '功能状态维护', type: 'status', roles: ['ADMIN'] }
       },
       {
+        path: 'base-data/product-category',
+        name: 'ProductCategoryManage',
+        component: () => import('../views/system/ProductCategoryManage.vue'),
+        meta: { title: '产品分类维护', roles: ['ADMIN'] }
+      },
+      {
+        path: 'base-data/system-type',
+        name: 'SystemTypeManage',
+        component: () => import('../views/system/OptionManage.vue'),
+        meta: { title: '系统类型维护', type: 'systemType', roles: ['ADMIN'] }
+      },
+      {
         path: 'image-gallery',
         name: 'ImageGallery',
         component: () => import('../views/system/ImageGallery.vue'),

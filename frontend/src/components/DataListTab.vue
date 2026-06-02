@@ -231,17 +231,22 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="应用角色">
-              <el-select v-model="appRoleSelections" multiple size="small" style="width:100%;" :disabled="!props.isEditing">
-                <el-option v-for="r in appRoles" :key="r" :label="r" :value="r" />
-              </el-select>
+            <el-form-item label="系统类型">
+              <template v-if="props.isEditing">
+                <el-select v-model="editForm.colSystemType" style="width:100%;" placeholder="请选择" clearable filterable allow-create>
+                  <el-option v-for="s in systemTypeList" :key="s" :label="s" :value="s" />
+                </el-select>
+              </template>
+              <template v-else>
+                <el-input :model-value="editForm.colSystemType" disabled />
+              </template>
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="业务分类">
-              <template v-if="props.isEditing && editingRow?.level === 3">
+              <template v-if="props.isEditing">
                 <el-select v-model="editForm.categoryId" style="width:100%;" @change="onL1Change" placeholder="请选择">
                   <el-option v-for="cat in l1Options" :key="cat.id" :label="cat.label" :value="cat.id" />
                 </el-select>
@@ -253,7 +258,7 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="业务域">
-              <template v-if="props.isEditing && editingRow?.level === 3">
+              <template v-if="props.isEditing">
                 <el-select v-model="editForm.domainId" style="width:100%;" placeholder="请选择" @change="onL2Change">
                   <el-option v-for="d in l2Options" :key="d.id" :label="d.label" :value="d.id" />
                 </el-select>
@@ -389,19 +394,25 @@
          <el-button type="primary" @click="confirmBatchStatus">确定</el-button>
        </template>
      </el-dialog>
-     <el-dialog v-model="showBatchSolutionDialog" title="批量修改解决方案" width="400px">
-       <el-form label-width="80px">
-         <el-form-item label="解决方案">
-           <el-select v-model="batchSolutionValue" placeholder="请选择" style="width:100%;">
-             <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
-           </el-select>
-         </el-form-item>
-       </el-form>
-       <template #footer>
-         <el-button @click="showBatchSolutionDialog = false">取消</el-button>
-         <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
-       </template>
-      </el-dialog>
+      <el-dialog v-model="showBatchSolutionDialog" title="批量修改解决方案" width="400px">
+        <el-form label-width="80px">
+          <el-form-item label="修改方式">
+            <el-radio-group v-model="batchSolutionMode">
+              <el-radio-button value="append">追加</el-radio-button>
+              <el-radio-button value="replace">替换</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="解决方案">
+            <el-select v-model="batchSolutionValue" placeholder="请选择" style="width:100%;">
+              <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchSolutionDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
+        </template>
+       </el-dialog>
       <el-dialog v-model="showBatchManagerDialog" title="批量指定产品经理" width="400px">
         <el-form label-width="80px">
           <el-form-item label="产品经理">
@@ -497,6 +508,7 @@ const showBatchStatusDialog = ref(false)
 const batchStatusValue = ref([])
 const showBatchSolutionDialog = ref(false)
 const batchSolutionValue = ref('')
+const batchSolutionMode = ref('append')
 const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
 const showBatchCategoryDialog = ref(false)
@@ -531,6 +543,7 @@ const parentRow = ref(null)
 const appRoles = ref([])
 const solutions = ref([])
 const statusList = ref([])
+const systemTypeList = ref([])
 const appRoleSelections = ref([])
 const editStatusSelections = ref([])
  const solutionSelections = ref([])
@@ -1407,6 +1420,7 @@ async function batchReject() {
     showBatchStatusDialog.value = true
   } else if (cmd === 'solution') {
     batchSolutionValue.value = ''
+    batchSolutionMode.value = 'append'
     showBatchSolutionDialog.value = true
   } else if (cmd === 'manager') {
     batchManagerValue.value = ''
@@ -1480,7 +1494,18 @@ async function confirmBatchSolution() {
     for (const id of selectedIds.value) {
       try {
         const row = findRowById(id, tableData.value)
-        if (row) { await updateEntry(id, { ...row, colOtherSolutionTag: batchSolutionValue.value }); successCount++ }
+        if (row) {
+          let newValue = batchSolutionValue.value
+          if (batchSolutionMode.value === 'append') {
+            const existing = (row.colOtherSolutionTag || '').split(',').filter(Boolean)
+            if (!existing.includes(batchSolutionValue.value)) {
+              existing.push(batchSolutionValue.value)
+            }
+            newValue = existing.join(',')
+          }
+          await updateEntry(id, { ...row, colOtherSolutionTag: newValue })
+          successCount++
+        }
       } catch (e) { console.error(`修改解决方案失败 id=${id}:`, e) }
     }
     showBatchSolutionDialog.value = false
@@ -1630,14 +1655,16 @@ function syncVersionFromForm() {
 async function loadOptions() {
   if (!props.versionId) return
   try {
-    const [ar, sol, st] = await Promise.all([
+    const [ar, sol, st, sysType] = await Promise.all([
       getOptions(props.versionId, 'appRole'),
       getOptions(props.versionId, 'solution'),
-      getOptions(props.versionId, 'status')
+      getOptions(props.versionId, 'status'),
+      getOptions(props.versionId, 'systemType')
     ])
     appRoles.value = (ar.data || []).map(o => o.value)
     solutions.value = (sol.data || []).map(o => o.value)
     statusList.value = (st.data || []).map(o => o.value)
+    systemTypeList.value = (sysType.data || []).map(o => o.value)
   } catch (e) { /* ignore */ }
 }
 
@@ -1667,7 +1694,8 @@ const editForm = reactive({
   colRemark: '',
   colYao: '',
   colYuan: '',
-  colChi: ''
+  colChi: '',
+  colSystemType: ''
 })
 
 const editDialogTitle = computed(() => {
@@ -1690,7 +1718,7 @@ const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
   colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
   colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colProductLine: '', colAssetType: '', colRemark: '',
-  colYao: '', colYuan: '', colChi: ''
+  colYao: '', colYuan: '', colChi: '', colSystemType: ''
 })
 
 function fillCategoryAndDomain() {

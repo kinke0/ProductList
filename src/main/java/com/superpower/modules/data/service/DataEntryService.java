@@ -5,8 +5,10 @@ import com.superpower.modules.approval.entity.ApprovalLog;
 import com.superpower.modules.approval.repository.ApprovalLogRepository;
 import com.superpower.modules.category.entity.BaseCategory;
 import com.superpower.modules.category.entity.BaseDomain;
+import com.superpower.modules.category.entity.BaseProduct;
 import com.superpower.modules.category.repository.BaseCategoryRepository;
 import com.superpower.modules.category.repository.BaseDomainRepository;
+import com.superpower.modules.category.repository.BaseProductRepository;
 import com.superpower.modules.data.dto.DataEntryDTO;
 import com.superpower.modules.data.dto.ExcelImportResult;
 import com.superpower.modules.data.dto.TreeNodeDTO;
@@ -41,13 +43,15 @@ public class DataEntryService {
     private final SysUserRepository sysUserRepository;
     private final BaseCategoryRepository baseCategoryRepository;
     private final BaseDomainRepository baseDomainRepository;
+    private final BaseProductRepository baseProductRepository;
 
     public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
                             CustomTabEntryRepository customTabEntryRepository,
                             ApprovalLogRepository approvalLogRepository,
                             SysUserRepository sysUserRepository,
                             BaseCategoryRepository baseCategoryRepository,
-                            BaseDomainRepository baseDomainRepository) {
+                            BaseDomainRepository baseDomainRepository,
+                            BaseProductRepository baseProductRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
         this.customTabEntryRepository = customTabEntryRepository;
@@ -55,6 +59,7 @@ public class DataEntryService {
         this.sysUserRepository = sysUserRepository;
         this.baseCategoryRepository = baseCategoryRepository;
         this.baseDomainRepository = baseDomainRepository;
+        this.baseProductRepository = baseProductRepository;
     }
 
     private boolean matchesStatus(String colStatus, List<String> statusList) {
@@ -398,11 +403,12 @@ public class DataEntryService {
     }
 
     @Transactional
-    public int batchUpdateCategory(Long versionId, List<Long> entryIds, Long categoryId, Long domainId, Long parentId) {
+    public int batchUpdateCategory(Long versionId, List<Long> entryIds, Long categoryId, Long domainId, Long productId, Long parentId) {
         ensureVersionEditable(versionId);
 
         String catName = null;
         String domName = null;
+        String prodName = null;
         if (categoryId != null) {
             BaseCategory cat = baseCategoryRepository.findById(categoryId).orElse(null);
             if (cat != null) catName = cat.getName();
@@ -410,6 +416,10 @@ public class DataEntryService {
         if (domainId != null) {
             BaseDomain dom = baseDomainRepository.findById(domainId).orElse(null);
             if (dom != null) domName = dom.getName();
+        }
+        if (productId != null) {
+            BaseProduct prod = baseProductRepository.findById(productId).orElse(null);
+            if (prod != null) prodName = prod.getName();
         }
 
         DataEntry parentEntry = null;
@@ -453,6 +463,9 @@ public class DataEntryService {
                 entry.setColBizDomain(domName);
                 entry.setDomainId(domainId);
             }
+            if (prodName != null) {
+                entry.setProductId(productId);
+            }
             if (domainId != null && entry.getLevel() == 3) {
                 entry.setSortOrder(nextSortOrder++);
             }
@@ -467,6 +480,9 @@ public class DataEntryService {
                 if (domName != null) {
                     d.setColBizDomain(domName);
                     d.setDomainId(domainId);
+                }
+                if (prodName != null) {
+                    d.setProductId(productId);
                 }
                 if (parentEntry != null) {
                     d.setLevel(d.getLevel() - levelDelta);

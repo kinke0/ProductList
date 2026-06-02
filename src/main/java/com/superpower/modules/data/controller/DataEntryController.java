@@ -269,8 +269,9 @@ public class DataEntryController {
         List<Long> entryIds = ((List<Number>) body.get("entryIds")).stream().map(Number::longValue).toList();
         Long categoryId = body.get("categoryId") != null ? Long.valueOf(body.get("categoryId").toString()) : null;
         Long domainId = body.get("domainId") != null ? Long.valueOf(body.get("domainId").toString()) : null;
+        Long productId = body.get("productId") != null ? Long.valueOf(body.get("productId").toString()) : null;
         Long parentId = body.get("parentId") != null ? Long.valueOf(body.get("parentId").toString()) : null;
-        int count = dataEntryService.batchUpdateCategory(versionId, entryIds, categoryId, domainId, parentId);
+        int count = dataEntryService.batchUpdateCategory(versionId, entryIds, categoryId, domainId, productId, parentId);
         return Result.success(count);
     }
 
