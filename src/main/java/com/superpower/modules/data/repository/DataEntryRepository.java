@@ -126,6 +126,8 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
 
     List<DataEntry> findByVersionIdAndDomainIdAndLevel(Long versionId, Long domainId, Integer level);
 
+    List<DataEntry> findByVersionIdAndColBizDomainAndLevel(Long versionId, String colBizDomain, Integer level);
+
     @Query("SELECT e FROM DataEntry e WHERE e.colFeatureDesc LIKE %:keyword%")
     List<DataEntry> findByColFeatureDescContaining(@Param("keyword") String keyword);
 }

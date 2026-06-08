@@ -826,6 +826,10 @@ public class DataEntryService {
 
         target.setIsLeaf(false);
         entryRepository.save(target);
+        syncEntryImageClassifications(entry);
+        for (DataEntry d : descendants) {
+            syncEntryImageClassifications(d);
+        }
     }
 
     @Transactional
@@ -844,21 +848,25 @@ public class DataEntryService {
             throw new BusinessException("目标节点层级不能低于L3");
         }
 
-        if (target.getParentId() == null) {
+        Long newParentId;
+        if (target.getParentId() != null) {
+            newParentId = target.getParentId();
+        } else if (target.getLevel() != null && target.getLevel() == 3) {
+            newParentId = findL2Ancestor(target);
+            if (newParentId == null) {
+                throw new BusinessException("无法确定目标的父级分类");
+            }
+        } else {
             throw new BusinessException("目标节点没有父节点");
         }
-
         Long entryL2Ancestor = findL2Ancestor(entry);
         Long targetL2Ancestor = findL2Ancestor(target);
         if (entryL2Ancestor == null || targetL2Ancestor == null || !entryL2Ancestor.equals(targetL2Ancestor)) {
             throw new BusinessException("只能在同一业务域内移动");
         }
-
         if (isDescendant(entry.getId(), target.getId())) {
             throw new BusinessException("不能移动到自己的子节点同级");
         }
-
-        Long newParentId = target.getParentId();
         if (entry.getParentId() != null && entry.getParentId().equals(newParentId) && entry.getId().equals(target.getId())) {
             return;
         }
@@ -900,6 +908,10 @@ public class DataEntryService {
             newParent.setIsLeaf(false);
             entryRepository.save(newParent);
         });
+        syncEntryImageClassifications(entry);
+        for (DataEntry d : descendants) {
+            syncEntryImageClassifications(d);
+        }
     }
 
     private Long findL2Ancestor(DataEntry entry) {
@@ -908,10 +920,46 @@ public class DataEntryService {
             if (current.getLevel() != null && current.getLevel() == 2) {
                 return current.getId();
             }
-            if (current.getParentId() == null) return null;
+            if (current.getParentId() == null) {
+                List<DataEntry> l2Candidates = entryRepository.findByVersionIdAndLevel(
+                        entry.getVersionId(), 2);
+                String domain = current.getColBizDomain();
+                for (DataEntry l2 : l2Candidates) {
+                    if (domain != null && domain.equals(l2.getColBizDomain())) {
+                        return l2.getId();
+                    }
+                }
+                return null;
+            }
             current = entryRepository.findById(current.getParentId()).orElse(null);
         }
         return null;
+    }
+
+    private void syncEntryImageClassifications(DataEntry entry) {
+        String cat = entry.getColBizCategory();
+        String dom = entry.getColBizDomain();
+        String prod = entry.getColProductSystem();
+        if (cat == null && dom == null && prod == null) return;
+        String desc = entry.getColFeatureDesc();
+        if (desc == null) return;
+        Pattern urlPattern = Pattern.compile("data-url=\"([^\"]+)\"");
+        Matcher m = urlPattern.matcher(desc);
+        Set<String> urls = new HashSet<>();
+        while (m.find()) {
+            urls.add(m.group(1));
+        }
+        if (urls.isEmpty()) return;
+        List<ImageResource> allImages = imageResourceRepository.findAll();
+        for (ImageResource img : allImages) {
+            if (urls.contains(img.getUrl())) {
+                boolean changed = false;
+                if (cat != null && !cat.equals(img.getCategory())) { img.setCategory(cat); changed = true; }
+                if (dom != null && !dom.equals(img.getDomain())) { img.setDomain(dom); changed = true; }
+                if (prod != null && !prod.equals(img.getProduct())) { img.setProduct(prod); changed = true; }
+                if (changed) imageResourceRepository.save(img);
+            }
+        }
     }
 
     private boolean isDescendant(Long ancestorId, Long nodeId) {

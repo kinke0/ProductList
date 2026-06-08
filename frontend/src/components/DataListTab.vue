@@ -674,35 +674,21 @@ watch(showEditDialog, (val) => {
        let detectedSiblingId = null
        let detectedSortEnd = false
 
-       const rowY = ev.clientY - scrollerRect.top - (clampedIdx * itemSize - scrollerEl.scrollTop)
-       const relY = rowY / itemSize
-
        const entry = displayData.value[clampedIdx]
        if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
-         if (relY < 0.25) {
-           targetIdx = clampedIdx
-           detectedMode = 'sort'
-         } else if (relY < 0.5) {
-           targetIdx = clampedIdx
+         targetIdx = clampedIdx
+         const rowLevel = entry.level || 3
+         const baseIndent = 54 + (rowLevel - 3) * 20
+         const baseX = scrollerRect.left + baseIndent
+         const mouseRelX = ev.clientX - baseX
+         if (mouseRelX < -40) {
            detectedMode = 'sibling'
            detectedSiblingId = entry.id
-         } else if (relY < 0.75) {
-           targetIdx = clampedIdx
+         } else if (mouseRelX > 40) {
            detectedMode = 'nest'
            detectedNestId = entry.id
          } else {
-           let nextIdx = clampedIdx + 1
-           while (nextIdx < displayData.value.length && (displayData.value[nextIdx]._isSeparator || (displayData.value[nextIdx].colBizDomain || '') !== sourceDomain)) {
-             nextIdx++
-           }
-           if (nextIdx < displayData.value.length && (displayData.value[nextIdx].colBizDomain || '') === sourceDomain && nextIdx !== dragState.sourceIndex) {
-             targetIdx = nextIdx
-             detectedMode = 'sort'
-           } else {
-             targetIdx = clampedIdx
-             detectedMode = 'sort'
-             detectedSortEnd = true
-           }
+           detectedMode = 'sort'
          }
        } else if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx === dragState.sourceIndex) {
          // 鼠标在源行上，不改变target
@@ -801,7 +787,7 @@ watch(showEditDialog, (val) => {
     if (sourceRow.id === targetRow.id) return false
     if (targetRow._isSeparator) return false
     if ((targetRow.level || 3) < 3) return false
-    if (!targetRow.parentId) return false
+    if (!targetRow.parentId && (targetRow.level || 3) > 3) return false
     let node = nodeMap.value.get(targetRow.id)
     while (node) {
       if (node.id === sourceRow.id) return false
@@ -855,16 +841,12 @@ watch(showEditDialog, (val) => {
       const indent = Math.max(0, baseIndent - 20)
       indicator.style.left = (scrollerRect.left + indent) + 'px'
       indicator.style.width = (scrollerRect.width - indent) + 'px'
-      indicator.style.top = rowTop + 'px'
+      indicator.style.top = (rowTop + itemSize - 1) + 'px'
       indicator.style.background = '#67C23A'
     } else {
       indicator.style.left = (scrollerRect.left + baseIndent) + 'px'
       indicator.style.width = (scrollerRect.width - baseIndent) + 'px'
-      if (dragState.sortEnd) {
-        indicator.style.top = (rowTop + itemSize) + 'px'
-      } else {
-        indicator.style.top = rowTop + 'px'
-      }
+      indicator.style.top = (rowTop + itemSize - 1) + 'px'
     }
 
     document.body.appendChild(indicator)

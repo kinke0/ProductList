@@ -373,6 +373,9 @@ public class ImageResourceService {
                     }
 
                     List<DataEntry> level3Entries = dataEntryRepository.findByVersionIdAndDomainIdAndLevel(versionId, dom.getId(), 3);
+                    if (level3Entries.isEmpty()) {
+                        level3Entries = dataEntryRepository.findByVersionIdAndColBizDomainAndLevel(versionId, domName, 3);
+                    }
                     for (DataEntry e : level3Entries) {
                         String prod = e.getColProductSystem();
                         if (prod != null && !prod.trim().isEmpty()) {
@@ -420,7 +423,7 @@ public class ImageResourceService {
         List<ImageDirectoryNode> roots = new ArrayList<>();
         for (String catName : orderedCategories) {
             ImageDirectoryNode catNode = new ImageDirectoryNode();
-            int catCount = imageCountByCat.getOrDefault(catName, 0);
+            int catCount = fuzzyGetCount(imageCountByCat, catName);
             catNode.setLabel(catName + " (" + catCount + ")");
             catNode.setCount(catCount);
 
@@ -428,7 +431,7 @@ public class ImageResourceService {
             List<String> domains = catToDomains.getOrDefault(catName, new ArrayList<>());
             for (String domName : domains) {
                 String domKey = catName + "||" + domName;
-                int domCount = imageCountByDom.getOrDefault(domKey, 0);
+                int domCount = fuzzyGetCount(imageCountByDom, domKey);
                 ImageDirectoryNode domNode = new ImageDirectoryNode();
                 domNode.setLabel(domName + " (" + domCount + ")");
                 domNode.setCount(domCount);
@@ -437,7 +440,7 @@ public class ImageResourceService {
                 List<String> products = domToProducts.getOrDefault(domKey, new ArrayList<>());
                 for (String prodName : products) {
                     String prodKey = domKey + "||" + prodName;
-                    int prodCount = imageCountByProd.getOrDefault(prodKey, 0);
+                    int prodCount = fuzzyGetCount(imageCountByProd, prodKey);
                     ImageDirectoryNode prodNode = new ImageDirectoryNode();
                     prodNode.setLabel(prodName + " (" + prodCount + ")");
                     prodNode.setCount(prodCount);
@@ -452,6 +455,18 @@ public class ImageResourceService {
         }
 
         return roots;
+    }
+
+    private int fuzzyGetCount(Map<String, Integer> countMap, String key) {
+        Integer count = countMap.get(key);
+        if (count != null) return count;
+        String keyNorm = key.replace(" ", "");
+        for (Map.Entry<String, Integer> e : countMap.entrySet()) {
+            if (e.getKey().replace(" ", "").equals(keyNorm)) {
+                return e.getValue();
+            }
+        }
+        return 0;
     }
 
     private DataEntry findAncestorAtLevel(DataEntry entry, Map<Long, DataEntry> entryMap, int targetLevel) {

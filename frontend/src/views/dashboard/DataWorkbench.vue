@@ -250,14 +250,14 @@
   </el-dialog>
 
   <el-dialog v-model="showAddListDialog" title="添加清单" width="420px" :close-on-click-modal="false">
-    <el-form :model="addListForm" label-width="100px" size="small">
+    <el-form :model="addListForm" label-width="100px" size="small" @submit.native.prevent>
       <el-form-item label="清单名称" required>
         <el-input v-model="addListForm.name" placeholder="请输入清单名称" @keyup.enter="handleAddList" />
       </el-form-item>
     </el-form>
     <el-divider style="margin: 12px 0 8px;" />
     <div style="padding: 0 0 4px 16px; font-size: 13px; color: #909399;">可通过条件检索建立清单</div>
-    <el-form :model="addListForm" label-width="100px" size="small" style="margin-top: 4px;">
+    <el-form :model="addListForm" label-width="100px" size="small" style="margin-top: 4px;" @submit.native.prevent>
       <el-form-item label="名称">
         <el-input v-model="addListForm.entryName" placeholder="产品/系统名称" clearable @keyup.enter="handleAddList" />
       </el-form-item>
