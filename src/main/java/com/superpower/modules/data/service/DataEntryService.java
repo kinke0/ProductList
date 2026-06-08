@@ -25,6 +25,7 @@ import com.superpower.modules.version.repository.DataVersionRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -1585,14 +1586,16 @@ public class DataEntryService {
             int lastSlash = rawUrl.lastIndexOf('/');
             String filename = lastSlash >= 0 ? rawUrl.substring(lastSlash + 1) : "";
             try { filename = java.net.URLDecoder.decode(filename, "UTF-8"); } catch (Exception ignored) {}
-            String replacement = filename.isEmpty() ? encoded : encoded + "|" + filename;
+            int dotIdx = filename.lastIndexOf('.');
+            String captionName = (dotIdx > 0 && !filename.isEmpty()) ? filename.substring(0, dotIdx) : filename;
+            String replacement = captionName.isEmpty() ? encoded : encoded + "|" + captionName;
             bracketMatcher.appendReplacement(cleanBuf, replacement);
         }
         bracketMatcher.appendTail(cleanBuf);
         cleaned = cleanBuf.toString();
         StringBuilder sb = new StringBuilder();
-        Pattern urlPattern = Pattern.compile("https?://[^\\s\\[\\]|]+");
-        Pattern urlLinePattern = Pattern.compile("^https?://[^\\s\\[\\]|]+(?:\\|.*)?$");
+        Pattern urlPattern = Pattern.compile("(?:https?://[^\\s\\[\\]|]+|/api/images/[^\\s\\[\\]|]+)");
+        Pattern urlLinePattern = Pattern.compile("^(?:https?://[^\\s\\[\\]|]+|/api/images/[^\\s\\[\\]|]+)(?:\\|.*)?$");
 
         String[] lines = cleaned.split("\n");
         int i = 0;
@@ -1638,7 +1641,7 @@ public class DataEntryService {
                         sb.append("<div class='img-grid'>");
                         for (int k = 0; k < encUrls.size(); k++) {
                             sb.append("<div class='img-grid-cell'>")
-                              .append("<img src='").append(encUrls.get(k)).append("' style='height:300px;' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';\" />");
+                              .append("<img src='").append(encUrls.get(k)).append("' style='height:300px;' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';\" />");
                             String cap = captions.get(k);
                             if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
                             else sb.append("<div class='img-caption'></div>");
@@ -1648,7 +1651,7 @@ public class DataEntryService {
                     } else {
                         for (int k = 0; k < encUrls.size(); k++) {
                             sb.append("<div class='img-wrap'>")
-                              .append("<img src='").append(encUrls.get(k)).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                              .append("<img src='").append(encUrls.get(k)).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
                             String cap = captions.get(k);
                             if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
                             else sb.append("<div class='img-caption'></div>");
@@ -1662,7 +1665,7 @@ public class DataEntryService {
                     String cap = pi > 0 ? raw.substring(pi + 1) : "";
                     String enc = encodeUrl(urlPart);
                     sb.append("<div class='img-wrap'>")
-                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
                     if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
                     else sb.append("<div class='img-caption'></div>");
                     sb.append("</div>");
@@ -1695,7 +1698,7 @@ public class DataEntryService {
                         lastEnd = um.end();
                     }
                     sb.append("<div class='img-wrap'>")
-                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
                     if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption.replace("<", "&lt;").replace(">", "&gt;")).append("</div>");
                     else sb.append("<div class='img-caption'></div>");
                     sb.append("</div>");
@@ -1712,11 +1715,15 @@ public class DataEntryService {
         return sb.toString();
     }
 
+    @Value("${server.port:8080}")
+    private int serverPort;
+
     private int[] getImageDimensions(String rawUrl) {
         try {
             String url = rawUrl;
             int hashIdx = url.indexOf('#');
             if (hashIdx > 0) url = url.substring(0, hashIdx);
+            if (url.startsWith("/")) url = "http://localhost:" + serverPort + url;
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
@@ -1758,7 +1765,6 @@ public class DataEntryService {
             String filename = null;
             Matcher nm = namePattern.matcher(openTag);
             if (nm.find()) filename = nm.group(1);
-            if (url.startsWith("/api/images/file/")) url = "http://localhost:8080" + url;
             String tagName = openTag.startsWith("<div") ? "div" : "span";
             int depth = 1, pos = cm.end(), contentEnd = pos;
             while (pos < html.length() && depth > 0) {
@@ -1774,7 +1780,11 @@ public class DataEntryService {
             }
             String encodedUrl = encodeUrl(url).replace(" ", "%20");
             result.append(encodedUrl);
-            if (filename != null && !filename.isEmpty()) result.append("|").append(filename);
+            if (filename != null && !filename.isEmpty()) {
+                int dotIdx = filename.lastIndexOf('.');
+                String captionName = dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+                result.append("|").append(captionName);
+            }
             result.append("\n");
             lastEnd = contentEnd;
         }
@@ -1783,14 +1793,21 @@ public class DataEntryService {
     }
 
     private String encodeUrl(String url) {
+        String pathQuery;
+        String prefix = "";
         int schemeEnd = url.indexOf("://");
-        if (schemeEnd < 0) return url;
-        String scheme = url.substring(0, schemeEnd);
-        String rest = url.substring(schemeEnd + 3);
-        int pathStart = rest.indexOf('/');
-        if (pathStart < 0) return url;
-        String hostPort = rest.substring(0, pathStart);
-        String pathQuery = rest.substring(pathStart);
+        if (schemeEnd >= 0) {
+            String scheme = url.substring(0, schemeEnd);
+            String rest = url.substring(schemeEnd + 3);
+            int pathStart = rest.indexOf('/');
+            if (pathStart < 0) return url;
+            prefix = scheme + "://" + rest.substring(0, pathStart);
+            pathQuery = rest.substring(pathStart);
+        } else if (url.startsWith("/")) {
+            pathQuery = url;
+        } else {
+            return url;
+        }
         try {
             String[] segments = pathQuery.split("/", -1);
             StringBuilder sb = new StringBuilder();
@@ -1804,7 +1821,7 @@ public class DataEntryService {
                 }
                 sb.append("/").append(java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20"));
             }
-            return scheme + "://" + hostPort + sb;
+            return prefix + sb;
         } catch (Exception e) {
             return url;
         }
