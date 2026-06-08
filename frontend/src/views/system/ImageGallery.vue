@@ -49,7 +49,7 @@
               </div>
               <div class="image-actions" @click.stop>
                 <el-button size="small" type="primary" link @click="copyUrl(img)">复制URL</el-button>
-                <el-button size="small" link @click="showReferences(img)">引用</el-button>
+                <el-button size="small" link @click="showReferences(img)" :loading="refLoading">引用</el-button>
                 <el-button size="small" link @click="replaceImage(img)">替换</el-button>
                 <el-button size="small" type="danger" link @click="handleDelete(img)">删除</el-button>
               </div>
@@ -69,6 +69,11 @@
         <el-table-column prop="colProductSystem" label="名称" />
         <el-table-column prop="colBizCategory" label="业务分类" width="120" />
         <el-table-column prop="colBizDomain" label="业务域" width="120" />
+        <el-table-column label="版本" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.versionNo === currentVersionNo ? 'primary' : 'info'">v{{ row.versionNo }}</el-tag>
+          </template>
+        </el-table-column>
       </el-table>
       <div v-if="refList.length === 0" style="text-align:center;padding:20px;color:#999;">暂无引用</div>
     </el-dialog>
@@ -78,7 +83,7 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, updateImage, batchDeleteImages } from '../../api/image'
+import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, getAllImageReferences, updateImage, batchDeleteImages, getBatchReferences } from '../../api/image'
 import { getVersions } from '../../api/version'
 import { Upload, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -93,10 +98,12 @@ const selectedProduct = ref(null)
 const selectedIds = ref([])
 const searchText = ref('')
 const versionId = ref(null)
+const currentVersionNo = ref('')
 const previewVisible = ref(false)
 const previewUrl = ref('')
 const refVisible = ref(false)
 const refList = ref([])
+const refLoading = ref(false)
 const fileInput = ref(null)
 const editingImgId = ref(null)
 const editingName = ref('')
@@ -106,7 +113,9 @@ const replaceFileInput = ref(null)
 async function loadVersion() {
   const res = await getVersions()
   const draft = res.data.find(v => v.status === 'draft')
-  versionId.value = draft ? draft.id : (res.data[res.data.length - 1]?.id)
+  const ver = draft ? draft : (res.data[res.data.length - 1])
+  versionId.value = ver?.id
+  currentVersionNo.value = ver?.versionNo || ''
 }
 
 async function loadTree() {
@@ -208,12 +217,15 @@ function copyUrl(img) {
 }
 
 async function showReferences(img) {
+  refLoading.value = true
   try {
-    const res = await getImageReferences(img.id)
+    const res = await getAllImageReferences(img.id)
     refList.value = res.data || []
     refVisible.value = true
   } catch (e) {
     ElMessage.error('查询引用失败')
+  } finally {
+    refLoading.value = false
   }
 }
 
@@ -265,19 +277,21 @@ async function batchDelete() {
   try {
     await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 张图片？`, '批量删除', { type: 'warning' })
   } catch { return }
+  let refMap
+  try {
+    refMap = await getBatchReferences(selectedIds.value)
+    refMap = refMap.data || {}
+  } catch { refMap = {} }
   const blocked = []
   const toDelete = []
   for (const id of selectedIds.value) {
-    try {
-      const res = await getImageReferences(id)
-      const refs = res.data || []
-      if (refs.length > 0) {
-        const img = currentImages.value.find(i => i.id === id)
-        blocked.push({ id, name: img?.filename, count: refs.length })
-      } else {
-        toDelete.push(id)
-      }
-    } catch { toDelete.push(id) }
+    const refs = refMap[id] || []
+    if (refs.length > 0) {
+      const img = currentImages.value.find(i => i.id === id)
+      blocked.push({ id, name: img?.filename, count: refs.length })
+    } else {
+      toDelete.push(id)
+    }
   }
   if (toDelete.length === 0) {
     ElMessage.warning('所有选中图片均被引用，无法删除')

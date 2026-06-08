@@ -16,6 +16,8 @@ import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
 import com.superpower.modules.customtab.entity.CustomTabEntry;
+import com.superpower.modules.image.entity.ImageResource;
+import com.superpower.modules.image.repository.ImageResourceRepository;
 import com.superpower.modules.system.entity.SysUser;
 import com.superpower.modules.system.repository.SysUserRepository;
 import com.superpower.modules.version.entity.DataVersion;
@@ -44,6 +46,7 @@ public class DataEntryService {
     private final BaseCategoryRepository baseCategoryRepository;
     private final BaseDomainRepository baseDomainRepository;
     private final BaseProductRepository baseProductRepository;
+    private final ImageResourceRepository imageResourceRepository;
 
     public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
                             CustomTabEntryRepository customTabEntryRepository,
@@ -51,7 +54,8 @@ public class DataEntryService {
                             SysUserRepository sysUserRepository,
                             BaseCategoryRepository baseCategoryRepository,
                             BaseDomainRepository baseDomainRepository,
-                            BaseProductRepository baseProductRepository) {
+                            BaseProductRepository baseProductRepository,
+                            ImageResourceRepository imageResourceRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
         this.customTabEntryRepository = customTabEntryRepository;
@@ -60,6 +64,7 @@ public class DataEntryService {
         this.baseCategoryRepository = baseCategoryRepository;
         this.baseDomainRepository = baseDomainRepository;
         this.baseProductRepository = baseProductRepository;
+        this.imageResourceRepository = imageResourceRepository;
     }
 
     private boolean matchesStatus(String colStatus, List<String> statusList) {
@@ -184,8 +189,10 @@ public class DataEntryService {
     }
 
     public DataEntry getById(Long id) {
-        return entryRepository.findById(id)
+        DataEntry entry = entryRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("数据条目不存在"));
+        syncImageCardFilenames(entry);
+        return entry;
     }
 
     @Transactional
@@ -277,12 +284,51 @@ public class DataEntryService {
         String oldBizCategory = entry.getColBizCategory();
         String oldBizDomain = entry.getColBizDomain();
         copyFields(entry, dto);
+        syncImageCardFilenames(entry);
 
         if (entry.getLevel() != null && entry.getLevel() >= 1 && entry.getLevel() <= 3) {
             cascadeLabelUpdate(entry, oldBizCategory, oldBizDomain);
         }
 
         return entryRepository.save(entry);
+    }
+
+    public void syncImageCardFilenames(DataEntry entry) {
+        String desc = entry.getColFeatureDesc();
+        if (desc == null || !desc.contains("image-card") && !desc.contains("img-card")) return;
+        Pattern cardPattern = Pattern.compile(
+                "<(?:span|div)\\s+class=\"(?:image-card|img-card)\"[^>]*data-url=\"([^\"]+)\"[^>]*data-filename=\"([^\"]*)\"[^>]*>");
+        Matcher m = cardPattern.matcher(desc);
+        Map<String, String> urlToFilename = new HashMap<>();
+        while (m.find()) {
+            String url = m.group(1);
+            String oldName = m.group(2);
+            if (!urlToFilename.containsKey(url)) {
+                urlToFilename.put(url, oldName);
+            }
+        }
+        if (urlToFilename.isEmpty()) return;
+        List<ImageResource> allImages = imageResourceRepository.findAll();
+        Map<String, String> urlToLatest = new HashMap<>();
+        for (ImageResource img : allImages) {
+            urlToLatest.put(img.getUrl(), img.getFilename());
+        }
+        for (Map.Entry<String, String> e : urlToFilename.entrySet()) {
+            String url = e.getKey();
+            String oldName = e.getValue();
+            String latestName = urlToLatest.get(url);
+            if (latestName == null || latestName.equals(oldName)) continue;
+            String escapedOld = oldName.replace("$", "\\$").replace("(", "\\(").replace(")", "\\)")
+                    .replace("[", "\\[").replace("]", "\\]").replace("*", "\\*").replace("+", "\\+").replace("?", "\\?");
+            desc = desc.replaceAll("data-filename=\"" + escapedOld + "\"", "data-filename=\"" + latestName + "\"");
+            desc = desc.replaceAll("title=\"" + escapedOld + "\"", "title=\"" + latestName + "\"");
+            desc = desc.replaceAll("alt=\"" + escapedOld + "\"", "alt=\"" + latestName + "\"");
+            desc = desc.replaceAll("(<span class=\"image-name\"[^>]*>)" + escapedOld + "(</span>)",
+                    "$1" + latestName + "$2");
+        }
+        if (!desc.equals(entry.getColFeatureDesc())) {
+            entry.setColFeatureDesc(desc);
+        }
     }
 
     private void cascadeLabelUpdate(DataEntry entry, String oldBizCategory, String oldBizDomain) {
@@ -1483,9 +1529,22 @@ public class DataEntryService {
     private String toPreviewParagraphs(String desc) {
         String cleaned = cleanImageCardsToText(desc);
         cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
+        Matcher bracketMatcher = Pattern.compile("\\[\\s*(https?://[^\\]]+?)\\s*\\]").matcher(cleaned);
+        StringBuilder cleanBuf = new StringBuilder();
+        while (bracketMatcher.find()) {
+            String rawUrl = bracketMatcher.group(1);
+            String encoded = rawUrl.replace(" ", "%20");
+            int lastSlash = rawUrl.lastIndexOf('/');
+            String filename = lastSlash >= 0 ? rawUrl.substring(lastSlash + 1) : "";
+            try { filename = java.net.URLDecoder.decode(filename, "UTF-8"); } catch (Exception ignored) {}
+            String replacement = filename.isEmpty() ? encoded : encoded + "|" + filename;
+            bracketMatcher.appendReplacement(cleanBuf, replacement);
+        }
+        bracketMatcher.appendTail(cleanBuf);
+        cleaned = cleanBuf.toString();
         StringBuilder sb = new StringBuilder();
         Pattern urlPattern = Pattern.compile("https?://[^\\s\\[\\]|]+");
-        Pattern urlLinePattern = Pattern.compile("^https?://[^\\s\\[\\]|]+(?:\\|[^\\s]*)?$");
+        Pattern urlLinePattern = Pattern.compile("^https?://[^\\s\\[\\]|]+(?:\\|.*)?$");
 
         String[] lines = cleaned.split("\n");
         int i = 0;
@@ -1576,10 +1635,22 @@ public class DataEntryService {
                     }
                     String rawUrl = um.group();
                     String enc = encodeUrl(rawUrl);
+                    String caption = "";
+                    int afterUrlStart = um.end();
+                    if (afterUrlStart < line.length() && line.charAt(afterUrlStart) == '|') {
+                        Matcher nextUrl = Pattern.compile("https?://").matcher(line);
+                        int captionEnd = line.length();
+                        if (nextUrl.find(afterUrlStart + 1)) captionEnd = nextUrl.start();
+                        caption = line.substring(afterUrlStart + 1, captionEnd);
+                        lastEnd = captionEnd;
+                    } else {
+                        lastEnd = um.end();
+                    }
                     sb.append("<div class='img-wrap'>")
-                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />")
-                      .append("<div class='img-caption'></div></div>");
-                    lastEnd = um.end();
+                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='http://localhost:8080/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                    if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption.replace("<", "&lt;").replace(">", "&gt;")).append("</div>");
+                    else sb.append("<div class='img-caption'></div>");
+                    sb.append("</div>");
                 }
                 if (lastEnd < line.length()) {
                     String textAfter = line.substring(lastEnd);
@@ -1653,7 +1724,8 @@ public class DataEntryService {
                 if (nextOpen >= 0 && nextOpen < nextClose) { depth++; pos = nextOpen + 1; }
                 else { depth--; pos = nextClose + tagName.length() + 3; if (depth == 0) contentEnd = pos; }
             }
-            result.append(encodeUrl(url));
+            String encodedUrl = encodeUrl(url).replace(" ", "%20");
+            result.append(encodedUrl);
             if (filename != null && !filename.isEmpty()) result.append("|").append(filename);
             result.append("\n");
             lastEnd = contentEnd;

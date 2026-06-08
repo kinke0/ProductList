@@ -43,6 +43,10 @@ export function getImageReferences(id) {
   return request.get(`/images/${id}/references`)
 }
 
+export function getAllImageReferences(id) {
+  return request.get(`/images/${id}/all-references`)
+}
+
 export function getImageReqReferences(id) {
   return request.get(`/images/${id}/req-references`)
 }
@@ -57,4 +61,8 @@ export function getMigrationProgress(taskId) {
 
 export function batchDeleteImages(ids) {
   return request.post('/images/batch-delete', ids)
+}
+
+export function getBatchReferences(ids) {
+  return request.post('/images/batch-references', ids)
 }

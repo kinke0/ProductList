@@ -14,6 +14,8 @@ import com.superpower.modules.image.dto.MigrationTaskProgress;
 import com.superpower.modules.image.repository.ImageResourceRepository;
 import com.superpower.modules.requirement.entity.ReqItem;
 import com.superpower.modules.requirement.repository.ReqItemRepository;
+import com.superpower.modules.version.entity.DataVersion;
+import com.superpower.modules.version.repository.DataVersionRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.Authentication;
@@ -45,6 +47,7 @@ public class ImageResourceService {
     private final BaseCategoryRepository baseCategoryRepository;
     private final BaseDomainRepository baseDomainRepository;
     private final ReqItemRepository reqItemRepository;
+    private final DataVersionRepository dataVersionRepository;
 
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
@@ -59,12 +62,14 @@ public class ImageResourceService {
                                 BaseCategoryRepository baseCategoryRepository,
                                 BaseDomainRepository baseDomainRepository,
                                 ReqItemRepository reqItemRepository,
+                                DataVersionRepository dataVersionRepository,
                                 @Lazy ImageResourceService self) {
         this.imageResourceRepository = imageResourceRepository;
         this.dataEntryRepository = dataEntryRepository;
         this.baseCategoryRepository = baseCategoryRepository;
         this.baseDomainRepository = baseDomainRepository;
         this.reqItemRepository = reqItemRepository;
+        this.dataVersionRepository = dataVersionRepository;
         this.self = self;
     }
 
@@ -230,14 +235,15 @@ public class ImageResourceService {
         ImageResource image = imageResourceRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
 
-        try {
-            Path filePath = Paths.get(image.getPath());
-            Files.deleteIfExists(filePath);
-        } catch (IOException e) {
-            throw new BusinessException("文件删除失败: " + e.getMessage());
-        }
-
         imageResourceRepository.deleteById(id);
+
+        long remaining = imageResourceRepository.countByPath(image.getPath());
+        if (remaining == 0) {
+            try {
+                Path filePath = Paths.get(image.getPath());
+                Files.deleteIfExists(filePath);
+            } catch (IOException ignored) {}
+        }
     }
 
     public void batchDelete(List<Long> ids) {
@@ -252,35 +258,11 @@ public class ImageResourceService {
     public ImageResource update(Long id, ImageResource body) {
         ImageResource image = imageResourceRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
-        if (body.getFilename() != null) {
+        if (body.getFilename() != null && !body.getFilename().equals(image.getFilename())) {
+            String oldName = image.getFilename();
             String newName = body.getFilename();
-            String ext = image.getStoredName().substring(image.getStoredName().lastIndexOf('.') + 1);
-            String newStored = sanitizePath(newName);
-            if (newStored.isEmpty()) newStored = UUID.randomUUID().toString();
-            if (!newStored.endsWith("." + ext)) newStored = newStored + "." + ext;
-            if (!newStored.equals(image.getStoredName())) {
-                List<ImageResource> dup = imageResourceRepository.findByCategoryAndDomainAndProductAndStoredName(
-                    image.getCategory(), image.getDomain(), image.getProduct(), newStored);
-                if (!dup.isEmpty()) {
-                    throw new BusinessException("同目录下已存在同名文件: " + newName);
-                }
-                String oldPath = image.getPath();
-                Path newPath = Paths.get(image.getPath()).resolveSibling(newStored);
-                try {
-                    Files.move(Paths.get(oldPath), newPath, StandardCopyOption.REPLACE_EXISTING);
-                } catch (IOException e) {
-                    throw new BusinessException("文件重命名失败: " + e.getMessage());
-                }
-                image.setStoredName(newStored);
-                image.setPath(newPath.toString());
-                image.setFilename(newName);
-                String subPath = buildSubPath(image.getCategory(), image.getDomain(), image.getProduct());
-                String prefix = (image.getCategory() != null && image.getCategory().startsWith("需求"))
-                        ? "/api/requirements/file/" : "/api/images/file/";
-                image.setUrl(prefix + subPath + "/" + newStored);
-            } else {
-                image.setFilename(newName);
-            }
+            image.setFilename(newName);
+            syncImageNameInReferences(image.getUrl(), oldName, newName);
         }
         if (body.getCategory() != null) {
             image.setCategory(body.getCategory());
@@ -292,6 +274,36 @@ public class ImageResourceService {
             image.setProduct(body.getProduct());
         }
         return imageResourceRepository.save(image);
+    }
+
+    private void syncImageNameInReferences(String imageUrl, String oldName, String newName) {
+        if (oldName == null || newName == null || oldName.equals(newName)) return;
+        String escapedOld = oldName.replace("$", "\\$").replace("(", "\\(").replace(")", "\\)")
+                .replace("[", "\\[").replace("]", "\\]").replace("*", "\\*").replace("+", "\\+").replace("?", "\\?");
+        List<DataEntry> entries = dataEntryRepository.findAll();
+        for (DataEntry e : entries) {
+            String desc = e.getColFeatureDesc();
+            if (desc == null || !desc.contains(imageUrl) || !desc.contains(oldName)) continue;
+            desc = desc.replaceAll("data-filename=\"" + escapedOld + "\"", "data-filename=\"" + newName + "\"");
+            desc = desc.replaceAll("title=\"" + escapedOld + "\"", "title=\"" + newName + "\"");
+            desc = desc.replaceAll("alt=\"" + escapedOld + "\"", "alt=\"" + newName + "\"");
+            desc = desc.replaceAll("(<span class=\"image-name\"[^>]*>)" + escapedOld + "(</span>)",
+                    "$1" + newName + "$2");
+            e.setColFeatureDesc(desc);
+            dataEntryRepository.save(e);
+        }
+        List<ReqItem> reqItems = reqItemRepository.findAll();
+        for (ReqItem item : reqItems) {
+            String desc = item.getDescription();
+            if (desc == null || !desc.contains(imageUrl) || !desc.contains(oldName)) continue;
+            desc = desc.replaceAll("data-filename=\"" + escapedOld + "\"", "data-filename=\"" + newName + "\"");
+            desc = desc.replaceAll("title=\"" + escapedOld + "\"", "title=\"" + newName + "\"");
+            desc = desc.replaceAll("alt=\"" + escapedOld + "\"", "alt=\"" + newName + "\"");
+            desc = desc.replaceAll("(<span class=\"image-name\"[^>]*>)" + escapedOld + "(</span>)",
+                    "$1" + newName + "$2");
+            item.setDescription(desc);
+            reqItemRepository.save(item);
+        }
     }
 
     @Transactional
@@ -456,30 +468,57 @@ public class ImageResourceService {
     public List<DataEntry> findReferences(Long imageId) {
         ImageResource image = imageResourceRepository.findById(imageId)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
+        return dataEntryRepository.findByColFeatureDescContaining(image.getUrl());
+    }
 
-        List<DataEntry> allEntries = dataEntryRepository.findAll();
+    @Transactional(readOnly = true)
+    public Map<Long, List<DataEntry>> findReferencesBatch(List<Long> imageIds) {
+        List<ImageResource> images = imageResourceRepository.findAllById(imageIds);
+        Map<Long, String> urlMap = new HashMap<>();
+        for (ImageResource img : images) {
+            urlMap.put(img.getId(), img.getUrl());
+        }
+        Map<Long, List<DataEntry>> result = new HashMap<>();
+        for (Long id : imageIds) {
+            result.put(id, new ArrayList<>());
+        }
+        for (Map.Entry<Long, String> entry : urlMap.entrySet()) {
+            List<DataEntry> matched = dataEntryRepository.findByColFeatureDescContaining(entry.getValue());
+            result.get(entry.getKey()).addAll(matched);
+        }
+        return result;
+    }
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> findAllVersionReferences(Long imageId) {
+        ImageResource image = imageResourceRepository.findById(imageId)
+                .orElseThrow(() -> new BusinessException("图片不存在"));
         String imageUrl = image.getUrl();
-
-        return allEntries.stream()
-                .filter(e -> {
-                    String desc = e.getColFeatureDesc();
-                    return desc != null && desc.contains(imageUrl);
-                })
-                .collect(Collectors.toList());
+        List<DataEntry> matchedEntries = dataEntryRepository.findByColFeatureDescContaining(imageUrl);
+        List<DataVersion> versions = dataVersionRepository.findAll();
+        Map<Long, String> versionMap = new HashMap<>();
+        for (DataVersion v : versions) {
+            versionMap.put(v.getId(), v.getVersionNo());
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (DataEntry e : matchedEntries) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", e.getId());
+            item.put("colProductSystem", e.getColProductSystem());
+            item.put("colBizCategory", e.getColBizCategory());
+            item.put("colBizDomain", e.getColBizDomain());
+            item.put("versionId", e.getVersionId());
+            item.put("versionNo", versionMap.getOrDefault(e.getVersionId(), "未知"));
+            result.add(item);
+        }
+        return result;
     }
 
     @Transactional(readOnly = true)
     public List<ReqItem> findReqReferences(Long imageId) {
         ImageResource image = imageResourceRepository.findById(imageId)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
-        String imageUrl = image.getUrl();
-        List<ReqItem> all = reqItemRepository.findAll();
-        return all.stream()
-                .filter(item -> {
-                    String desc = item.getDescription();
-                    return desc != null && desc.contains(imageUrl);
-                })
-                .collect(Collectors.toList());
+        return reqItemRepository.findByDescriptionContaining(image.getUrl());
     }
 
     private String getExtension(String filename, String contentType) {

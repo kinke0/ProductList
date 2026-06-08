@@ -94,6 +94,16 @@ public class ImageResourceController {
         return Result.success(imageResourceService.findReferences(id));
     }
 
+    @GetMapping("/{id}/all-references")
+    public Result<List<Map<String, Object>>> findAllVersionReferences(@PathVariable Long id) {
+        return Result.success(imageResourceService.findAllVersionReferences(id));
+    }
+
+    @PostMapping("/batch-references")
+    public Result<Map<Long, List<DataEntry>>> findReferencesBatch(@RequestBody List<Long> ids) {
+        return Result.success(imageResourceService.findReferencesBatch(ids));
+    }
+
     @GetMapping("/{id}/req-references")
     public Result<List<ReqItem>> findReqReferences(@PathVariable Long id) {
         return Result.success(imageResourceService.findReqReferences(id));

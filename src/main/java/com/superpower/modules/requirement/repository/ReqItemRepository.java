@@ -39,4 +39,7 @@ public interface ReqItemRepository extends JpaRepository<ReqItem, Long> {
     long countByReqNoPrefix(@Param("prefix") String prefix);
 
     List<ReqItem> findAllByStatus(String status);
+
+    @Query("SELECT r FROM ReqItem r WHERE r.description LIKE %:keyword%")
+    List<ReqItem> findByDescriptionContaining(@Param("keyword") String keyword);
 }

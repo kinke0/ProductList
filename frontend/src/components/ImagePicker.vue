@@ -15,13 +15,14 @@
       <div class="picker-content">
         <div class="picker-toolbar">
           <el-button size="small" type="primary" plain @click="triggerUpload"><el-icon><Upload /></el-icon>本地上传</el-button>
+          <el-input v-model="searchText" placeholder="搜索图片名称..." size="small" clearable style="width:180px;margin-left:8px;" />
           <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" @change="handleFileUpload" />
         </div>
         <div class="picker-scroll">
           <div v-if="loading" style="text-align:center;padding:40px;">加载中...</div>
-          <div v-else-if="images.length === 0" class="empty-tip">请选择目录或上传图片</div>
+          <div v-else-if="filteredImages.length === 0" class="empty-tip">{{ images.length > 0 ? '未找到匹配的图片' : '请选择左侧目录或上传图片' }}</div>
           <div v-else class="image-grid">
-            <div v-for="img in images" :key="img.id" class="image-card" :class="{ selected: selectedId === img.id }" @click="selectImage(img)">
+            <div v-for="img in filteredImages" :key="img.id" class="image-card" :class="{ selected: selectedId === img.id }" @click="selectImage(img)">
               <div class="image-thumb">
                 <img :src="img.url" :alt="img.filename" />
               </div>
@@ -39,8 +40,8 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
-import { getImages, uploadImage } from '../api/image'
+import { ref, computed, watch } from 'vue'
+import { getImages, uploadImage, getImageTree } from '../api/image'
 import { PLATFORM_MODULES } from '../constants/platformModules'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
@@ -50,7 +51,8 @@ const props = defineProps({
   defaultCategory: { type: String, default: null },
   defaultDomain: { type: String, default: null },
   defaultProduct: { type: String, default: null },
-  fixedCategory: { type: String, default: null }
+  fixedCategory: { type: String, default: null },
+  versionId: { type: Number, default: null }
 })
 const emit = defineEmits(['update:modelValue', 'select', 'close'])
 
@@ -65,17 +67,58 @@ const curDomain = ref(null)
 const curProduct = ref(null)
 const fileInput = ref(null)
 const treeRef = ref(null)
+const searchText = ref('')
+
+const filteredImages = computed(() => {
+  if (!searchText.value) return images.value
+  const kw = searchText.value.toLowerCase()
+  return images.value.filter(img => (img.filename || '').toLowerCase().includes(kw))
+})
 
 watch(() => props.modelValue, async (v) => {
   visible.value = v
   if (v) {
     selectedId.value = null
     selectedImage.value = null
+    searchText.value = ''
     await loadTree()
     await loadInitialImages()
   }
 })
 watch(visible, (v) => { emit('update:modelValue', v) })
+
+function stripCountSuffix(str) {
+  return (str || '').replace(/\s*\(\d+\)$/, '')
+}
+
+function buildTreeNodes(nodes, parentCategory, parentDomain) {
+  if (!nodes) return undefined
+  return nodes.map((n, idx) => {
+    const label = n.label || ''
+    const key = parentCategory + '/' + label
+    const cleanLabel = stripCountSuffix(label)
+    const isLevel1 = !parentCategory
+    const isLevel2 = parentCategory && !parentDomain
+    const isLevel3 = parentCategory && parentDomain
+    const node = {
+      key,
+      label,
+      _category: isLevel1 ? cleanLabel : parentCategory,
+      _domain: isLevel2 ? cleanLabel : (isLevel3 ? null : parentDomain),
+      _product: isLevel3 ? cleanLabel : null
+    }
+    if (n.children && n.children.length > 0) {
+      if (isLevel1) {
+        node.children = buildTreeNodes(n.children, cleanLabel, null)
+      } else if (isLevel2) {
+        node.children = buildTreeNodes(n.children, parentCategory, cleanLabel)
+      } else {
+        node.children = buildTreeNodes(n.children, parentCategory, parentDomain)
+      }
+    }
+    return node
+  })
+}
 
 async function loadTree() {
   if (props.fixedCategory) {
@@ -105,6 +148,17 @@ async function loadTree() {
     curCategory.value = cat
     curDomain.value = null
     curProduct.value = null
+  } else if (props.versionId) {
+    try {
+      const res = await getImageTree(props.versionId)
+      const rawTree = res.data || []
+      treeData.value = buildTreeNodes(rawTree, null, null) || []
+    } catch {
+      treeData.value = []
+    }
+    curCategory.value = props.defaultCategory
+    curDomain.value = props.defaultDomain
+    curProduct.value = props.defaultProduct
   } else {
     treeData.value = []
     curCategory.value = props.defaultCategory
@@ -119,6 +173,14 @@ async function loadInitialImages() {
     if (props.fixedCategory) {
       const params = { category: props.fixedCategory }
       if (curDomain.value) params.domain = curDomain.value
+      if (props.versionId) params.versionId = props.versionId
+      const res = await getImages(params)
+      images.value = res.data || []
+    } else if (curCategory.value) {
+      const params = { category: curCategory.value }
+      if (curDomain.value) params.domain = curDomain.value
+      if (curProduct.value) params.product = curProduct.value
+      if (props.versionId) params.versionId = props.versionId
       const res = await getImages(params)
       images.value = res.data || []
     } else {
@@ -130,9 +192,10 @@ async function loadInitialImages() {
 }
 
 function onNodeClick(data) {
+  searchText.value = ''
   curCategory.value = data._category || props.fixedCategory
   curDomain.value = data._domain || null
-  curProduct.value = null
+  curProduct.value = data._product || null
   loadFilteredImages()
 }
 
@@ -142,6 +205,8 @@ async function loadFilteredImages() {
     const params = {}
     if (curCategory.value) params.category = curCategory.value
     if (curDomain.value) params.domain = curDomain.value
+    if (curProduct.value) params.product = curProduct.value
+    if (props.versionId) params.versionId = props.versionId
     const res = await getImages(params)
     images.value = res.data || []
   } finally {
@@ -187,7 +252,7 @@ async function handleFileUpload(e) {
         inputPlaceholder: '请输入名称'
       })
       const displayName = value || defaultName
-      await uploadImage(file, uploadCategory, uploadDomain, uploadProduct || null, null, displayName)
+      await uploadImage(file, uploadCategory, uploadDomain, uploadProduct || null, props.versionId, displayName)
       ElMessage.success('上传成功')
     } catch (err) {
       if (err !== 'cancel' && err !== 'close') {
@@ -202,7 +267,7 @@ async function handleFileUpload(e) {
     for (const file of files) {
       const displayName = file.name.replace(/\.[^.]+$/, '')
       try {
-        await uploadImage(file, uploadCategory, uploadDomain, uploadProduct || null, null, displayName)
+        await uploadImage(file, uploadCategory, uploadDomain, uploadProduct || null, props.versionId, displayName)
         success++
       } catch {
         failed++
@@ -224,7 +289,7 @@ async function handleFileUpload(e) {
 .picker-body { display: flex; gap: 16px; height: 400px; }
 .picker-sidebar { width: 220px; flex-shrink: 0; overflow-y: auto; border: 1px solid var(--si-border); border-radius: 8px; padding: 8px; }
 .picker-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.picker-toolbar { flex-shrink: 0; padding: 0 0 8px 0; }
+.picker-toolbar { flex-shrink: 0; padding: 0 0 8px 0; display: flex; align-items: center; gap: 8px; }
 .picker-scroll { flex: 1; overflow-y: auto; }
 .empty-tip { text-align: center; padding: 40px; color: #999; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }

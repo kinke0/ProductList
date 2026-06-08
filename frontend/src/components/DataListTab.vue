@@ -442,8 +442,8 @@
           <el-button type="primary" @click="confirmBatchCategory" :loading="batchLoading">确定</el-button>
         </template>
       </el-dialog>
-      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="insertImage" />
-       <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="replaceImageCard" />
+      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :version-id="props.versionId" @select="insertImage" />
+        <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :version-id="props.versionId" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" append-to-body :style="{ maxWidth: '90vw' }">
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
@@ -471,7 +471,7 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -2186,6 +2186,12 @@ function buildTree(entries) {
     editingRow.value = row
     parentRow.value = null
     Object.assign(editForm, row)
+    try {
+      const res = await getEntry(row.id)
+      if (res?.data?.colFeatureDesc !== undefined) {
+        editForm.colFeatureDesc = res.data.colFeatureDesc
+      }
+    } catch (e) { /* fallback to row data */ }
     syncVersionFromForm()
     loadCategoryTree()
     lastRejectReason.value = ''
@@ -2194,12 +2200,18 @@ function buildTree(entries) {
   showEditDialog.value = true
   }
 
-  function viewRow(row) {
+  async function viewRow(row) {
     isNew.value = false
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
     Object.assign(editForm, row)
+    try {
+      const res = await getEntry(row.id)
+      if (res?.data?.colFeatureDesc !== undefined) {
+        editForm.colFeatureDesc = res.data.colFeatureDesc
+      }
+    } catch (e) { /* fallback to row data */ }
     syncVersionFromForm()
     loadCategoryTree()
     lastRejectReason.value = ''

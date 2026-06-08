@@ -40,7 +40,7 @@
     </div>
 
     <el-dialog v-model="showVersionDialog" title="切换版本" width="500px">
-      <el-table :data="versions" highlight-current-row @current-change="onVersionSelect" style="cursor:pointer;">
+      <el-table :data="versions" highlight-current-row @current-change="onSwitchVersion" style="cursor:pointer;">
         <el-table-column prop="versionNo" label="版本号" width="100" />
         <el-table-column prop="status" label="状态" width="80">
           <template #default="{ row }">
@@ -467,6 +467,15 @@ function onVersionSelect(version) {
   selectedVersion.value = version
   showVersionDialog.value = false
   selectedNode.value = null
+}
+
+function onSwitchVersion(version) {
+  if (!version) return
+  if (selectedVersion.value && selectedVersion.value.id === version.id) {
+    showVersionDialog.value = false
+    return
+  }
+  onVersionSelect(version)
 }
 
 function onTreeSelect(node) {
