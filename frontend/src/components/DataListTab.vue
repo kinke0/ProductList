@@ -1214,6 +1214,7 @@ function replaceImageCard(img) {
   replacingCard.value = null
   editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
   collectPendingImageUpdate(img)
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
 function saveSelectionAndShowPicker() {
@@ -1257,6 +1258,7 @@ function insertImage(img) {
   }
   editForm.colFeatureDesc = editorRef.value.innerHTML
   collectPendingImageUpdate(img)
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
 function formatSize(bytes) {

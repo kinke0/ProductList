@@ -92,7 +92,7 @@ public class ImageResourceService {
         String effectiveName = (displayName != null && !displayName.isEmpty()) ? displayName : originalFilename;
         String sanitizedBase = sanitizePath(effectiveName);
         if (sanitizedBase.isEmpty()) sanitizedBase = UUID.randomUUID().toString();
-        String storedName = sanitizedBase + "." + ext;
+        String storedName = sanitizedBase + (sanitizedBase.endsWith("." + ext) ? "" : "." + ext);
 
         String subPath = buildSubPath(category, domain, product);
         String basePath;
@@ -135,7 +135,11 @@ public class ImageResourceService {
         String urlPath = urlPrefix + subPath + "/" + storedName;
 
         ImageResource image = new ImageResource();
-        image.setFilename(displayName != null && !displayName.isEmpty() ? displayName : originalFilename);
+        String filenameToSave = (displayName != null && !displayName.isEmpty()) ? displayName : originalFilename;
+        if (filenameToSave != null && !filenameToSave.isEmpty() && !filenameToSave.contains(".")) {
+            filenameToSave = filenameToSave + "." + ext;
+        }
+        image.setFilename(filenameToSave);
         image.setStoredName(storedName);
         image.setPath(filePath.toString());
         image.setCategory(category);
