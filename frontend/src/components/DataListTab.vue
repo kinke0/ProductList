@@ -110,6 +110,10 @@
         <el-icon class="is-loading" style="font-size:36px;color:#409eff;"><Loading /></el-icon>
         <span style="margin-top:8px;color:#666;font-size:14px;">正在批量处理...</span>
       </div>
+      <div v-if="dataLoading" class="batch-overlay">
+        <el-icon class="is-loading" style="font-size:28px;color:#409eff;margin-bottom:8px;"><Loading /></el-icon>
+        <span style="color:#666;font-size:14px;">数据加载中...</span>
+      </div>
      <div class="vtable-header">
        <div class="vcol vcol-num" style="width:50px;">
          <div class="check-col-inner" :style="{ paddingLeft: props.isEditing ? '22px' : '0' }">
@@ -496,6 +500,7 @@ const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc', 'open
 
 const authStore = useAuthStore()
 const tableData = ref([])
+const dataLoading = ref(false)
 const totalEntryCount = ref(0)
 const productCount = ref(0)
 const showEditDialog = ref(false)
@@ -1455,6 +1460,7 @@ function batchChangeStatus() {
 async function confirmBatchStatus() {
   if (!batchStatusValue.value || batchStatusValue.value.length === 0) { ElMessage.warning('请选择功能状态'); return }
   const newStatus = batchStatusValue.value.join(' ')
+  showBatchStatusDialog.value = false
   batchLoading.value = true
   try {
     let successCount = 0
@@ -1464,7 +1470,6 @@ async function confirmBatchStatus() {
         if (row) { await updateEntry(id, { ...row, colStatus: newStatus }); successCount++ }
       } catch (e) { console.error(`修改状态失败 id=${id}:`, e) }
     }
-    showBatchStatusDialog.value = false
     ElMessage.success(`成功修改 ${successCount} 条功能状态`)
     handleQuery(true)
   } finally { batchLoading.value = false }
@@ -1472,6 +1477,7 @@ async function confirmBatchStatus() {
 
 async function confirmBatchSolution() {
   if (!batchSolutionValue.value) { ElMessage.warning('请选择解决方案'); return }
+  showBatchSolutionDialog.value = false
   batchLoading.value = true
   try {
     let successCount = 0
@@ -1492,7 +1498,6 @@ async function confirmBatchSolution() {
         }
       } catch (e) { console.error(`修改解决方案失败 id=${id}:`, e) }
     }
-    showBatchSolutionDialog.value = false
     ElMessage.success(`成功修改 ${successCount} 条解决方案`)
     handleQuery(true)
   } finally { batchLoading.value = false }
@@ -1500,6 +1505,7 @@ async function confirmBatchSolution() {
 
 async function confirmBatchManager() {
   if (!batchManagerValue.value) { ElMessage.warning('请输入产品经理'); return }
+  showBatchManagerDialog.value = false
   batchLoading.value = true
   let successCount = 0
   try {
@@ -1509,7 +1515,6 @@ async function confirmBatchManager() {
         if (row) { await updateEntry(id, { ...row, colProductManager: batchManagerValue.value }); successCount++ }
       } catch (e) { console.error(`指定产品经理失败 id=${id}:`, e) }
     }
-    showBatchManagerDialog.value = false
     ElMessage.success(`成功指定 ${successCount} 条产品经理`)
     handleQuery(true)
   } finally { batchLoading.value = false }
@@ -1549,11 +1554,11 @@ async function confirmBatchCategory() {
 
   const ids = [...selectedIds.value]
 
+  showBatchCategoryDialog.value = false
   batchLoading.value = true
   try {
     const res = await batchUpdateCategory(props.versionId, ids, batchCategoryId.value, batchDomainId.value, null)
     if (res.code === 200) {
-      showBatchCategoryDialog.value = false
       ElMessage.success(`成功修改 ${res.data} 条记录的业务分类/业务域`)
       selectedIds.value = []
       handleQuery(true)
@@ -2091,6 +2096,7 @@ function onChildSelectionChange(rows) {
 }
 
 async function handleQuery(preserveExpand = false) {
+   dataLoading.value = true
    try {
      const res = await queryEntries(props.versionId, {
        customTabId: props.customTabId || undefined,
@@ -2102,10 +2108,10 @@ async function handleQuery(preserveExpand = false) {
        bizCategory: props.selectedNode?.id !== 'all' ? (props.selectedNode?.categoryLabel || undefined) : undefined,
        bizDomain: props.selectedNode?.id !== 'all' ? (props.selectedNode?.domainLabel || undefined) : undefined
      })
-      const entries = res.data || []
-        totalEntryCount.value = entries.length
-        productCount.value = entries.filter(e => e.level === 3).length
-       tableData.value = buildTree(entries)
+        const entries = res.data || []
+          totalEntryCount.value = entries.length
+          productCount.value = entries.filter(e => e.level === 3).length
+        tableData.value = buildTree(entries)
       if (!preserveExpand) {
         collapsedDomains.value = new Set()
         const defaultExpanded = new Set()
@@ -2127,6 +2133,8 @@ async function handleQuery(preserveExpand = false) {
     displayData.value = []
     totalEntryCount.value = 0
     productCount.value = 0
+   } finally {
+     dataLoading.value = false
    }
 }
 

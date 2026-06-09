@@ -92,6 +92,12 @@ const routes = [
         name: 'ImageGallery',
         component: () => import('../views/system/ImageGallery.vue'),
         meta: { title: '图床管理' }
+      },
+      {
+        path: 'special-ops',
+        name: 'SpecialOps',
+        component: () => import('../views/system/SpecialOps.vue'),
+        meta: { title: '非常规操作', roles: ['ADMIN'] }
       }
     ]
   }

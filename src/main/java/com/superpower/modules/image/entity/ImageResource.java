@@ -47,4 +47,10 @@ public class ImageResource {
 
     @Column(name = "version_id")
     private Long versionId;
+
+    @Column(name = "width")
+    private Integer width;
+
+    @Column(name = "height")
+    private Integer height;
 }

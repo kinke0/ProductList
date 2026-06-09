@@ -12,4 +12,5 @@ public class DocGenerateRequest {
     private String dataScope;
     private List<Long> entryIds;
     private Long customTabId;
+    private Boolean includeImages = true;
 }

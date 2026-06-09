@@ -66,6 +66,9 @@ public class DocumentService {
     @Value("${app.doc-storage-path:./generated-docs}")
     private String docStoragePath;
 
+    @Value("${app.image-storage-path:./uploads/images}")
+    private String imageStoragePath;
+
     public DocumentService(DataEntryRepository entryRepository, DocGenRecordRepository genRecordRepository,
                            CustomTabEntryRepository customTabEntryRepository) {
         this.entryRepository = entryRepository;
@@ -133,17 +136,18 @@ public class DocumentService {
         }
     }
 
-    public byte[] generateDocument(String docType, String format, List<Long> entryIds) throws Exception {
+    public byte[] generateDocument(String docType, String format, List<Long> entryIds, Boolean includeImages) throws Exception {
         List<DataEntry> entries = entryRepository.findAllById(entryIds);
         if ("word".equals(format)) {
-            return generateWord(docType, entries, null);
+            return generateWord(docType, entries, null, includeImages);
         } else {
             return generateExcel(docType, entries, null);
         }
     }
 
     public String generateAndSaveDocument(Long recordId, String docType, String format,
-                                          List<Long> entryIds, Long versionId, Long customTabId) throws Exception {
+                                          List<Long> entryIds, Long versionId, Long customTabId,
+                                          Boolean includeImages) throws Exception {
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
             if (customTabId != null) {
@@ -172,7 +176,7 @@ public class DocumentService {
         Path filePath = dir.resolve(filename);
 
         if ("word".equals(format)) {
-            generateWordToFile(docType, entries, recordId, filePath);
+            generateWordToFile(docType, entries, recordId, filePath, includeImages);
         } else {
             byte[] data = generateExcel(docType, entries, recordId);
             Files.write(filePath, data);
@@ -207,24 +211,25 @@ public class DocumentService {
         } while (added);
     }
 
-    private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId) throws Exception {
+    private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId, Boolean includeImages) throws Exception {
         ZipSecureFile.setMinInflateRatio(0.001);
         ZipSecureFile.setMaxFileCount(100000);
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
-        generateFeatureWord(doc, entries, recordId, docType);
+        generateFeatureWord(doc, entries, recordId, docType, includeImages);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
         doc.close();
         return out.toByteArray();
     }
 
-    private void generateWordToFile(String docType, List<DataEntry> entries, Long recordId, Path filePath) throws Exception {
+    private void generateWordToFile(String docType, List<DataEntry> entries, Long recordId, Path filePath,
+                                     Boolean includeImages) throws Exception {
         ZipSecureFile.setMinInflateRatio(0.001);
         ZipSecureFile.setMaxFileCount(100000);
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
-        generateFeatureWord(doc, entries, recordId, docType);
+        generateFeatureWord(doc, entries, recordId, docType, includeImages);
         try (OutputStream out = Files.newOutputStream(filePath)) {
             doc.write(out);
         } finally {
@@ -269,7 +274,8 @@ public class DocumentService {
         }
     }
 
-    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId, String docType) {
+    private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId, String docType,
+                                      Boolean includeImages) {
         int totalSize = entries.size();
         int[] progressCounter = {0};
         log.info("generateFeatureWord: total entries={}, recordId={}", totalSize, recordId);
@@ -320,7 +326,7 @@ public class DocumentService {
 
                 for (int i = 0; i < roots.size(); i++) {
                     String nodeNumber = domainNumber + "." + (i + 1);
-                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize, docType);
+                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize, docType, includeImages);
                 }
             }
         }
@@ -328,14 +334,18 @@ public class DocumentService {
 
     private void writeNode(XWPFDocument doc, DataEntry entry, String number, int level,
                            Map<Long, List<DataEntry>> childrenByParent,
-                           Long recordId, int[] progressCounter, int totalSize, String docType) {
+                           Long recordId, int[] progressCounter, int totalSize, String docType, Boolean includeImages) {
         int docLevel = Math.min(level, MAX_HEADING_LEVEL);
         String name = extractName(entry.getColProductSystem());
         addNumberedHeading(doc, name, docLevel, number);
 
         String desc = "bid".equals(docType) ? entry.getColBidParamDesc() : entry.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
-            processDescriptionWithImages(doc, desc);
+            if (Boolean.TRUE.equals(includeImages)) {
+                processDescriptionWithImages(doc, desc);
+            } else {
+                processDescriptionTextOnly(doc, desc);
+            }
         }
 
         progressCounter[0]++;
@@ -346,7 +356,7 @@ public class DocumentService {
             children.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
             for (int i = 0; i < children.size(); i++) {
                 String childNumber = number + "." + (i + 1);
-                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize, docType);
+                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize, docType, includeImages);
             }
         }
     }
@@ -356,6 +366,25 @@ public class DocumentService {
         String text = product.trim().replace("\n", "").replace("\r", "");
         Matcher m = Pattern.compile("^[\\d.]+").matcher(text);
         return m.find() ? m.group() : null;
+    }
+
+    private void processDescriptionTextOnly(XWPFDocument doc, String description) {
+        String normalized = normalizeImageCards(description);
+        String cleaned = HTML_TAG_PATTERN.matcher(normalized).replaceAll("");
+        cleaned = cleaned.replaceAll("\\[https?://[^\\]]*\\]", "");
+        cleaned = cleaned.replaceAll("\\[local:[^\\]]*\\]", "");
+        String[] lines = cleaned.split("\n");
+        for (String line : lines) {
+            line = line.trim();
+            if (!line.isEmpty()) {
+                XWPFParagraph para = doc.createParagraph();
+                para.setIndentationFirstLine(420);
+                para.setSpacingBetween(1.5);
+                XWPFRun run = para.createRun();
+                run.setText(line);
+                setFontStyle(run);
+            }
+        }
     }
 
     private void processDescriptionWithImages(XWPFDocument doc, String description) {
@@ -382,7 +411,7 @@ public class DocumentService {
                 continue;
             }
 
-            if (part.startsWith("http://") || part.startsWith("https://")) {
+            if (part.startsWith("http://") || part.startsWith("https://") || part.startsWith("local:")) {
                 String urlForDownload = part;
                 int hashIdx = urlForDownload.indexOf('#');
                 if (hashIdx > 0) {
@@ -397,7 +426,7 @@ public class DocumentService {
                         j++;
                         continue;
                     }
-                    if (nextPart.startsWith("http://") || nextPart.startsWith("https://")) {
+                    if (nextPart.startsWith("http://") || nextPart.startsWith("https://") || nextPart.startsWith("local:")) {
                         String nextForDownload = nextPart;
                         int nextHash = nextForDownload.indexOf('#');
                         if (nextHash > 0) nextForDownload = nextForDownload.substring(0, nextHash);
@@ -495,7 +524,7 @@ public class DocumentService {
             String dataUrl = urlMatcher.group(1);
             String fullUrl = dataUrl;
             if (dataUrl.startsWith("/api/images/file/")) {
-                fullUrl = "http://localhost:8080" + dataUrl;
+                fullUrl = "local:" + dataUrl;
             }
             String filename = null;
             Matcher fnMatcher = FILENAME_ATTR_PATTERN.matcher(openingTag);
@@ -560,11 +589,13 @@ public class DocumentService {
     }
 
     private ImageData downloadAndProcessImage(String rawUrl) {
+        if (rawUrl.startsWith("local:/api/images/file/")) {
+            return readLocalImage(rawUrl);
+        }
         String[] candidates = buildUrlCandidates(rawUrl);
-        System.out.println("[DocGen] downloadImage: rawUrl=" + rawUrl + ", candidates=" + candidates.length);
         for (String url : candidates) {
+            if (url.startsWith("local:")) continue;
             try {
-                System.out.println("[DocGen] trying URL: " + url);
                 HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                 conn.setRequestProperty("User-Agent",
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
@@ -575,52 +606,69 @@ public class DocumentService {
                 conn.setInstanceFollowRedirects(true);
 
                 int responseCode = conn.getResponseCode();
-                if (responseCode != 200) {
-                    continue;
-                }
+                if (responseCode != 200) continue;
 
                 String contentType = conn.getContentType();
-                if (contentType != null && contentType.startsWith("text/")) {
-                    continue;
-                }
+                if (contentType != null && contentType.startsWith("text/")) continue;
 
                 byte[] imageData = conn.getInputStream().readAllBytes();
-                if (imageData.length == 0) {
-                    continue;
-                }
+                if (imageData.length == 0) continue;
 
-                BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageData));
-                if (img == null) {
-                    continue;
-                }
-
-                int width = img.getWidth();
-                int height = img.getHeight();
-
-                String lowerUrl = url.toLowerCase();
-                int pictureType;
-                if (lowerUrl.contains(".png")) {
-                    pictureType = XWPFDocument.PICTURE_TYPE_PNG;
-                } else if (lowerUrl.contains(".jpg") || lowerUrl.contains(".jpeg")) {
-                    pictureType = XWPFDocument.PICTURE_TYPE_JPEG;
-                } else if (lowerUrl.contains(".gif")) {
-                    pictureType = XWPFDocument.PICTURE_TYPE_GIF;
-                } else if (lowerUrl.contains(".bmp")) {
-                    pictureType = XWPFDocument.PICTURE_TYPE_BMP;
-                } else {
-                    ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
-                    ImageIO.write(img, "png", pngOut);
-                    imageData = pngOut.toByteArray();
-                    pictureType = XWPFDocument.PICTURE_TYPE_PNG;
-                }
-
-                return new ImageData(imageData, width, height, pictureType);
+                return parseImageData(imageData, url);
             } catch (Exception e) {
                 log.debug("URL candidate failed: {}", url);
             }
         }
         log.warn("All URL candidates failed for: {}", rawUrl);
         return null;
+    }
+
+    private ImageData readLocalImage(String rawUrl) {
+        try {
+            String apiPath = rawUrl.substring("local:".length());
+            String relativePath = apiPath.substring("/api/images/file/".length());
+            Path filePath = Paths.get(imageStoragePath, relativePath);
+            if (!Files.exists(filePath)) {
+                log.warn("Local image not found: {}", filePath);
+                return null;
+            }
+            byte[] imageData = Files.readAllBytes(filePath);
+            if (imageData.length == 0) return null;
+            return parseImageData(imageData, filePath.getFileName().toString());
+        } catch (Exception e) {
+            log.warn("Failed to read local image: {}", rawUrl, e);
+            return null;
+        }
+    }
+
+    private ImageData parseImageData(byte[] imageData, String urlOrName) {
+        try {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageData));
+            if (img == null) return null;
+
+            int width = img.getWidth();
+            int height = img.getHeight();
+
+            String lower = urlOrName.toLowerCase();
+            int pictureType;
+            if (lower.contains(".png")) {
+                pictureType = XWPFDocument.PICTURE_TYPE_PNG;
+            } else if (lower.contains(".jpg") || lower.contains(".jpeg")) {
+                pictureType = XWPFDocument.PICTURE_TYPE_JPEG;
+            } else if (lower.contains(".gif")) {
+                pictureType = XWPFDocument.PICTURE_TYPE_GIF;
+            } else if (lower.contains(".bmp")) {
+                pictureType = XWPFDocument.PICTURE_TYPE_BMP;
+            } else {
+                ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
+                ImageIO.write(img, "png", pngOut);
+                imageData = pngOut.toByteArray();
+                pictureType = XWPFDocument.PICTURE_TYPE_PNG;
+            }
+            return new ImageData(imageData, width, height, pictureType);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String[] buildUrlCandidates(String rawUrl) {
@@ -844,13 +892,23 @@ public class DocumentService {
                 String name = URLDecoder.decode(url.substring(hashIdx + 1), "UTF-8").trim();
                 if (!name.isEmpty()) return name;
             }
-            String path = new URL(url).getPath();
+            String pathToParse = url;
+            if (url.startsWith("local:")) {
+                pathToParse = url.substring("local:".length());
+            }
+            String path = pathToParse;
+            int schemeEnd = pathToParse.indexOf("://");
+            if (schemeEnd >= 0) {
+                String rest = pathToParse.substring(schemeEnd + 3);
+                int pathStart = rest.indexOf('/');
+                path = pathStart >= 0 ? rest.substring(pathStart) : "";
+            }
             String decoded = URLDecoder.decode(path, "UTF-8");
             String filename = decoded.substring(decoded.lastIndexOf('/') + 1);
             int queryIdx = filename.indexOf('?');
             if (queryIdx >= 0) filename = filename.substring(0, queryIdx);
             int dotIdx = filename.lastIndexOf('.');
-            if (dotIdx >= 0) filename = filename.substring(0, dotIdx);
+            if (dotIdx > 0) filename = filename.substring(0, dotIdx);
             return filename.isEmpty() ? "image" : filename;
         } catch (Exception e) {
             return "image";

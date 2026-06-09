@@ -87,6 +87,10 @@
               <span>系统类型维护</span>
             </el-menu-item>
           </el-sub-menu>
+          <el-menu-item index="/special-ops">
+            <el-icon><Warning /></el-icon>
+            <span>非常规操作</span>
+          </el-menu-item>
         </el-sub-menu>
       </el-menu>
     </div>
@@ -155,7 +159,7 @@
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import { ref, reactive, computed, provide } from 'vue'
-import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture, Goods, Collection } from '@element-plus/icons-vue'
+import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture, Goods, Collection, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { changePassword, changeNickname } from '../api/auth'
 import RequirementFormDialog from '../components/RequirementFormDialog.vue'
@@ -183,7 +187,8 @@ const currentModule = computed(() => {
     '/base-data/status': { category: '系统管理', domain: '基础数据维护' },
     '/base-data/product-category': { category: '系统管理', domain: '基础数据维护' },
     '/base-data/system-type': { category: '系统管理', domain: '基础数据维护' },
-    '/image-gallery': { category: '图床管理' }
+    '/image-gallery': { category: '图床管理' },
+    '/special-ops': { category: '系统管理', domain: '非常规操作' }
   }
   return map[route.path] || null
 })

@@ -59,7 +59,8 @@ public class DocumentController {
         new Thread(() -> {
             try {
                 documentService.generateAndSaveDocument(
-                        recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId);
+                        recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId,
+                        request.getIncludeImages() != null ? request.getIncludeImages() : true);
             } catch (Exception e) {
                 try {
                     documentService.updateGenRecordError(recordId, e.getMessage());

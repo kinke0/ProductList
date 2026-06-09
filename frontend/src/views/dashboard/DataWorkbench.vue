@@ -154,6 +154,7 @@
           <el-radio value="bid">招标参数</el-radio>
           <el-radio value="feature">功能说明</el-radio>
         </el-radio-group>
+        <el-checkbox v-if="docType === 'feature' && docFormat === 'word'" v-model="includeImages" style="margin-left:16px;">包含图片</el-checkbox>
       </el-form-item>
       <el-form-item label="输出格式">
         <el-radio-group v-model="docFormat">
@@ -318,6 +319,7 @@ const showDocDialog = ref(false)
 const docType = ref('feature')
 const docFormat = ref('word')
 const dataScope = ref('all')
+const includeImages = ref(true)
 const selectedEntryIds = ref([])
 const docCustomTabId = ref(null)
 const docLoading = ref(false)
@@ -758,6 +760,7 @@ async function onRemoveFromList(tabId, entryIds) {
 function onGenerateDoc(ids, tabId) {
   selectedEntryIds.value = ids
   docCustomTabId.value = tabId || null
+  includeImages.value = true
   const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
   docName.value = tabName ? tabName + '-功能说明' : '功能说明'
   showDocDialog.value = true
@@ -846,7 +849,8 @@ async function handleGenerate() {
       format: docFormat.value,
       dataScope: dataScope.value,
       entryIds: dataScope.value === 'selected' ? selectedEntryIds.value : [],
-      customTabId: docCustomTabId.value
+      customTabId: docCustomTabId.value,
+      includeImages: includeImages.value
     })
     if (res.code === 200) {
       const recordId = res.data?.id

@@ -76,10 +76,11 @@ public class DataEntryController {
     }
 
     @GetMapping("/{id}/preview-download")
-    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id, @RequestParam(defaultValue = "feature") String mode) throws Exception {
+    public ResponseEntity<byte[]> previewDownload(@PathVariable Long id, @RequestParam(defaultValue = "feature") String mode,
+                                                   @RequestParam(defaultValue = "true") Boolean includeImages) throws Exception {
         DataEntry entry = dataEntryService.getById(id);
         List<Long> ids = dataEntryService.collectL3AndDescendantIds(id);
-        byte[] data = documentService.generateDocument(mode, "word", ids);
+        byte[] data = documentService.generateDocument(mode, "word", ids, includeImages);
         String suffix = "bid".equals(mode) ? "_招标参数" : "_功能说明";
         String filename = (entry.getColProductSystem() != null ? entry.getColProductSystem() : "预览") + suffix + ".docx";
         return ResponseEntity.ok()

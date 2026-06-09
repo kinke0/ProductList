@@ -24,14 +24,14 @@
           @node-click="onNodeClick"
         />
       </div>
-      <div class="gallery-content">
+      <div class="gallery-content" v-loading="imagesLoading">
         <div v-if="currentImages.length > 0" class="gallery-toolbar">
           <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll">全选</el-checkbox>
           <el-input v-model="searchText" placeholder="搜索图片名称..." size="small" clearable style="width:200px;margin-left:12px;" />
         </div>
         <div v-if="filteredImages.length === 0" class="empty-tip">{{ currentImages.length > 0 ? '未找到匹配的图片' : '请选择左侧目录查看图片，或上传图片' }}</div>
         <div v-else class="image-grid">
-          <el-tooltip v-for="img in filteredImages" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
+          <el-tooltip v-for="img in displayList" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
             <div class="image-card" :class="{ selected: selectedIds.includes(img.id) }">
               <el-checkbox class="img-checkbox" :model-value="selectedIds.includes(img.id)" @change="toggleSelect(img)" @click.stop />
               <div class="image-thumb" @click="previewImage(img)">
@@ -91,11 +91,13 @@ import { computed } from 'vue'
 
 const treeData = ref([])
 const currentImages = ref([])
+const imagesLoading = ref(false)
 const selectedNode = ref(null)
 const selectedCategory = ref(null)
 const selectedDomain = ref(null)
 const selectedProduct = ref(null)
 const selectedIds = ref([])
+const displayCount = ref(0)
 const searchText = ref('')
 const versionId = ref(null)
 const currentVersionNo = ref('')
@@ -143,16 +145,39 @@ function onNodeClick(data, node) {
     selectedProduct.value = null
   }
   selectedNode.value = data
+  currentImages.value = []
+  selectedIds.value = []
+  displayCount.value = 0
   loadImages()
 }
 
 async function loadImages() {
-  const params = { versionId: versionId.value }
-  if (selectedProduct.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value; params.product = selectedProduct.value }
-  else if (selectedDomain.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value }
-  else if (selectedCategory.value) { params.category = selectedCategory.value }
-  const res = await getImages(params)
-  currentImages.value = res.data || []
+  imagesLoading.value = true
+  displayCount.value = 0
+  try {
+    const params = { versionId: versionId.value }
+    if (selectedProduct.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value; params.product = selectedProduct.value }
+    else if (selectedDomain.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value }
+    else if (selectedCategory.value) { params.category = selectedCategory.value }
+    const res = await getImages(params)
+    currentImages.value = res.data || []
+    await nextTick()
+    animateDisplay()
+  } finally {
+    imagesLoading.value = false
+  }
+}
+
+function animateDisplay() {
+  const total = currentImages.value.length
+  const batchSize = 20
+  function step() {
+    if (displayCount.value < total) {
+      displayCount.value = Math.min(displayCount.value + batchSize, total)
+      requestAnimationFrame(step)
+    }
+  }
+  requestAnimationFrame(step)
 }
 
 function triggerUpload() {
@@ -256,6 +281,7 @@ const filteredImages = computed(() => {
   const keyword = searchText.value.toLowerCase()
   return currentImages.value.filter(img => (img.filename || '').toLowerCase().includes(keyword))
 })
+const displayList = computed(() => filteredImages.value.slice(0, displayCount.value))
 const isIndeterminate = computed(() => {
   const count = filteredImages.value.filter(img => selectedIds.value.includes(img.id)).length
   return count > 0 && count < filteredImages.value.length

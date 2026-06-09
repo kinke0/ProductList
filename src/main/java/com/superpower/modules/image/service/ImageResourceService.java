@@ -104,7 +104,19 @@ public class ImageResourceService {
             basePath = storagePath;
             urlPrefix = "/api/images/file/";
         }
-        Path dirPath = Paths.get(basePath, subPath);
+
+        if (versionId != null) {
+            List<ImageResource> existing = imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProduct(
+                    versionId, category, domain, product);
+            for (ImageResource ex : existing) {
+                if (storedName.equals(ex.getStoredName())) {
+                    throw new BusinessException("当前版本该目录下已存在同名文件: " + storedName);
+                }
+            }
+        }
+
+        String versionDir = versionId != null ? String.valueOf(versionId) : "0";
+        Path dirPath = Paths.get(basePath, versionDir, subPath);
         try {
             Files.createDirectories(dirPath);
             int waitRetry = 0;
@@ -132,7 +144,7 @@ public class ImageResourceService {
             throw new BusinessException("文件保存失败: " + e.getMessage());
         }
 
-        String urlPath = urlPrefix + subPath + "/" + storedName;
+        String urlPath = urlPrefix + versionDir + "/" + subPath + "/" + storedName;
 
         ImageResource image = new ImageResource();
         String filenameToSave = (displayName != null && !displayName.isEmpty()) ? displayName : originalFilename;
@@ -150,6 +162,14 @@ public class ImageResourceService {
         image.setMimeType(contentType);
         image.setUploadedBy(username);
         image.setVersionId(versionId);
+
+        try {
+            java.awt.image.BufferedImage bimg = javax.imageio.ImageIO.read(filePath.toFile());
+            if (bimg != null) {
+                image.setWidth(bimg.getWidth());
+                image.setHeight(bimg.getHeight());
+            }
+        } catch (Exception ignored) {}
 
         return imageResourceRepository.save(image);
     }
@@ -241,13 +261,10 @@ public class ImageResourceService {
 
         imageResourceRepository.deleteById(id);
 
-        long remaining = imageResourceRepository.countByPath(image.getPath());
-        if (remaining == 0) {
-            try {
-                Path filePath = Paths.get(image.getPath());
-                Files.deleteIfExists(filePath);
-            } catch (IOException ignored) {}
-        }
+        try {
+            Path filePath = Paths.get(image.getPath());
+            Files.deleteIfExists(filePath);
+        } catch (IOException ignored) {}
     }
 
     public void batchDelete(List<Long> ids) {
@@ -268,14 +285,21 @@ public class ImageResourceService {
             image.setFilename(newName);
             syncImageNameInReferences(image.getUrl(), oldName, newName);
         }
-        if (body.getCategory() != null) {
+        boolean locationChanged = false;
+        if (body.getCategory() != null && !body.getCategory().equals(image.getCategory())) {
             image.setCategory(body.getCategory());
+            locationChanged = true;
         }
-        if (body.getDomain() != null) {
+        if (body.getDomain() != null && !body.getDomain().equals(image.getDomain())) {
             image.setDomain(body.getDomain());
+            locationChanged = true;
         }
-        if (body.getProduct() != null) {
+        if (body.getProduct() != null && !body.getProduct().equals(image.getProduct())) {
             image.setProduct(body.getProduct());
+            locationChanged = true;
+        }
+        if (locationChanged) {
+            moveImageFile(image);
         }
         return imageResourceRepository.save(image);
     }
@@ -332,27 +356,6 @@ public class ImageResourceService {
     }
 
     public List<ImageDirectoryNode> getTree(Long versionId) {
-        List<ImageResource> images;
-        if (versionId != null) {
-            images = imageResourceRepository.findByVersionId(versionId);
-        } else {
-            images = imageResourceRepository.findAll();
-        }
-
-        Map<String, Integer> imageCountByCat = new LinkedHashMap<>();
-        Map<String, Integer> imageCountByDom = new LinkedHashMap<>();
-        Map<String, Integer> imageCountByProd = new LinkedHashMap<>();
-        for (ImageResource img : images) {
-            String cat = img.getCategory() != null ? img.getCategory() : "";
-            String dom = img.getDomain() != null ? img.getDomain() : "";
-            String prod = img.getProduct() != null ? img.getProduct() : "";
-            imageCountByCat.merge(cat, 1, Integer::sum);
-            String domKey = cat + "||" + dom;
-            imageCountByDom.merge(domKey, 1, Integer::sum);
-            String prodKey = domKey + "||" + prod;
-            imageCountByProd.merge(prodKey, 1, Integer::sum);
-        }
-
         List<DataEntry> entries = versionId != null
             ? dataEntryRepository.findByVersionId(versionId)
             : dataEntryRepository.findAll();
@@ -393,8 +396,8 @@ public class ImageResourceService {
                 }
             }
         } else {
-            Map<Long, DataEntry> entryMap = new HashMap<>();
-            for (DataEntry e : entries) entryMap.put(e.getId(), e);
+            Map<Long, DataEntry> entryMapForTree = new HashMap<>();
+            for (DataEntry e : entries) entryMapForTree.put(e.getId(), e);
             for (DataEntry entry : entries) {
                 String cat = entry.getColBizCategory();
                 String dom = entry.getColBizDomain();
@@ -424,36 +427,152 @@ public class ImageResourceService {
 
         List<String> orderedCategories = new ArrayList<>(catNames.keySet());
 
-        List<ImageDirectoryNode> roots = new ArrayList<>();
-        for (String catName : orderedCategories) {
-            ImageDirectoryNode catNode = new ImageDirectoryNode();
-            int catCount = fuzzyGetCount(imageCountByCat, catName);
-            catNode.setLabel(catName + " (" + catCount + ")");
-            catNode.setCount(catCount);
+        List<ImageResource> allImages = versionId != null
+            ? imageResourceRepository.findByVersionId(versionId)
+            : imageResourceRepository.findAll();
 
-            List<ImageDirectoryNode> domainNodes = new ArrayList<>();
+        Map<String, Integer> prodCountMap = new HashMap<>();
+
+        Map<String, List<ImageResource>> imgByCatDom = new HashMap<>();
+        for (ImageResource img : allImages) {
+            String imgCat = img.getCategory() != null ? img.getCategory() : "";
+            String imgDom = img.getDomain() != null ? img.getDomain() : "";
+            imgByCatDom.computeIfAbsent(imgCat + "||" + imgDom, k -> new ArrayList<>()).add(img);
+        }
+
+        for (String catName : orderedCategories) {
             List<String> domains = catToDomains.getOrDefault(catName, new ArrayList<>());
             for (String domName : domains) {
                 String domKey = catName + "||" + domName;
-                int domCount = fuzzyGetCount(imageCountByDom, domKey);
+                List<ImageResource> catDomImages = imgByCatDom.getOrDefault(domKey, Collections.emptyList());
+                Map<String, Integer> directCountByProd = new HashMap<>();
+                for (ImageResource img : catDomImages) {
+                    String imgProd = img.getProduct() != null ? img.getProduct() : "";
+                    directCountByProd.merge(imgProd, 1, Integer::sum);
+                }
+                List<String> products = domToProducts.getOrDefault(domKey, new ArrayList<>());
+                for (String prodName : products) {
+                    prodCountMap.put(domKey + "||" + prodName, directCountByProd.getOrDefault(prodName, 0));
+                }
+            }
+        }
+
+        Map<String, Set<String>> prodDirectImgIdSets = new HashMap<>();
+        Set<String> allDirectImgIds = new HashSet<>();
+        for (String catName : orderedCategories) {
+            List<String> domains = catToDomains.getOrDefault(catName, new ArrayList<>());
+            for (String domName : domains) {
+                String domKey = catName + "||" + domName;
+                List<ImageResource> catDomImages = imgByCatDom.getOrDefault(domKey, Collections.emptyList());
+                List<String> products = domToProducts.getOrDefault(domKey, new ArrayList<>());
+                for (String prodName : products) {
+                    Set<String> ids = new HashSet<>();
+                    for (ImageResource img : catDomImages) {
+                        String imgProd = img.getProduct() != null ? img.getProduct() : "";
+                        if (imgProd.equals(prodName)) {
+                            String id = String.valueOf(img.getId());
+                            ids.add(id);
+                            allDirectImgIds.add(id);
+                        }
+                    }
+                    prodDirectImgIdSets.put(domKey + "||" + prodName, ids);
+                }
+            }
+        }
+
+        Set<String> catDomProdKeys = prodDirectImgIdSets.keySet();
+
+        Map<String, String> urlToImgId = new HashMap<>();
+        for (ImageResource img : allImages) {
+            if (img.getUrl() != null) {
+                urlToImgId.put(img.getUrl(), String.valueOf(img.getId()));
+            }
+        }
+
+        Map<Long, DataEntry> entryMap = new HashMap<>();
+        for (DataEntry e : entries) entryMap.put(e.getId(), e);
+
+        Map<Long, String> allEntryL3Product = new HashMap<>();
+        for (DataEntry e : entries) {
+            DataEntry l3 = findAncestorAtLevel(e, entryMap, 3);
+            String l3Prod = (l3 != null && l3.getColProductSystem() != null) ? l3.getColProductSystem().trim() : null;
+            allEntryL3Product.put(e.getId(), l3Prod);
+        }
+
+        Map<String, Set<String>> prodRefIds = new HashMap<>();
+        for (String key : catDomProdKeys) {
+            prodRefIds.put(key, new HashSet<>());
+        }
+
+        java.util.regex.Pattern urlExtractPattern = java.util.regex.Pattern.compile("/api/images/[^\"'<>\\]]+");
+
+        for (DataEntry e : entries) {
+            String desc = e.getColFeatureDesc();
+            if (desc == null || desc.isEmpty() || !desc.contains("/api/images/")) continue;
+            String eCat = e.getColBizCategory() != null ? e.getColBizCategory().trim() : "";
+            String eDom = e.getColBizDomain() != null ? e.getColBizDomain().trim() : "";
+            String domKey = eCat + "||" + eDom;
+            String l3Prod = allEntryL3Product.get(e.getId());
+            if (l3Prod == null) continue;
+            String prodKey = domKey + "||" + l3Prod;
+            if (!prodRefIds.containsKey(prodKey)) continue;
+            Set<String> targetSet = prodRefIds.get(prodKey);
+            java.util.regex.Matcher m = urlExtractPattern.matcher(desc);
+            while (m.find()) {
+                String url = m.group();
+                String imgId = urlToImgId.get(url);
+                if (imgId == null) continue;
+                if (allDirectImgIds.contains(imgId)) continue;
+                targetSet.add(imgId);
+            }
+        }
+
+        for (String prodKey : catDomProdKeys) {
+            Set<String> thisDirectIds = prodDirectImgIdSets.getOrDefault(prodKey, Collections.emptySet());
+            Set<String> refs = prodRefIds.getOrDefault(prodKey, Collections.emptySet());
+            int refCount = 0;
+            for (String refId : refs) {
+                if (!thisDirectIds.contains(refId)) {
+                    refCount++;
+                }
+            }
+            if (refCount > 0) {
+                prodCountMap.merge(prodKey, refCount, Integer::sum);
+            }
+        }
+
+        List<ImageDirectoryNode> roots = new ArrayList<>();
+        for (String catName : orderedCategories) {
+            ImageDirectoryNode catNode = new ImageDirectoryNode();
+            List<String> domains = catToDomains.getOrDefault(catName, new ArrayList<>());
+
+            List<ImageDirectoryNode> domainNodes = new ArrayList<>();
+            int catTotal = 0;
+            for (String domName : domains) {
+                String domKey = catName + "||" + domName;
                 ImageDirectoryNode domNode = new ImageDirectoryNode();
-                domNode.setLabel(domName + " (" + domCount + ")");
-                domNode.setCount(domCount);
 
                 List<ImageDirectoryNode> prodNodes = new ArrayList<>();
                 List<String> products = domToProducts.getOrDefault(domKey, new ArrayList<>());
+                int domTotal = 0;
                 for (String prodName : products) {
                     String prodKey = domKey + "||" + prodName;
-                    int prodCount = fuzzyGetCount(imageCountByProd, prodKey);
+                    int prodCount = prodCountMap.getOrDefault(prodKey, 0);
                     ImageDirectoryNode prodNode = new ImageDirectoryNode();
                     prodNode.setLabel(prodName + " (" + prodCount + ")");
                     prodNode.setCount(prodCount);
                     prodNode.setChildren(null);
                     prodNodes.add(prodNode);
+                    domTotal += prodCount;
                 }
+                domNode.setLabel(domName + " (" + domTotal + ")");
+                domNode.setCount(domTotal);
                 domNode.setChildren(prodNodes.isEmpty() ? null : prodNodes);
                 domainNodes.add(domNode);
+                catTotal += domTotal;
             }
+            catNode.setLabel(catName + " (" + catTotal + ")");
+            catNode.setCount(catTotal);
             catNode.setChildren(domainNodes.isEmpty() ? null : domainNodes);
             roots.add(catNode);
         }
@@ -538,6 +657,38 @@ public class ImageResourceService {
         ImageResource image = imageResourceRepository.findById(imageId)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
         return reqItemRepository.findByDescriptionContaining(image.getUrl());
+    }
+
+    private void moveImageFile(ImageResource img) {
+        try {
+            String oldPath = img.getPath();
+            if (oldPath == null) return;
+            String urlPrefix = "/api/images/file/";
+            String reqPrefix = "/api/requirements/file/";
+            String baseUrl;
+            String urlPath;
+            if (img.getUrl() != null && img.getUrl().startsWith(urlPrefix)) {
+                baseUrl = storagePath;
+                urlPath = img.getUrl().substring(urlPrefix.length());
+            } else if (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) {
+                baseUrl = storagePath.replace("images", "requirements");
+                urlPath = img.getUrl().substring(reqPrefix.length());
+            } else {
+                return;
+            }
+            String versionDir = img.getVersionId() != null ? String.valueOf(img.getVersionId()) : "0";
+            String subPath = buildSubPath(img.getCategory(), img.getDomain(), img.getProduct());
+            Path newPath = Paths.get(baseUrl, versionDir, subPath, img.getStoredName());
+            Path oldFilePath = Paths.get(oldPath);
+            if (!Files.exists(oldFilePath) || Files.exists(newPath)) return;
+            Files.createDirectories(newPath.getParent());
+            Files.move(oldFilePath, newPath, StandardCopyOption.REPLACE_EXISTING);
+            img.setPath(newPath.toString());
+            String prefix = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) ? reqPrefix : urlPrefix;
+            img.setUrl(prefix + versionDir + "/" + subPath + "/" + img.getStoredName());
+        } catch (Exception e) {
+            log.warn("移动图片文件失败 id={}: {}", img.getId(), e.getMessage());
+        }
     }
 
     private String getExtension(String filename, String contentType) {
@@ -845,7 +996,8 @@ public class ImageResourceService {
             if (data.length == 0) return null;
 
             String subPath = buildSubPath(category, domain, product);
-            Path dirPath = Paths.get(storagePath, subPath);
+            String versionDir = versionId != null ? String.valueOf(versionId) : "0";
+            Path dirPath = Paths.get(storagePath, versionDir, subPath);
             Files.createDirectories(dirPath);
 
             String filename;
@@ -865,7 +1017,7 @@ public class ImageResourceService {
             Path filePath = dirPath.resolve(storedName);
             Files.write(filePath, data);
 
-            String migUrlPath = "/api/images/file/" + subPath + "/" + storedName;
+            String migUrlPath = "/api/images/file/" + versionDir + "/" + subPath + "/" + storedName;
 
             ImageResource image = new ImageResource();
             image.setFilename(filename);
@@ -912,6 +1064,43 @@ public class ImageResourceService {
         if (bytes < 1024 * 1024) return String.format("%.1f", bytes / 1024.0) + "KB";
         return String.format("%.1f", bytes / (1024.0 * 1024.0)) + "MB";
     }
+
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    @Async
+    @Transactional
+    public void backfillImageDimensions() {
+        List<ImageResource> images = imageResourceRepository.findAll().stream()
+                .filter(img -> img.getWidth() == null || img.getHeight() == null)
+                .toList();
+        if (images.isEmpty()) {
+            log.info("所有图片宽高已存在，无需回填");
+            return;
+        }
+        log.info("开始回填图片宽高，共 {} 张", images.size());
+        int count = 0;
+        for (ImageResource img : images) {
+            try {
+                Path filePath = Paths.get(img.getPath());
+                if (Files.exists(filePath)) {
+                    java.awt.image.BufferedImage bimg = javax.imageio.ImageIO.read(filePath.toFile());
+                    if (bimg != null) {
+                        img.setWidth(bimg.getWidth());
+                        img.setHeight(bimg.getHeight());
+                        imageResourceRepository.save(img);
+                        count++;
+                        if (count % 500 == 0) {
+                            log.info("已回填 {} / {} 张图片宽高", count, images.size());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("回填图片宽高失败 id={} path={}: {}", img.getId(), img.getPath(), e.getMessage());
+            }
+        }
+        log.info("图片宽高回填完成，成功 {} / {} 张", count, images.size());
+    }
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ImageResourceService.class);
 
     public String getCurrentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

@@ -24,13 +24,15 @@ import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.nio.file.*;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -937,6 +939,11 @@ public class DataEntryService {
         return null;
     }
 
+    @Value("${app.image-storage-path:./uploads/images}")
+    private String imageStoragePath;
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DataEntryService.class);
+
     private void syncEntryImageClassifications(DataEntry entry) {
         String cat = entry.getColBizCategory();
         String dom = entry.getColBizDomain();
@@ -951,16 +958,73 @@ public class DataEntryService {
             urls.add(m.group(1));
         }
         if (urls.isEmpty()) return;
-        List<ImageResource> allImages = imageResourceRepository.findAll();
+        List<ImageResource> allImages = imageResourceRepository.findByVersionId(entry.getVersionId());
         for (ImageResource img : allImages) {
             if (urls.contains(img.getUrl())) {
                 boolean changed = false;
                 if (cat != null && !cat.equals(img.getCategory())) { img.setCategory(cat); changed = true; }
                 if (dom != null && !dom.equals(img.getDomain())) { img.setDomain(dom); changed = true; }
                 if (prod != null && !prod.equals(img.getProduct())) { img.setProduct(prod); changed = true; }
-                if (changed) imageResourceRepository.save(img);
+                if (changed) {
+                    moveImageFile(img);
+                    imageResourceRepository.save(img);
+                }
             }
         }
+    }
+
+    private void moveImageFile(ImageResource img) {
+        try {
+            String oldPath = img.getPath();
+            if (oldPath == null) return;
+            String urlPrefix = "/api/images/file/";
+            String reqPrefix = "/api/requirements/file/";
+            String baseUrl;
+            String urlPath;
+            if (img.getUrl() != null && img.getUrl().startsWith(urlPrefix)) {
+                baseUrl = imageStoragePath;
+                urlPath = img.getUrl().substring(urlPrefix.length());
+            } else if (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) {
+                baseUrl = imageStoragePath.replace("images", "requirements");
+                urlPath = img.getUrl().substring(reqPrefix.length());
+            } else {
+                return;
+            }
+            String versionDir = img.getVersionId() != null ? String.valueOf(img.getVersionId()) : "0";
+            String subPath = buildSubPath(img.getCategory(), img.getDomain(), img.getProduct());
+            Path newPath = Paths.get(baseUrl, versionDir, subPath, img.getStoredName());
+            Path oldFilePath = Paths.get(oldPath);
+            if (!Files.exists(oldFilePath) || Files.exists(newPath)) return;
+            Files.createDirectories(newPath.getParent());
+            Files.move(oldFilePath, newPath, StandardCopyOption.REPLACE_EXISTING);
+            img.setPath(newPath.toString());
+            String newUrl = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix) ? reqPrefix : urlPrefix)
+                    + versionDir + "/" + subPath + "/" + img.getStoredName();
+            img.setUrl(newUrl);
+        } catch (Exception e) {
+            log.warn("移动图片文件失败 id={}: {}", img.getId(), e.getMessage());
+        }
+    }
+
+    private String buildSubPath(String category, String domain, String product) {
+        StringBuilder sb = new StringBuilder();
+        if (category != null && !category.isEmpty()) {
+            sb.append(sanitizePath(category));
+        }
+        if (domain != null && !domain.isEmpty()) {
+            if (sb.length() > 0) sb.append("/");
+            sb.append(sanitizePath(domain));
+        }
+        if (product != null && !product.isEmpty()) {
+            if (sb.length() > 0) sb.append("/");
+            sb.append(sanitizePath(product));
+        }
+        return sb.toString();
+    }
+
+    private String sanitizePath(String name) {
+        if (name == null) return "";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
 
     private boolean isDescendant(Long ancestorId, Long nodeId) {
@@ -1575,6 +1639,38 @@ public class DataEntryService {
         nav.append("</div>");
     }
 
+    private Map<String, int[]> buildImageDimensionMap(List<String> batch) {
+        Map<String, int[]> dimMap = new HashMap<>();
+        Map<String, String> decodedToRaw = new HashMap<>();
+        Set<String> decodedSet = new HashSet<>();
+        for (String raw : batch) {
+            int pi = raw.indexOf('|');
+            String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+            String decoded = decodeUrl(urlPart);
+            decodedToRaw.put(decoded, urlPart);
+            decodedSet.add(decoded);
+        }
+        List<ImageResource> allImages = imageResourceRepository.findAll();
+        for (ImageResource img : allImages) {
+            if (img.getUrl() != null && img.getWidth() != null && img.getHeight() != null) {
+                String decodedDbUrl = decodeUrl(img.getUrl());
+                if (decodedSet.contains(decodedDbUrl)) {
+                    String rawKey = decodedToRaw.get(decodedDbUrl);
+                    dimMap.put(rawKey != null ? rawKey : img.getUrl(), new int[]{img.getWidth(), img.getHeight()});
+                }
+            }
+        }
+        return dimMap;
+    }
+
+    private String decodeUrl(String url) {
+        try {
+            return java.net.URLDecoder.decode(url, "UTF-8");
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
     private String toPreviewParagraphs(String desc) {
         String cleaned = cleanImageCardsToText(desc);
         cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
@@ -1626,11 +1722,12 @@ public class DataEntryService {
                         encUrls.add(encodeUrl(urlPart));
                         captions.add(cap);
                     }
+                    Map<String, int[]> dimMap = buildImageDimensionMap(batch);
                     boolean allPortrait = true;
                     for (String raw : batch) {
                         int pi = raw.indexOf('|');
                         String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
-                        int[] wh = getImageDimensions(urlPart);
+                        int[] wh = dimMap.getOrDefault(urlPart, new int[]{0, 0});
                         if (wh[0] > 0 && wh[1] > 0) {
                             if ((double) wh[1] / wh[0] <= 1.2) allPortrait = false;
                         } else {
@@ -1715,28 +1812,7 @@ public class DataEntryService {
         return sb.toString();
     }
 
-    @Value("${server.port:8080}")
-    private int serverPort;
 
-    private int[] getImageDimensions(String rawUrl) {
-        try {
-            String url = rawUrl;
-            int hashIdx = url.indexOf('#');
-            if (hashIdx > 0) url = url.substring(0, hashIdx);
-            if (url.startsWith("/")) url = "http://localhost:" + serverPort + url;
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            if (conn.getResponseCode() != 200) return new int[]{0, 0};
-            byte[] data = conn.getInputStream().readAllBytes();
-            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(data));
-            if (img == null) return new int[]{0, 0};
-            return new int[]{img.getWidth(), img.getHeight()};
-        } catch (Exception e) {
-            return new int[]{0, 0};
-        }
-    }
 
     private void appendTextLines(StringBuilder sb, String text) {
         for (String line : text.split("\n")) {
