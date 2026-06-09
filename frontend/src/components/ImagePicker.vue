@@ -1,17 +1,6 @@
 <template>
   <el-dialog v-model="visible" title="选择图片" width="70%" top="5vh" append-to-body @close="emit('close')">
     <div class="picker-body">
-      <div v-if="treeData.length > 0" class="picker-sidebar">
-        <el-tree
-          ref="treeRef"
-          :data="treeData"
-          :props="{ children: 'children', label: 'label' }"
-          node-key="key"
-          highlight-current
-          default-expand-all
-          @node-click="onNodeClick"
-        />
-      </div>
       <div class="picker-content">
         <div class="picker-toolbar">
           <el-button size="small" type="primary" plain @click="triggerUpload"><el-icon><Upload /></el-icon>本地上传</el-button>
@@ -20,7 +9,7 @@
         </div>
         <div class="picker-scroll">
           <div v-if="loading" style="text-align:center;padding:40px;">加载中...</div>
-          <div v-else-if="filteredImages.length === 0" class="empty-tip">{{ images.length > 0 ? '未找到匹配的图片' : '请选择左侧目录或上传图片' }}</div>
+          <div v-else-if="filteredImages.length === 0" class="empty-tip">暂无图片，可点击上方按钮上传</div>
           <div v-else class="image-grid">
             <div v-for="img in filteredImages" :key="img.id" class="image-card" :class="{ selected: selectedId === img.id }" @click="selectImage(img)">
               <div class="image-thumb">
@@ -41,8 +30,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { getImages, uploadImage, getImageTree } from '../api/image'
-import { PLATFORM_MODULES } from '../constants/platformModules'
+import { getImages, uploadImage } from '../api/image'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 
@@ -57,7 +45,6 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'select', 'close'])
 
 const visible = ref(false)
-const treeData = ref([])
 const images = ref([])
 const selectedId = ref(null)
 const selectedImage = ref(null)
@@ -66,7 +53,6 @@ const curCategory = ref(null)
 const curDomain = ref(null)
 const curProduct = ref(null)
 const fileInput = ref(null)
-const treeRef = ref(null)
 const searchText = ref('')
 
 const filteredImages = computed(() => {
@@ -81,131 +67,20 @@ watch(() => props.modelValue, async (v) => {
     selectedId.value = null
     selectedImage.value = null
     searchText.value = ''
-    await loadTree()
-    await loadInitialImages()
+    curCategory.value = props.fixedCategory || props.defaultCategory
+    curDomain.value = props.defaultDomain
+    curProduct.value = props.defaultProduct
+    await loadImages()
   }
 })
 watch(visible, (v) => { emit('update:modelValue', v) })
 
-function stripCountSuffix(str) {
-  return (str || '').replace(/\s*\(\d+\)$/, '')
-}
-
-function buildTreeNodes(nodes, parentCategory, parentDomain) {
-  if (!nodes) return undefined
-  return nodes.map((n, idx) => {
-    const label = n.label || ''
-    const key = parentCategory + '/' + label
-    const cleanLabel = stripCountSuffix(label)
-    const isLevel1 = !parentCategory
-    const isLevel2 = parentCategory && !parentDomain
-    const isLevel3 = parentCategory && parentDomain
-    const node = {
-      key,
-      label,
-      _category: isLevel1 ? cleanLabel : parentCategory,
-      _domain: isLevel2 ? cleanLabel : (isLevel3 ? null : parentDomain),
-      _product: isLevel3 ? cleanLabel : null
-    }
-    if (n.children && n.children.length > 0) {
-      if (isLevel1) {
-        node.children = buildTreeNodes(n.children, cleanLabel, null)
-      } else if (isLevel2) {
-        node.children = buildTreeNodes(n.children, parentCategory, cleanLabel)
-      } else {
-        node.children = buildTreeNodes(n.children, parentCategory, parentDomain)
-      }
-    }
-    return node
-  })
-}
-
-async function loadTree() {
-  if (props.fixedCategory) {
-    const cat = props.fixedCategory
-    const imgRes = await getImages({ category: cat })
-    const allImages = imgRes.data || []
-    const imageCountMap = {}
-    allImages.forEach(img => {
-      const key = img.domain || ''
-      imageCountMap[key] = (imageCountMap[key] || 0) + 1
-    })
-    const mod = PLATFORM_MODULES.find(m => m.value === cat)
-    const children = (mod?.children || []).map(sub => ({
-      key: cat + '/' + sub.value,
-      label: sub.value + (imageCountMap[sub.value] ? ` (${imageCountMap[sub.value]})` : ''),
-      _category: cat,
-      _domain: sub.value
-    }))
-    let totalCount = allImages.length
-    treeData.value = [{
-      key: cat,
-      label: cat + (totalCount > 0 ? ` (${totalCount})` : ''),
-      _category: cat,
-      _domain: '',
-      children: children.length > 0 ? children : undefined
-    }]
-    curCategory.value = cat
-    curDomain.value = null
-    curProduct.value = null
-  } else if (props.versionId) {
-    try {
-      const res = await getImageTree(props.versionId)
-      const rawTree = res.data || []
-      treeData.value = buildTreeNodes(rawTree, null, null) || []
-    } catch {
-      treeData.value = []
-    }
-    curCategory.value = props.defaultCategory
-    curDomain.value = props.defaultDomain
-    curProduct.value = props.defaultProduct
-  } else {
-    treeData.value = []
-    curCategory.value = props.defaultCategory
-    curDomain.value = null
-    curProduct.value = null
-  }
-}
-
-async function loadInitialImages() {
+async function loadImages() {
   loading.value = true
   try {
-    if (props.fixedCategory) {
-      const params = { category: props.fixedCategory }
-      if (curDomain.value) params.domain = curDomain.value
-      if (props.versionId) params.versionId = props.versionId
-      const res = await getImages(params)
-      images.value = res.data || []
-    } else if (curCategory.value) {
-      const params = { category: curCategory.value }
-      if (curDomain.value) params.domain = curDomain.value
-      if (curProduct.value) params.product = curProduct.value
-      if (props.versionId) params.versionId = props.versionId
-      const res = await getImages(params)
-      images.value = res.data || []
-    } else {
-      images.value = []
-    }
-  } finally {
-    loading.value = false
-  }
-}
-
-function onNodeClick(data) {
-  searchText.value = ''
-  curCategory.value = data._category || props.fixedCategory
-  curDomain.value = data._domain || null
-  curProduct.value = data._product || null
-  loadFilteredImages()
-}
-
-async function loadFilteredImages() {
-  loading.value = true
-  try {
-    const params = {}
+    const params = { includeReferenced: false }
     if (curCategory.value) params.category = curCategory.value
     if (curDomain.value) params.domain = curDomain.value
-    if (curProduct.value) params.product = curProduct.value
     if (props.versionId) params.versionId = props.versionId
     const res = await getImages(params)
     images.value = res.data || []
@@ -276,18 +151,13 @@ async function handleFileUpload(e) {
     if (success > 0) ElMessage.success(`成功上传 ${success} 张图片${failed > 0 ? `，${failed} 张失败` : ''}`)
     else ElMessage.error('全部上传失败')
   }
-  await loadTree()
-  if (uploadProduct && treeRef.value) {
-    treeRef.value.setCurrentKey(uploadProduct)
-  }
-  await loadFilteredImages()
+  await loadImages()
   e.target.value = ''
 }
 </script>
 
 <style scoped>
-.picker-body { display: flex; gap: 16px; height: 400px; }
-.picker-sidebar { width: 220px; flex-shrink: 0; overflow-y: auto; border: 1px solid var(--si-border); border-radius: 8px; padding: 8px; }
+.picker-body { display: flex; height: 400px; }
 .picker-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .picker-toolbar { flex-shrink: 0; padding: 0 0 8px 0; display: flex; align-items: center; gap: 8px; }
 .picker-scroll { flex: 1; overflow-y: auto; }

@@ -45,4 +45,40 @@ public class MaintenanceController {
         maintenanceService.resetMigration();
         return Result.success();
     }
+
+    @PostMapping("/sync-filenames")
+    public Result<String> syncFilenames() {
+        maintenanceService.checkFilenameSync();
+        maintenanceService.executeFilenameSync();
+        return Result.success("文件名同步任务已启动");
+    }
+
+    @GetMapping("/sync-filenames-status")
+    public Result<ImageMigrationStatus> getFilenameSyncStatus() {
+        return Result.success(maintenanceService.getFilenameSyncStatus());
+    }
+
+    @PostMapping("/sync-filenames-reset")
+    public Result<Void> resetFilenameSync() {
+        maintenanceService.resetFilenameSync();
+        return Result.success();
+    }
+
+    @PostMapping("/fix-image-card-ids")
+    public Result<String> fixImageCardIds() {
+        maintenanceService.checkFixId();
+        maintenanceService.executeFixImageCardIds();
+        return Result.success("修复任务已启动");
+    }
+
+    @GetMapping("/fix-image-card-ids-status")
+    public Result<ImageMigrationStatus> getFixIdStatus() {
+        return Result.success(maintenanceService.getFixIdStatus());
+    }
+
+    @PostMapping("/fix-image-card-ids-reset")
+    public Result<Void> resetFixId() {
+        maintenanceService.resetFixId();
+        return Result.success();
+    }
 }

@@ -120,7 +120,7 @@ public class DataVersionService {
         }
 
         if (latest != null && "released".equals(latest.getStatus())) {
-            List<ImageResource> images = imageResourceRepository.findByVersionId(latest.getId());
+            List<ImageResource> images = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(latest.getId());
             for (ImageResource img : images) {
                 ImageResource copy = new ImageResource();
                 copy.setFilename(img.getFilename());

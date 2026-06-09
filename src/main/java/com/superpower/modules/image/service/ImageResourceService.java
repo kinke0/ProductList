@@ -106,7 +106,7 @@ public class ImageResourceService {
         }
 
         if (versionId != null) {
-            List<ImageResource> existing = imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProduct(
+            List<ImageResource> existing = imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProductOrderByCreatedAtDesc(
                     versionId, category, domain, product);
             for (ImageResource ex : existing) {
                 if (storedName.equals(ex.getStoredName())) {
@@ -174,13 +174,13 @@ public class ImageResourceService {
         return imageResourceRepository.save(image);
     }
 
-    public List<ImageResource> findAll(String category, String domain, String product, Long versionId) {
+    public List<ImageResource> findAll(String category, String domain, String product, Long versionId, boolean includeReferenced) {
         final String cat = stripCountSuffix(category);
         final String dom = stripCountSuffix(domain);
         final String prod = stripCountSuffix(product);
         List<ImageResource> direct = findDirect(cat, dom, prod, versionId);
 
-        if (versionId != null && cat != null && dom != null) {
+        if (includeReferenced && versionId != null && cat != null && dom != null) {
             List<DataEntry> matchingEntries = dataEntryRepository.findByVersionIdAndColBizCategoryAndColBizDomain(
                     versionId, cat, dom);
             if (prod != null) {
@@ -206,25 +206,25 @@ public class ImageResourceService {
 
     private List<ImageResource> findDirect(String category, String domain, String product, Long versionId) {
         if (versionId != null && category != null && domain != null && product != null) {
-            return imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProduct(versionId, category, domain, product);
+            return imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProductOrderByCreatedAtDesc(versionId, category, domain, product);
         }
         if (versionId != null && category != null && domain != null) {
-            return imageResourceRepository.findByVersionIdAndCategoryAndDomain(versionId, category, domain);
+            return imageResourceRepository.findByVersionIdAndCategoryAndDomainOrderByCreatedAtDesc(versionId, category, domain);
         }
         if (versionId != null && category != null) {
-            return imageResourceRepository.findByVersionIdAndCategory(versionId, category);
+            return imageResourceRepository.findByVersionIdAndCategoryOrderByCreatedAtDesc(versionId, category);
         }
         if (versionId != null) {
-            return imageResourceRepository.findByVersionId(versionId);
+            return imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(versionId);
         }
         if (category != null && domain != null && product != null) {
-            return imageResourceRepository.findByCategoryAndDomainAndProduct(category, domain, product);
+            return imageResourceRepository.findByCategoryAndDomainAndProductOrderByCreatedAtDesc(category, domain, product);
         }
         if (category != null && domain != null) {
-            return imageResourceRepository.findByCategoryAndDomain(category, domain);
+            return imageResourceRepository.findByCategoryAndDomainOrderByCreatedAtDesc(category, domain);
         }
         if (category != null) {
-            return imageResourceRepository.findByCategory(category);
+            return imageResourceRepository.findByCategoryOrderByCreatedAtDesc(category);
         }
         return imageResourceRepository.findAll();
     }
@@ -237,7 +237,7 @@ public class ImageResourceService {
         if (descs.isEmpty()) return new ArrayList<>();
 
         Long versionId = entries.get(0).getVersionId();
-        List<ImageResource> allImages = imageResourceRepository.findByVersionId(versionId);
+        List<ImageResource> allImages = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(versionId);
         List<ImageResource> result = new ArrayList<>();
         for (ImageResource img : allImages) {
             if (excludeIds.contains(img.getId())) continue;
@@ -279,11 +279,57 @@ public class ImageResourceService {
     public ImageResource update(Long id, ImageResource body) {
         ImageResource image = imageResourceRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("图片不存在"));
-        if (body.getFilename() != null && !body.getFilename().equals(image.getFilename())) {
-            String oldName = image.getFilename();
-            String newName = body.getFilename();
-            image.setFilename(newName);
-            syncImageNameInReferences(image.getUrl(), oldName, newName);
+        String oldUrl = image.getUrl();
+        String oldName = image.getFilename();
+        boolean nameChanged = body.getFilename() != null && !body.getFilename().equals(image.getFilename());
+
+        // Phase 1: 只读 + 纯计算（实体不 dirty，不触发 auto-flush）
+        String newStoredName = null;
+        Path newPath = null;
+        String newUrl = null;
+        if (nameChanged) {
+            String oldStoredName = image.getStoredName();
+            String ext = "";
+            int dotIdx = oldStoredName.lastIndexOf('.');
+            if (dotIdx > 0) ext = oldStoredName.substring(dotIdx);
+            newStoredName = sanitizePath(body.getFilename().replaceAll("\\.[^.]+$", "")) + ext;
+
+            if (!newStoredName.equals(oldStoredName)) {
+                if (image.getVersionId() != null) {
+                    List<ImageResource> existing = imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProductOrderByCreatedAtDesc(
+                            image.getVersionId(), image.getCategory(), image.getDomain(), image.getProduct());
+                    for (ImageResource ex : existing) {
+                        if (!ex.getId().equals(image.getId()) && newStoredName.equals(ex.getStoredName())) {
+                            throw new BusinessException("当前目录下已存在同名文件: " + newStoredName);
+                        }
+                    }
+                }
+                Path oldFilePath = Paths.get(image.getPath());
+                if (Files.exists(oldFilePath)) {
+                    newPath = oldFilePath.resolveSibling(newStoredName);
+                    try {
+                        Files.move(oldFilePath, newPath, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (Exception e) {
+                        throw new BusinessException("重命名物理文件失败: " + e.getMessage());
+                    }
+                }
+                newUrl = oldUrl;
+                if (oldUrl != null && oldUrl.contains(oldStoredName)) {
+                    newUrl = oldUrl.substring(0, oldUrl.lastIndexOf(oldStoredName)) + newStoredName;
+                }
+            } else {
+                newStoredName = null;
+            }
+        }
+
+        // Phase 2: 修改实体 + 保存（dirty 窗口极短）
+        if (nameChanged) {
+            image.setFilename(body.getFilename());
+        }
+        if (newStoredName != null) {
+            image.setStoredName(newStoredName);
+            if (newPath != null) image.setPath(newPath.toString());
+            if (newUrl != null) image.setUrl(newUrl);
         }
         boolean locationChanged = false;
         if (body.getCategory() != null && !body.getCategory().equals(image.getCategory())) {
@@ -301,37 +347,75 @@ public class ImageResourceService {
         if (locationChanged) {
             moveImageFile(image);
         }
-        return imageResourceRepository.save(image);
+        imageResourceRepository.saveAndFlush(image);
+
+        // Phase 3: 引用同步（按 data-id 精确定位 image-card 块）
+        if (nameChanged && newStoredName != null) {
+            syncImageNameInReferences(image.getId(), image.getUrl(), image.getFilename());
+        }
+
+        return image;
     }
 
-    private void syncImageNameInReferences(String imageUrl, String oldName, String newName) {
-        if (oldName == null || newName == null || oldName.equals(newName)) return;
-        String escapedOld = oldName.replace("$", "\\$").replace("(", "\\(").replace(")", "\\)")
-                .replace("[", "\\[").replace("]", "\\]").replace("*", "\\*").replace("+", "\\+").replace("?", "\\?");
-        List<DataEntry> entries = dataEntryRepository.findAll();
+    private void syncImageNameInReferences(Long imageId, String newUrl, String newName) {
+        if (imageId == null || newUrl == null || newName == null) return;
+        String nameSafe = newName.replace("\"", "&quot;").replace("'", "&#39;");
+        String idMarker = "data-id=\"" + imageId + "\"";
+        List<DataEntry> entries = dataEntryRepository.findByColFeatureDescContaining(idMarker);
+        List<DataEntry> toSave = new ArrayList<>();
         for (DataEntry e : entries) {
             String desc = e.getColFeatureDesc();
-            if (desc == null || !desc.contains(imageUrl) || !desc.contains(oldName)) continue;
-            desc = desc.replaceAll("data-filename=\"" + escapedOld + "\"", "data-filename=\"" + newName + "\"");
-            desc = desc.replaceAll("title=\"" + escapedOld + "\"", "title=\"" + newName + "\"");
-            desc = desc.replaceAll("alt=\"" + escapedOld + "\"", "alt=\"" + newName + "\"");
-            desc = desc.replaceAll("(<span class=\"image-name\"[^>]*>)" + escapedOld + "(</span>)",
-                    "$1" + newName + "$2");
-            e.setColFeatureDesc(desc);
-            dataEntryRepository.save(e);
+            if (desc == null || !desc.contains(idMarker)) continue;
+            String updated = replaceImageCardAttrs(desc, idMarker, newUrl, newName, nameSafe);
+            if (updated != null) {
+                e.setColFeatureDesc(updated);
+                toSave.add(e);
+            }
         }
-        List<ReqItem> reqItems = reqItemRepository.findAll();
+        if (!toSave.isEmpty()) dataEntryRepository.saveAll(toSave);
+        List<ReqItem> reqItems = reqItemRepository.findByDescriptionContaining(idMarker);
+        List<ReqItem> reqToSave = new ArrayList<>();
         for (ReqItem item : reqItems) {
             String desc = item.getDescription();
-            if (desc == null || !desc.contains(imageUrl) || !desc.contains(oldName)) continue;
-            desc = desc.replaceAll("data-filename=\"" + escapedOld + "\"", "data-filename=\"" + newName + "\"");
-            desc = desc.replaceAll("title=\"" + escapedOld + "\"", "title=\"" + newName + "\"");
-            desc = desc.replaceAll("alt=\"" + escapedOld + "\"", "alt=\"" + newName + "\"");
-            desc = desc.replaceAll("(<span class=\"image-name\"[^>]*>)" + escapedOld + "(</span>)",
-                    "$1" + newName + "$2");
-            item.setDescription(desc);
-            reqItemRepository.save(item);
+            if (desc == null || !desc.contains(idMarker)) continue;
+            String updated = replaceImageCardAttrs(desc, idMarker, newUrl, newName, nameSafe);
+            if (updated != null) {
+                item.setDescription(updated);
+                reqToSave.add(item);
+            }
         }
+        if (!reqToSave.isEmpty()) reqItemRepository.saveAll(reqToSave);
+    }
+
+    private String replaceImageCardAttrs(String desc, String idMarker, String newUrl, String newName, String nameSafe) {
+        String original = desc;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "<span\\s+class=\"image-card\"[^>]*" + java.util.regex.Pattern.quote(idMarker) + "[^>]*>").matcher(desc);
+        StringBuffer sb = new StringBuffer();
+        boolean found = false;
+        while (m.find()) {
+            found = true;
+            String tag = m.group();
+            tag = tag.replaceAll("data-url=\"[^\"]*\"", "data-url=\"" + newUrl + "\"");
+            tag = tag.replaceAll("data-filename=\"[^\"]*\"", "data-filename=\"" + nameSafe + "\"");
+            tag = tag.replaceAll("title=\"[^\"]*\"", "title=\"" + nameSafe + "\"");
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(tag));
+        }
+        m.appendTail(sb);
+        String result = sb.toString();
+        result = result.replaceAll(
+                "(<img\\s+[^>]*?src=\")([^\"]*?)(\"[^>]*?alt=\")([^\"]*?)(\")",
+                "$1" + java.util.regex.Matcher.quoteReplacement(newUrl) + "$3" + java.util.regex.Matcher.quoteReplacement(nameSafe) + "$5");
+        result = result.replaceAll(
+                "(<span\\s+class=\"image-name\"[^>]*>)([^<]*?)(</span>)",
+                "$1" + java.util.regex.Matcher.quoteReplacement(nameSafe) + "$3");
+        return result.equals(original) ? null : result;
+    }
+
+    private String escapeRegex(String s) {
+        return s.replace("$", "\\$").replace("(", "\\(").replace(")", "\\)")
+                .replace("[", "\\[").replace("]", "\\]").replace("*", "\\*")
+                .replace("+", "\\+").replace("?", "\\?").replace(".", "\\.");
     }
 
     @Transactional
@@ -428,7 +512,7 @@ public class ImageResourceService {
         List<String> orderedCategories = new ArrayList<>(catNames.keySet());
 
         List<ImageResource> allImages = versionId != null
-            ? imageResourceRepository.findByVersionId(versionId)
+            ? imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(versionId)
             : imageResourceRepository.findAll();
 
         Map<String, Integer> prodCountMap = new HashMap<>();

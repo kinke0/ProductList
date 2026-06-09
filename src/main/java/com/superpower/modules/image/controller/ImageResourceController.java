@@ -48,8 +48,9 @@ public class ImageResourceController {
             @RequestParam(value = "category", required = false) String category,
             @RequestParam(value = "domain", required = false) String domain,
             @RequestParam(value = "product", required = false) String product,
-            @RequestParam(value = "versionId", required = false) Long versionId) {
-        return Result.success(imageResourceService.findAll(category, domain, product, versionId));
+            @RequestParam(value = "versionId", required = false) Long versionId,
+            @RequestParam(value = "includeReferenced", defaultValue = "true") boolean includeReferenced) {
+        return Result.success(imageResourceService.findAll(category, domain, product, versionId, includeReferenced));
     }
 
     @DeleteMapping("/{id}")

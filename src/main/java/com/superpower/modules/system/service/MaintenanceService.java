@@ -446,4 +446,284 @@ public class MaintenanceService {
     public synchronized void resetMigration() {
         migrationStatus = null;
     }
+
+    private ImageMigrationStatus filenameSyncStatus;
+
+    public synchronized ImageMigrationStatus getFilenameSyncStatus() {
+        if (filenameSyncStatus == null) {
+            filenameSyncStatus = new ImageMigrationStatus();
+            filenameSyncStatus.setStatus("NOT_STARTED");
+            filenameSyncStatus.setTotalSteps(1);
+            filenameSyncStatus.getSteps().clear();
+            filenameSyncStatus.getSteps().add(new ImageMigrationStatus.StepResult(1, "同步图片文件名", "PENDING"));
+        }
+        return filenameSyncStatus;
+    }
+
+    public void checkFilenameSync() {
+        ImageMigrationStatus status = getFilenameSyncStatus();
+        if ("RUNNING".equals(status.getStatus())) {
+            throw new BusinessException("文件名同步任务正在执行中，请等待完成");
+        }
+    }
+
+    @Async
+    public void executeFilenameSync() {
+        synchronized (this) {
+            filenameSyncStatus = new ImageMigrationStatus();
+            filenameSyncStatus.setStatus("RUNNING");
+            filenameSyncStatus.setStartedAt(LocalDateTime.now());
+            filenameSyncStatus.setTotalSteps(1);
+            filenameSyncStatus.getSteps().clear();
+            filenameSyncStatus.getSteps().add(new ImageMigrationStatus.StepResult(1, "同步图片文件名", "PENDING"));
+        }
+        ImageMigrationStatus.StepResult sr = filenameSyncStatus.getSteps().get(0);
+        sr.setStatus("RUNNING");
+        long start = System.currentTimeMillis();
+        int successCount = 0, skipCount = 0, failCount = 0;
+
+        try {
+            List<ImageResource> allImages = imageResourceRepository.findAll();
+            int total = allImages.size();
+            filenameSyncStatus.setTotalCount(total);
+
+            for (int i = 0; i < allImages.size(); i++) {
+                ImageResource img = allImages.get(i);
+                filenameSyncStatus.setProcessedCount(i + 1);
+
+                try {
+                    String oldStoredName = img.getStoredName();
+                    if (oldStoredName == null || img.getFilename() == null) {
+                        skipCount++;
+                        continue;
+                    }
+                    String ext = "";
+                    int dotIdx = oldStoredName.lastIndexOf('.');
+                    if (dotIdx > 0) ext = oldStoredName.substring(dotIdx);
+                    String expectedStoredName = img.getFilename().replaceAll("\\.[^.]+$", "").replaceAll("[\\\\/:*?\"<>|]", "_").trim() + ext;
+
+                    if (expectedStoredName.equals(oldStoredName)) {
+                        skipCount++;
+                        continue;
+                    }
+
+                    Path oldPath = Paths.get(img.getPath());
+                    if (!Files.exists(oldPath)) {
+                        skipCount++;
+                        continue;
+                    }
+
+                    Path newPath = oldPath.resolveSibling(expectedStoredName);
+                    if (Files.exists(newPath) && !newPath.equals(oldPath)) {
+                        skipCount++;
+                        continue;
+                    }
+
+                    String oldUrl = img.getUrl();
+                    Files.move(oldPath, newPath, StandardCopyOption.REPLACE_EXISTING);
+                    img.setStoredName(expectedStoredName);
+                    img.setPath(newPath.toString());
+
+                    String newUrl = oldUrl;
+                    if (oldUrl != null && oldUrl.contains(oldStoredName)) {
+                        newUrl = oldUrl.substring(0, oldUrl.lastIndexOf(oldStoredName)) + expectedStoredName;
+                    }
+                    img.setUrl(newUrl);
+                    imageResourceRepository.save(img);
+
+                    if (oldUrl != null && !oldUrl.equals(newUrl)) {
+                        syncFileReferences(oldUrl, newUrl, img.getFilename());
+                    }
+
+                    successCount++;
+                } catch (Exception e) {
+                    failCount++;
+                    log.warn("同步文件名失败 id={}: {}", img.getId(), e.getMessage());
+                }
+            }
+
+            sr.setSuccessCount(successCount);
+            sr.setSkipCount(skipCount);
+            sr.setFailCount(failCount);
+            sr.setStatus("COMPLETED");
+            sr.setMessage("成功 " + successCount + "，跳过 " + skipCount + "，失败 " + failCount);
+            filenameSyncStatus.setStatus("COMPLETED");
+        } catch (Exception e) {
+            sr.setStatus("FAILED");
+            sr.setMessage(e.getMessage());
+            filenameSyncStatus.setStatus("FAILED");
+            filenameSyncStatus.setErrorMessage(e.getMessage());
+            log.error("文件名同步失败", e);
+        }
+        filenameSyncStatus.setCompletedAt(LocalDateTime.now());
+        sr.setDurationMs(System.currentTimeMillis() - start);
+    }
+
+    private void syncFileReferences(String oldUrl, String newUrl, String displayName) {
+        List<DataEntry> entries = dataEntryRepository.findAll();
+        for (DataEntry e : entries) {
+            boolean changed = false;
+            String desc = e.getColFeatureDesc();
+            if (desc != null && desc.contains(oldUrl)) {
+                e.setColFeatureDesc(desc.replace(oldUrl, newUrl));
+                changed = true;
+            }
+            String cp1 = e.getColControlPointImg1();
+            if (cp1 != null && cp1.contains(oldUrl)) {
+                e.setColControlPointImg1(cp1.replace(oldUrl, newUrl));
+                changed = true;
+            }
+            String cp2 = e.getColControlPointImg2();
+            if (cp2 != null && cp2.contains(oldUrl)) {
+                e.setColControlPointImg2(cp2.replace(oldUrl, newUrl));
+                changed = true;
+            }
+            String cp3 = e.getColControlPointImg3();
+            if (cp3 != null && cp3.contains(oldUrl)) {
+                e.setColControlPointImg3(cp3.replace(oldUrl, newUrl));
+                changed = true;
+            }
+            String cpDoc = e.getColControlPointDoc();
+            if (cpDoc != null && cpDoc.contains(oldUrl)) {
+                e.setColControlPointDoc(cpDoc.replace(oldUrl, newUrl));
+                changed = true;
+            }
+            if (changed) dataEntryRepository.save(e);
+        }
+    }
+
+    public synchronized void resetFilenameSync() {
+        filenameSyncStatus = null;
+    }
+
+    private ImageMigrationStatus fixIdStatus;
+
+    public synchronized ImageMigrationStatus getFixIdStatus() {
+        if (fixIdStatus == null) {
+            fixIdStatus = new ImageMigrationStatus();
+            fixIdStatus.setStatus("NOT_STARTED");
+            fixIdStatus.setTotalSteps(1);
+            fixIdStatus.getSteps().clear();
+            fixIdStatus.getSteps().add(new ImageMigrationStatus.StepResult(1, "修复图片引用ID", "PENDING"));
+        }
+        return fixIdStatus;
+    }
+
+    public void checkFixId() {
+        ImageMigrationStatus status = getFixIdStatus();
+        if ("RUNNING".equals(status.getStatus())) {
+            throw new BusinessException("修复任务正在执行中，请等待完成");
+        }
+    }
+
+    @Async
+    public void executeFixImageCardIds() {
+        synchronized (this) {
+            fixIdStatus = new ImageMigrationStatus();
+            fixIdStatus.setStatus("RUNNING");
+            fixIdStatus.setStartedAt(LocalDateTime.now());
+            fixIdStatus.setTotalSteps(1);
+            fixIdStatus.getSteps().clear();
+            fixIdStatus.getSteps().add(new ImageMigrationStatus.StepResult(1, "修复图片引用ID", "PENDING"));
+        }
+        ImageMigrationStatus.StepResult sr = fixIdStatus.getSteps().get(0);
+        sr.setStatus("RUNNING");
+        long start = System.currentTimeMillis();
+
+        try {
+            Set<Long> existingIds = new HashSet<>();
+            for (ImageResource img : imageResourceRepository.findAll()) {
+                existingIds.add(img.getId());
+            }
+
+            Map<String, Long> storedNameToId = new HashMap<>();
+            for (ImageResource img : imageResourceRepository.findAll()) {
+                String key = img.getVersionId() + "|" + img.getStoredName();
+                storedNameToId.put(key, img.getId());
+            }
+
+            List<DataEntry> allEntries = dataEntryRepository.findAll();
+            int total = allEntries.size();
+            fixIdStatus.setTotalCount(total);
+            int fixed = 0, checked = 0;
+
+            for (int i = 0; i < allEntries.size(); i++) {
+                DataEntry entry = allEntries.get(i);
+                fixIdStatus.setProcessedCount(i + 1);
+                String desc = entry.getColFeatureDesc();
+                if (desc == null || !desc.contains("data-id=")) continue;
+                checked++;
+
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("data-id=\"(\\d+)\"").matcher(desc);
+                StringBuffer sb = new StringBuffer();
+                boolean changed = false;
+                while (m.find()) {
+                    long oldId = Long.parseLong(m.group(1));
+                    if (existingIds.contains(oldId)) {
+                        m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(m.group()));
+                        continue;
+                    }
+                    String urlPattern = "data-url=\"([^\"]+)\"";
+                    java.util.regex.Matcher urlM = java.util.regex.Pattern.compile(
+                            "data-url=\"([^\"]+)\"[^>]*data-id=\"" + oldId + "\"[^>]*>|data-id=\"" + oldId + "\"[^>]*data-url=\"([^\"]+)\""
+                    ).matcher(desc);
+                    String dataUrl = null;
+                    if (urlM.find()) {
+                        dataUrl = urlM.group(1) != null ? urlM.group(1) : urlM.group(2);
+                    }
+                    Long newId = null;
+                    if (dataUrl != null) {
+                        String storedName = extractStoredNameFromUrl(dataUrl);
+                        if (storedName != null) {
+                            String key = entry.getVersionId() + "|" + storedName;
+                            newId = storedNameToId.get(key);
+                        }
+                    }
+                    if (newId != null) {
+                        m.appendReplacement(sb, "data-id=\"" + newId + "\"");
+                        changed = true;
+                        fixed++;
+                    } else {
+                        m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(m.group()));
+                    }
+                }
+                m.appendTail(sb);
+                if (changed) {
+                    entry.setColFeatureDesc(sb.toString());
+                    dataEntryRepository.save(entry);
+                }
+            }
+
+            sr.setSuccessCount(fixed);
+            sr.setSkipCount(checked - fixed);
+            sr.setFailCount(0);
+            sr.setStatus("COMPLETED");
+            sr.setMessage("检查 " + checked + " 条，修复 " + fixed + " 个引用ID");
+            fixIdStatus.setStatus("COMPLETED");
+        } catch (Exception e) {
+            sr.setStatus("FAILED");
+            sr.setMessage(e.getMessage());
+            fixIdStatus.setStatus("FAILED");
+            fixIdStatus.setErrorMessage(e.getMessage());
+            log.error("修复图片引用ID失败", e);
+        }
+        fixIdStatus.setCompletedAt(LocalDateTime.now());
+        sr.setDurationMs(System.currentTimeMillis() - start);
+    }
+
+    private String extractStoredNameFromUrl(String url) {
+        if (url == null) return null;
+        int lastSlash = url.lastIndexOf('/');
+        if (lastSlash < 0) return null;
+        String name = url.substring(lastSlash + 1);
+        int hashIdx = name.indexOf('#');
+        if (hashIdx > 0) name = name.substring(0, hashIdx);
+        int queryIdx = name.indexOf('?');
+        if (queryIdx > 0) name = name.substring(0, queryIdx);
+        return name.isEmpty() ? null : java.net.URLDecoder.decode(name, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    public synchronized void resetFixId() {
+        fixIdStatus = null;
+    }
 }

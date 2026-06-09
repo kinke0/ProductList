@@ -207,9 +207,20 @@ function onEditorClick(e) {
         nameEl.textContent = newName
         actionBtn.textContent = '改名'
         actionBtn.setAttribute('data-action', 'rename')
-        form.value.description = editorRef.value?.innerHTML || ''
         if (imgId) {
-          updateImage(Number(imgId), { filename: newName }).catch(() => {})
+          updateImage(Number(imgId), { filename: newName }).then((res) => {
+            const data = res?.data
+            if (data?.url) {
+              card.setAttribute('data-url', data.url)
+              const thumb = card.querySelector('.image-thumb img')
+              if (thumb) thumb.setAttribute('src', data.url)
+            }
+            form.value.description = editorRef.value?.innerHTML || ''
+          }).catch(() => {
+            form.value.description = editorRef.value?.innerHTML || ''
+          })
+        } else {
+          form.value.description = editorRef.value?.innerHTML || ''
         }
       }
       let blurTimeout = null

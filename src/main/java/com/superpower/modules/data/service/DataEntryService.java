@@ -299,39 +299,87 @@ public class DataEntryService {
     public void syncImageCardFilenames(DataEntry entry) {
         String desc = entry.getColFeatureDesc();
         if (desc == null || !desc.contains("image-card") && !desc.contains("img-card")) return;
-        Pattern cardPattern = Pattern.compile(
-                "<(?:span|div)\\s+class=\"(?:image-card|img-card)\"[^>]*data-url=\"([^\"]+)\"[^>]*data-filename=\"([^\"]*)\"[^>]*>");
-        Matcher m = cardPattern.matcher(desc);
-        Map<String, String> urlToFilename = new HashMap<>();
+        Set<Long> ids = new LinkedHashSet<>();
+        java.util.regex.Matcher idMatcher = java.util.regex.Pattern.compile("data-id=\"(\\d+)\"").matcher(desc);
+        while (idMatcher.find()) {
+            try { ids.add(Long.parseLong(idMatcher.group(1))); } catch (NumberFormatException ignored) {}
+        }
+        if (ids.isEmpty()) return;
+        List<ImageResource> images = imageResourceRepository.findAllById(ids);
+        if (images.isEmpty()) return;
+        Map<Long, ImageResource> imgMap = new HashMap<>();
+        for (ImageResource img : images) imgMap.put(img.getId(), img);
+        String original = desc;
+        java.util.regex.Pattern cardPattern = java.util.regex.Pattern.compile(
+                "<(span|div)\\s+class=\"(image-card|img-card)\"([^>]*data-id=\"(\\d+)\"[^>]*)>"
+        );
+        java.util.regex.Matcher m = cardPattern.matcher(desc);
+        StringBuilder result = new StringBuilder();
+        int lastEnd = 0;
         while (m.find()) {
-            String url = m.group(1);
-            String oldName = m.group(2);
-            if (!urlToFilename.containsKey(url)) {
-                urlToFilename.put(url, oldName);
+            result.append(desc, lastEnd, m.start());
+            long imgId = Long.parseLong(m.group(4));
+            ImageResource img = imgMap.get(imgId);
+            if (img == null) {
+                result.append(m.group());
+                lastEnd = m.end();
+                continue;
+            }
+            String attrs = m.group(3);
+            String newUrl = img.getUrl();
+            String newName = img.getFilename();
+            if (newName == null) newName = img.getStoredName();
+            if (newName == null) { result.append(m.group()); lastEnd = m.end(); continue; }
+            String nameSafe = newName.replace("\"", "&quot;").replace("'", "&#39;");
+            if (newUrl != null) {
+                attrs = attrs.replaceAll("data-url=\"[^\"]*\"", "data-url=\"" + newUrl + "\"");
+            }
+            attrs = attrs.replaceAll("data-filename=\"[^\"]*\"", "data-filename=\"" + nameSafe + "\"");
+            attrs = attrs.replaceAll("title=\"[^\"]*\"", "title=\"" + nameSafe + "\"");
+            result.append('<').append(m.group(1)).append(" class=\"").append(m.group(2)).append('"').append(attrs).append('>');
+            String cardContent = desc.substring(m.end());
+            int closeIdx = findCardEnd(cardContent, m.group(1));
+            String cardBody = closeIdx > 0 ? cardContent.substring(0, closeIdx) : "";
+            if (!cardBody.isEmpty()) {
+                if (newUrl != null) {
+                    cardBody = cardBody.replaceFirst("src=\"[^\"]*\"", "src=\"" + java.util.regex.Matcher.quoteReplacement(newUrl) + "\"");
+                    cardBody = cardBody.replaceFirst("alt=\"[^\"]*\"", "alt=\"" + java.util.regex.Matcher.quoteReplacement(nameSafe) + "\"");
+                }
+                cardBody = cardBody.replaceFirst(
+                        "(<span\\s+class=\"image-name\"[^>]*>)([^<]*)(</span>)",
+                        "$1" + java.util.regex.Matcher.quoteReplacement(nameSafe) + "$3");
+                result.append(cardBody);
+            }
+            lastEnd = closeIdx > 0 ? m.end() + closeIdx : m.end();
+        }
+        result.append(desc, lastEnd, desc.length());
+        if (!result.toString().equals(original)) {
+            entry.setColFeatureDesc(result.toString());
+        }
+    }
+
+    private int findCardEnd(String afterOpenTag, String tagName) {
+        String openTag = "<" + tagName;
+        String closeTag = "</" + tagName + ">";
+        int depth = 1;
+        int i = 0;
+        while (i < afterOpenTag.length() && depth > 0) {
+            if (afterOpenTag.startsWith(openTag, i)) {
+                int tagEnd = afterOpenTag.indexOf('>', i);
+                if (tagEnd < 0) break;
+                if (!afterOpenTag.substring(i, tagEnd + 1).contains("data-id")) {
+                    depth++;
+                }
+                i = tagEnd + 1;
+            } else if (afterOpenTag.startsWith(closeTag, i)) {
+                depth--;
+                if (depth == 0) return i + closeTag.length();
+                i += closeTag.length();
+            } else {
+                i++;
             }
         }
-        if (urlToFilename.isEmpty()) return;
-        List<ImageResource> allImages = imageResourceRepository.findAll();
-        Map<String, String> urlToLatest = new HashMap<>();
-        for (ImageResource img : allImages) {
-            urlToLatest.put(img.getUrl(), img.getFilename());
-        }
-        for (Map.Entry<String, String> e : urlToFilename.entrySet()) {
-            String url = e.getKey();
-            String oldName = e.getValue();
-            String latestName = urlToLatest.get(url);
-            if (latestName == null || latestName.equals(oldName)) continue;
-            String escapedOld = oldName.replace("$", "\\$").replace("(", "\\(").replace(")", "\\)")
-                    .replace("[", "\\[").replace("]", "\\]").replace("*", "\\*").replace("+", "\\+").replace("?", "\\?");
-            desc = desc.replaceAll("data-filename=\"" + escapedOld + "\"", "data-filename=\"" + latestName + "\"");
-            desc = desc.replaceAll("title=\"" + escapedOld + "\"", "title=\"" + latestName + "\"");
-            desc = desc.replaceAll("alt=\"" + escapedOld + "\"", "alt=\"" + latestName + "\"");
-            desc = desc.replaceAll("(<span class=\"image-name\"[^>]*>)" + escapedOld + "(</span>)",
-                    "$1" + latestName + "$2");
-        }
-        if (!desc.equals(entry.getColFeatureDesc())) {
-            entry.setColFeatureDesc(desc);
-        }
+        return -1;
     }
 
     private void cascadeLabelUpdate(DataEntry entry, String oldBizCategory, String oldBizDomain) {
@@ -958,7 +1006,7 @@ public class DataEntryService {
             urls.add(m.group(1));
         }
         if (urls.isEmpty()) return;
-        List<ImageResource> allImages = imageResourceRepository.findByVersionId(entry.getVersionId());
+        List<ImageResource> allImages = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(entry.getVersionId());
         for (ImageResource img : allImages) {
             if (urls.contains(img.getUrl())) {
                 boolean changed = false;
@@ -1712,61 +1760,29 @@ public class DataEntryService {
             }
 
             if (!batch.isEmpty()) {
-                if (batch.size() >= 2) {
-                    List<String> encUrls = new ArrayList<>();
-                    List<String> captions = new ArrayList<>();
-                    for (String raw : batch) {
-                        int pi = raw.indexOf('|');
-                        String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
-                        String cap = pi > 0 ? raw.substring(pi + 1) : "";
-                        encUrls.add(encodeUrl(urlPart));
-                        captions.add(cap);
-                    }
-                    Map<String, int[]> dimMap = buildImageDimensionMap(batch);
-                    boolean allPortrait = true;
-                    for (String raw : batch) {
-                        int pi = raw.indexOf('|');
-                        String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
-                        int[] wh = dimMap.getOrDefault(urlPart, new int[]{0, 0});
-                        if (wh[0] > 0 && wh[1] > 0) {
-                            if ((double) wh[1] / wh[0] <= 1.2) allPortrait = false;
-                        } else {
-                            allPortrait = false;
-                        }
-                    }
-                    if (allPortrait) {
-                        sb.append("<div class='img-grid'>");
-                        for (int k = 0; k < encUrls.size(); k++) {
-                            sb.append("<div class='img-grid-cell'>")
-                              .append("<img src='").append(encUrls.get(k)).append("' style='height:300px;' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';\" />");
-                            String cap = captions.get(k);
-                            if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
-                            else sb.append("<div class='img-caption'></div>");
-                            sb.append("</div>");
-                        }
-                        sb.append("</div>");
-                    } else {
-                        for (int k = 0; k < encUrls.size(); k++) {
-                            sb.append("<div class='img-wrap'>")
-                              .append("<img src='").append(encUrls.get(k)).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
-                            String cap = captions.get(k);
-                            if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
-                            else sb.append("<div class='img-caption'></div>");
-                            sb.append("</div>");
-                        }
-                    }
-                } else {
-                    String raw = batch.get(0);
+                Map<String, int[]> dimMap = buildImageDimensionMap(batch);
+                List<String> portraitGroup = new ArrayList<>();
+                for (String raw : batch) {
                     int pi = raw.indexOf('|');
                     String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
-                    String cap = pi > 0 ? raw.substring(pi + 1) : "";
-                    String enc = encodeUrl(urlPart);
-                    sb.append("<div class='img-wrap'>")
-                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
-                    if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
-                    else sb.append("<div class='img-caption'></div>");
-                    sb.append("</div>");
+                    int[] wh = dimMap.getOrDefault(urlPart, new int[]{0, 0});
+                    boolean isPortrait = wh[0] > 0 && wh[1] > 0 && (double) wh[1] / wh[0] > 1.2;
+
+                    if (isPortrait) {
+                        portraitGroup.add(raw);
+                    } else {
+                        flushPortraitGroupPreview(sb, portraitGroup);
+                        portraitGroup.clear();
+                        String cap = pi > 0 ? raw.substring(pi + 1) : "";
+                        String enc = encodeUrl(urlPart);
+                        sb.append("<div class='img-wrap'>")
+                          .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                        if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                        else sb.append("<div class='img-caption'></div>");
+                        sb.append("</div>");
+                    }
                 }
+                flushPortraitGroupPreview(sb, portraitGroup);
                 continue;
             }
 
@@ -1813,6 +1829,36 @@ public class DataEntryService {
     }
 
 
+
+    private void flushPortraitGroupPreview(StringBuilder sb, List<String> group) {
+        if (group.isEmpty()) return;
+        if (group.size() >= 2) {
+            sb.append("<div class='img-grid'>");
+            for (String raw : group) {
+                int pi = raw.indexOf('|');
+                String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+                String cap = pi > 0 ? raw.substring(pi + 1) : "";
+                String enc = encodeUrl(urlPart);
+                sb.append("<div class='img-grid-cell'>")
+                  .append("<img src='").append(enc).append("' style='height:300px;' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';\" />");
+                if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                else sb.append("<div class='img-caption'></div>");
+                sb.append("</div>");
+            }
+            sb.append("</div>");
+        } else {
+            String raw = group.get(0);
+            int pi = raw.indexOf('|');
+            String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+            String cap = pi > 0 ? raw.substring(pi + 1) : "";
+            String enc = encodeUrl(urlPart);
+            sb.append("<div class='img-wrap'>")
+              .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+            if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+            else sb.append("<div class='img-caption'></div>");
+            sb.append("</div>");
+        }
+    }
 
     private void appendTextLines(StringBuilder sb, String text) {
         for (String line : text.split("\n")) {

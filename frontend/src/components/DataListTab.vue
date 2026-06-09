@@ -83,6 +83,7 @@
                   <el-dropdown-item command="solution">解决方案</el-dropdown-item>
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
                   <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
+                  <el-dropdown-item command="version">版本划分</el-dropdown-item>
                   <el-dropdown-item command="delete" divided>{{ props.customTabId ? '批量移除' : '批量删除' }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -446,6 +447,31 @@
           <el-button type="primary" @click="confirmBatchCategory" :loading="batchLoading">确定</el-button>
         </template>
       </el-dialog>
+      <el-dialog v-model="showBatchVersionDialog" title="批量修改版本划分" width="460px">
+        <el-form label-width="100px">
+          <el-form-item label="版本划分">
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <el-checkbox v-model="batchVerYao" @change="onBatchVerChange('yao')">A-曜系列</el-checkbox>
+              <div v-if="batchVerYao" style="margin-left:24px;">
+                <el-switch v-model="batchMinYao" active-text="最小集-是" inactive-text="最小集-否" />
+              </div>
+              <el-checkbox v-model="batchVerYuan" @change="onBatchVerChange('yuan')">B-远系列</el-checkbox>
+              <div v-if="batchVerYuan" style="margin-left:24px;">
+                <el-switch v-model="batchMinYuan" active-text="最小集-是" inactive-text="最小集-否" />
+              </div>
+              <el-checkbox v-model="batchVerChi" @change="onBatchVerChange('chi')">C-驰系列</el-checkbox>
+              <div v-if="batchVerChi" style="margin-left:24px;">
+                <el-switch v-model="batchMinChi" active-text="最小集-是" inactive-text="最小集-否" />
+              </div>
+              <el-checkbox v-model="batchVerNonStd" @change="onBatchVerChange('nonStd')">非标配系统</el-checkbox>
+            </div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchVersionDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchVersion">确定</el-button>
+        </template>
+      </el-dialog>
       <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :version-id="props.versionId" @select="insertImage" />
         <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :version-id="props.versionId" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" append-to-body :style="{ maxWidth: '90vw' }">
@@ -521,6 +547,14 @@ const batchCategoryId = ref(null)
 const batchDomainId = ref(null)
 const batchCatL1Options = ref([])
 const batchCatL2Options = ref([])
+const showBatchVersionDialog = ref(false)
+const batchVerYao = ref(false)
+const batchVerYuan = ref(false)
+const batchVerChi = ref(false)
+const batchVerNonStd = ref(false)
+const batchMinYao = ref(false)
+const batchMinYuan = ref(false)
+const batchMinChi = ref(false)
 const selectedIds = ref([])
 const migrating = ref(false)
 const migrateProgress = ref(null)
@@ -992,7 +1026,18 @@ async function handleDedupCommand(mode) {
   }
 }
 
-function onDialogChange(val) {
+let autoSaving = false
+async function onDialogChange(val) {
+  if (!val && showEditDialog.value && !autoSaving && !isNew.value && editingId.value) {
+    autoSaving = true
+    try {
+      editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+      await updateEntry(editingId.value, editForm)
+      flushPendingImageUpdates()
+      handleQuery(true)
+    } catch (e) { /* ignore */ }
+    autoSaving = false
+  }
   showEditDialog.value = val
   if (!val) {
     pendingImageUpdates.value = []
@@ -1132,11 +1177,21 @@ function onEditorClick(e) {
             nameEl.textContent = newName
             actionBtn.textContent = '编辑'
             actionBtn.setAttribute('data-action', 'edit-name')
-            editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
             if (imgId) {
-              updateImage(Number(imgId), { filename: newName }).then(() => {
+              updateImage(Number(imgId), { filename: newName }).then((res) => {
+                const data = res?.data
+                if (data?.url) {
+                  card.setAttribute('data-url', data.url)
+                  const thumb = card.querySelector('.image-thumb img')
+                  if (thumb) thumb.setAttribute('src', data.url)
+                }
+                editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
                 ElMessage.success('名称已更新')
-              }).catch(() => {})
+              }).catch(() => {
+                editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+              })
+            } else {
+              editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
             }
           }
           let blurTimeout = null
@@ -1419,6 +1474,10 @@ async function batchReject() {
     batchDomainId.value = null
     loadBatchCategoryTree()
     showBatchCategoryDialog.value = true
+  } else if (cmd === 'version') {
+    batchVerYao.value = false; batchVerYuan.value = false; batchVerChi.value = false; batchVerNonStd.value = false
+    batchMinYao.value = false; batchMinYuan.value = false; batchMinChi.value = false
+    showBatchVersionDialog.value = true
   } else if (cmd === 'delete') {
     if (props.customTabId) {
       onRemoveClick()
@@ -1516,6 +1575,53 @@ async function confirmBatchManager() {
       } catch (e) { console.error(`指定产品经理失败 id=${id}:`, e) }
     }
     ElMessage.success(`成功指定 ${successCount} 条产品经理`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
+}
+
+function onBatchVerChange(which) {
+  if (which === 'nonStd' && batchVerNonStd.value) {
+    batchVerYao.value = false; batchVerYuan.value = false; batchVerChi.value = false
+    batchMinYao.value = false; batchMinYuan.value = false; batchMinChi.value = false
+  } else if (which !== 'nonStd') {
+    batchVerNonStd.value = false
+    if (which === 'yao' && !batchVerYao.value) batchMinYao.value = false
+    if (which === 'yuan' && !batchVerYuan.value) batchMinYuan.value = false
+    if (which === 'chi' && !batchVerChi.value) batchMinChi.value = false
+  }
+}
+
+async function confirmBatchVersion() {
+  if (!batchVerYao.value && !batchVerYuan.value && !batchVerChi.value && !batchVerNonStd.value) {
+    ElMessage.warning('请至少选择一个版本划分'); return
+  }
+  let colVersionDivision
+  if (batchVerNonStd.value) {
+    colVersionDivision = '非标配系统'
+  } else {
+    const parts = []
+    if (batchVerYao.value) parts.push('A-曜系列')
+    if (batchVerYuan.value) parts.push('B-远系列')
+    if (batchVerChi.value) parts.push('C-驰系列')
+    colVersionDivision = parts.join(' ')
+  }
+  const colYao = batchVerYao.value ? (batchMinYao.value ? '是' : '否') : '否'
+  const colYuan = batchVerYuan.value ? (batchMinYuan.value ? '是' : '否') : '否'
+  const colChi = batchVerChi.value ? (batchMinChi.value ? '是' : '否') : '否'
+  showBatchVersionDialog.value = false
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) {
+          await updateEntry(id, { ...row, colVersionDivision, colYao, colYuan, colChi })
+          successCount++
+        }
+      } catch (e) { console.error(`修改版本划分失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功修改 ${successCount} 条版本划分`)
     handleQuery(true)
   } finally { batchLoading.value = false }
 }
@@ -2260,6 +2366,8 @@ async function deleteRow(row) {
 }
 
 async function saveEdit() {
+  autoSaving = true
+  try {
   syncVersionToForm()
   let savedId = null
   if (isNew.value) {
@@ -2289,6 +2397,9 @@ async function saveEdit() {
   handleQuery(true)
   if (savedId) {
     emit('preview-reload', savedId)
+  }
+  } finally {
+    autoSaving = false
   }
 }
 

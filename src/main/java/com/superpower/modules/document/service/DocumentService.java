@@ -439,28 +439,42 @@ public class DocumentService {
 
                 if (consecutiveUrls.size() >= 2) {
                     List<ImageData> groupImages = new ArrayList<>();
-                    List<String> groupUrls = new ArrayList<>();
-                    boolean allSuccess = true;
-                    boolean isPortraitGroup = false;
-
                     for (String url : consecutiveUrls) {
                         ImageData imgData = downloadAndProcessImage(url);
-                        if (imgData == null) {
-                            allSuccess = false;
-                            break;
-                        }
-                        if (imgData.height > imgData.width * PORTRAIT_RATIO) {
-                            isPortraitGroup = true;
-                        }
                         groupImages.add(imgData);
-                        groupUrls.add(url);
                     }
 
-                    if (allSuccess && isPortraitGroup && groupImages.size() >= 2) {
-                        insertImageGrid(doc, groupImages, groupUrls);
-                    } else {
-                        for (String url : consecutiveUrls) {
-                            ImageData imgData = downloadAndProcessImage(url);
+                    List<List<String>> portraitRuns = new ArrayList<>();
+                    List<String> currentRun = new ArrayList<>();
+                    for (int idx = 0; idx < consecutiveUrls.size(); idx++) {
+                        ImageData imgData = groupImages.get(idx);
+                        boolean isPortrait = imgData != null && imgData.height > imgData.width * PORTRAIT_RATIO;
+                        if (isPortrait) {
+                            currentRun.add(consecutiveUrls.get(idx));
+                        } else {
+                            if (!currentRun.isEmpty()) {
+                                portraitRuns.add(new ArrayList<>(currentRun));
+                                currentRun.clear();
+                            }
+                            portraitRuns.add(Collections.singletonList(consecutiveUrls.get(idx)));
+                        }
+                    }
+                    if (!currentRun.isEmpty()) {
+                        portraitRuns.add(new ArrayList<>(currentRun));
+                    }
+
+                    for (List<String> run : portraitRuns) {
+                        if (run.size() >= 2) {
+                            List<ImageData> runImgs = new ArrayList<>();
+                            for (String url : run) {
+                                int ri = consecutiveUrls.indexOf(url);
+                                runImgs.add(groupImages.get(ri));
+                            }
+                            insertImageGrid(doc, runImgs, run);
+                        } else {
+                            String url = run.get(0);
+                            int ri = consecutiveUrls.indexOf(url);
+                            ImageData imgData = groupImages.get(ri);
                             if (imgData != null) {
                                 insertSingleImage(doc, url, imgData);
                             } else {

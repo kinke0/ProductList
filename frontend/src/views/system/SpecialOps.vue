@@ -59,13 +59,73 @@
           <el-button @click="resetStatus" :disabled="anyRunning">重置状态</el-button>
         </div>
       </el-tab-pane>
+      <el-tab-pane label="同步图片文件名" name="sync">
+        <div class="section-desc">
+          <el-alert type="warning" :closable="false" show-icon>
+            <template #title>将图片物理文件名同步为显示名，使文件名与图片名一致。执行后Word/预览中的图片标题将正确显示</template>
+          </el-alert>
+        </div>
+        <div v-if="syncStatus.status === 'RUNNING'" class="progress-bar">
+          <el-progress :percentage="syncProgressPercent" :format="() => `${syncStatus.processedCount}/${syncStatus.totalCount}`" />
+        </div>
+        <div v-if="syncStatus.steps && syncStatus.steps.length" class="steps-panel">
+          <div v-for="step in syncStatus.steps" :key="step.step" class="step-row">
+            <span class="step-icon">
+              <el-icon v-if="step.status === 'COMPLETED'" color="#67c23a"><CircleCheckFilled /></el-icon>
+              <el-icon v-else-if="step.status === 'RUNNING'" class="is-loading" color="#409eff"><Loading /></el-icon>
+              <el-icon v-else-if="step.status === 'FAILED'" color="#f56c6c"><CircleCloseFilled /></el-icon>
+              <el-icon v-else color="#c0c4cc"><Clock /></el-icon>
+            </span>
+            <span class="step-label">{{ step.name }}</span>
+            <span class="step-status">{{ statusLabel(step.status) }}</span>
+            <span v-if="step.message" class="step-message">{{ step.message }}</span>
+            <span v-if="step.durationMs" class="step-duration">({{ (step.durationMs / 1000).toFixed(1) }}s)</span>
+          </div>
+        </div>
+        <div class="actions">
+          <el-button type="primary" :loading="syncRunning" :disabled="syncStatus.status === 'RUNNING'" @click="startSync">
+            {{ syncRunning ? '同步中...' : '执行同步' }}
+          </el-button>
+          <el-button @click="resetSync" :disabled="syncStatus.status === 'RUNNING'">重置状态</el-button>
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="修复图片引用ID" name="fixid">
+        <div class="section-desc">
+          <el-alert type="warning" :closable="false" show-icon>
+            <template #title>修复 DataEntry 中图片卡片引用的 data-id，使其指向正确的 image_resource 记录。版本隔离迁移后历史数据的 data-id 可能失效</template>
+          </el-alert>
+        </div>
+        <div v-if="fixIdStatus.status === 'RUNNING'" class="progress-bar">
+          <el-progress :percentage="fixIdProgressPercent" :format="() => `${fixIdStatus.processedCount}/${fixIdStatus.totalCount}`" />
+        </div>
+        <div v-if="fixIdStatus.steps && fixIdStatus.steps.length" class="steps-panel">
+          <div v-for="step in fixIdStatus.steps" :key="step.step" class="step-row">
+            <span class="step-icon">
+              <el-icon v-if="step.status === 'COMPLETED'" color="#67c23a"><CircleCheckFilled /></el-icon>
+              <el-icon v-else-if="step.status === 'RUNNING'" class="is-loading" color="#409eff"><Loading /></el-icon>
+              <el-icon v-else-if="step.status === 'FAILED'" color="#f56c6c"><CircleCloseFilled /></el-icon>
+              <el-icon v-else color="#c0c4cc"><Clock /></el-icon>
+            </span>
+            <span class="step-label">{{ step.name }}</span>
+            <span class="step-status">{{ statusLabel(step.status) }}</span>
+            <span v-if="step.message" class="step-message">{{ step.message }}</span>
+            <span v-if="step.durationMs" class="step-duration">({{ (step.durationMs / 1000).toFixed(1) }}s)</span>
+          </div>
+        </div>
+        <div class="actions">
+          <el-button type="primary" :loading="fixIdRunning" :disabled="fixIdStatus.status === 'RUNNING'" @click="startFixId">
+            {{ fixIdRunning ? '修复中...' : '执行修复' }}
+          </el-button>
+          <el-button @click="resetFixIdStatus" :disabled="fixIdStatus.status === 'RUNNING'">重置状态</el-button>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration } from '../../api/maintenance'
+import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration, syncFilenames, getFilenameSyncStatus, resetFilenameSync, fixImageCardIds, getFixIdStatus, resetFixId } from '../../api/maintenance'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheckFilled, CircleCloseFilled, Loading, Clock } from '@element-plus/icons-vue'
 
@@ -217,12 +277,166 @@ function stopPolling() {
   }
 }
 
+const syncRunning = ref(false)
+let syncPollTimer = null
+
+const syncStatus = ref({
+  status: 'NOT_STARTED',
+  processedCount: 0,
+  totalCount: 0,
+  steps: []
+})
+
+const syncProgressPercent = computed(() => {
+  if (syncStatus.value.totalCount === 0) return 0
+  return Math.round((syncStatus.value.processedCount / syncStatus.value.totalCount) * 100)
+})
+
+async function fetchSyncStatus() {
+  try {
+    const res = await getFilenameSyncStatus()
+    if (res.data) {
+      syncStatus.value = res.data
+      syncRunning.value = res.data.status === 'RUNNING'
+    }
+  } catch {}
+}
+
+async function startSync() {
+  try {
+    await ElMessageBox.confirm(
+      '确认执行图片文件名同步？此操作将把所有图片的物理文件名改为与显示名一致，执行期间请勿进行其他操作。',
+      '确认同步',
+      { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  try {
+    await syncFilenames()
+    syncRunning.value = true
+    startSyncPolling()
+    ElMessage.info('同步任务已启动')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '启动失败')
+  }
+}
+
+async function resetSync() {
+  try {
+    await resetFilenameSync()
+    await fetchSyncStatus()
+    ElMessage.success('状态已重置')
+  } catch {
+    ElMessage.error('重置失败')
+  }
+}
+
+function startSyncPolling() {
+  if (syncPollTimer) return
+  syncPollTimer = setInterval(async () => {
+    await fetchSyncStatus()
+    if (syncStatus.value.status !== 'RUNNING') {
+      stopSyncPolling()
+      if (syncStatus.value.status === 'COMPLETED') {
+        ElMessage.success('文件名同步已完成')
+      } else if (syncStatus.value.status === 'FAILED') {
+        ElMessage.error('同步失败：' + (syncStatus.value.errorMessage || '未知错误'))
+      }
+    }
+  }, 1000)
+}
+
+function stopSyncPolling() {
+  if (syncPollTimer) {
+    clearInterval(syncPollTimer)
+    syncPollTimer = null
+  }
+}
+
+const fixIdRunning = ref(false)
+let fixIdPollTimer = null
+
+const fixIdStatus = ref({
+  status: 'NOT_STARTED',
+  processedCount: 0,
+  totalCount: 0,
+  steps: []
+})
+
+const fixIdProgressPercent = computed(() => {
+  if (fixIdStatus.value.totalCount === 0) return 0
+  return Math.round((fixIdStatus.value.processedCount / fixIdStatus.value.totalCount) * 100)
+})
+
+async function fetchFixIdStatus() {
+  try {
+    const res = await getFixIdStatus()
+    if (res.data) {
+      fixIdStatus.value = res.data
+      fixIdRunning.value = res.data.status === 'RUNNING'
+    }
+  } catch {}
+}
+
+async function startFixId() {
+  try {
+    await ElMessageBox.confirm(
+      '确认执行图片引用ID修复？此操作将扫描所有数据条目中的图片卡片，将失效的 data-id 修正为正确的 image_resource ID。',
+      '确认修复',
+      { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  try {
+    await fixImageCardIds()
+    fixIdRunning.value = true
+    startFixIdPolling()
+    ElMessage.info('修复任务已启动')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '启动失败')
+  }
+}
+
+async function resetFixIdStatus() {
+  try {
+    await resetFixId()
+    await fetchFixIdStatus()
+    ElMessage.success('状态已重置')
+  } catch {
+    ElMessage.error('重置失败')
+  }
+}
+
+function startFixIdPolling() {
+  if (fixIdPollTimer) return
+  fixIdPollTimer = setInterval(async () => {
+    await fetchFixIdStatus()
+    if (fixIdStatus.value.status !== 'RUNNING') {
+      stopFixIdPolling()
+      if (fixIdStatus.value.status === 'COMPLETED') {
+        ElMessage.success('图片引用ID修复已完成')
+      } else if (fixIdStatus.value.status === 'FAILED') {
+        ElMessage.error('修复失败：' + (fixIdStatus.value.errorMessage || '未知错误'))
+      }
+    }
+  }, 1000)
+}
+
+function stopFixIdPolling() {
+  if (fixIdPollTimer) {
+    clearInterval(fixIdPollTimer)
+    fixIdPollTimer = null
+  }
+}
+
 onMounted(() => {
   fetchStatus()
+  fetchSyncStatus()
+  fetchFixIdStatus()
 })
 
 onUnmounted(() => {
   stopPolling()
+  stopSyncPolling()
+  stopFixIdPolling()
 })
 </script>
 
