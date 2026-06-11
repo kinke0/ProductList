@@ -220,7 +220,6 @@ public class DataEntryService {
             } else {
                 result = entryRepository.findEntriesByTab(versionId, customTabId);
             }
-            result = reorderByCustomTabSort(customTabId, result);
         } else if (hasFilter) {
             result = entryRepository.queryEntries(versionId, null, name, productManager,
                     solution, versionDivision, bizCategory, bizDomain);
@@ -230,9 +229,7 @@ public class DataEntryService {
             result = entryRepository.findAllEntries(versionId);
         }
         result = new ArrayList<>(result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList());
-        if (customTabId == null) {
-            result = sortByCategoryOrder(result, versionId);
-        }
+        result = sortByCategoryOrder(result, versionId);
         return result;
     }
 
@@ -903,13 +900,7 @@ public class DataEntryService {
 
         target.setIsLeaf(false);
         entryRepository.save(target);
-        syncEntryImageClassifications(entry);
-        for (DataEntry d : descendants) {
-            syncEntryImageClassifications(d);
-        }
     }
-
-    @Transactional
     public void moveToSibling(Long id, Long targetId) {
         DataEntry entry = getById(id);
         ensureVersionEditable(entry.getVersionId());
@@ -985,10 +976,6 @@ public class DataEntryService {
             newParent.setIsLeaf(false);
             entryRepository.save(newParent);
         });
-        syncEntryImageClassifications(entry);
-        for (DataEntry d : descendants) {
-            syncEntryImageClassifications(d);
-        }
     }
 
     @Transactional
@@ -1049,7 +1036,7 @@ public class DataEntryService {
                     targetCategory, targetDomain, targetCategoryId, targetDomainId);
 
             if ("sibling".equals(mode)) {
-                shiftSiblingsAfter(target.getVersionId(), newParentId, nextSortOrder);
+                shiftSiblingsAfter(target.getVersionId(), newParentId, nextSortOrder, savedRoot.getId());
             }
 
             if ("child".equals(mode)) {
@@ -1097,14 +1084,75 @@ public class DataEntryService {
         return children.get(children.size() - 1).getSortOrder() + 1;
     }
 
-    private void shiftSiblingsAfter(Long versionId, Long parentId, int afterSortOrder) {
+    private void shiftSiblingsAfter(Long versionId, Long parentId, int afterSortOrder, Long excludeId) {
         List<DataEntry> siblings = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
         for (DataEntry s : siblings) {
-            if (s.getSortOrder() != null && s.getSortOrder() >= afterSortOrder) {
+            if (!s.getId().equals(excludeId) && s.getSortOrder() != null && s.getSortOrder() >= afterSortOrder) {
                 s.setSortOrder(s.getSortOrder() + 1);
                 entryRepository.save(s);
             }
         }
+    }
+
+    @Transactional
+    public void moveUp(Long id) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+        List<DataEntry> siblings = findSiblings(entry);
+        int idx = -1;
+        for (int i = 0; i < siblings.size(); i++) {
+            if (siblings.get(i).getId().equals(id)) { idx = i; break; }
+        }
+        if (idx <= 0) {
+            throw new BusinessException("已经是第一个，无法上移");
+        }
+        DataEntry prev = siblings.get(idx - 1);
+        Integer curSort = entry.getSortOrder();
+        Integer prevSort = prev.getSortOrder();
+        entry.setSortOrder(prevSort);
+        prev.setSortOrder(curSort);
+        entryRepository.save(entry);
+        entryRepository.save(prev);
+    }
+
+    @Transactional
+    public void moveDown(Long id) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+        List<DataEntry> siblings = findSiblings(entry);
+        int idx = -1;
+        for (int i = 0; i < siblings.size(); i++) {
+            if (siblings.get(i).getId().equals(id)) { idx = i; break; }
+        }
+        if (idx < 0 || idx >= siblings.size() - 1) {
+            throw new BusinessException("已经是最后一个，无法下移");
+        }
+        DataEntry next = siblings.get(idx + 1);
+        Integer curSort = entry.getSortOrder();
+        Integer nextSort = next.getSortOrder();
+        entry.setSortOrder(nextSort);
+        next.setSortOrder(curSort);
+        entryRepository.save(entry);
+        entryRepository.save(next);
+    }
+
+    private List<DataEntry> findSiblings(DataEntry entry) {
+        if (entry.getLevel() != null && entry.getLevel() == 3) {
+            String domain = entry.getColBizDomain();
+            if (domain != null && !domain.isEmpty()) {
+                return entryRepository.findL3ByDomain(entry.getVersionId(), domain);
+            }
+            return entryRepository.findRootEntries(entry.getVersionId());
+        }
+        Long parentId = entry.getParentId();
+        if (parentId != null) {
+            return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
+        }
+        String domain = entry.getColBizDomain();
+        if (domain != null && !domain.isEmpty()) {
+            return entryRepository.findRootEntriesByDomain(entry.getVersionId(), domain);
+        }
+        return entryRepository.findRootEntries(entry.getVersionId());
     }
 
     @Transactional
@@ -1163,7 +1211,7 @@ public class DataEntryService {
 
             if ("sibling".equals(mode)) {
                 source.setSortOrder(target.getSortOrder() + 1);
-                shiftSiblingsAfter(target.getVersionId(), newParentId, target.getSortOrder() + 1);
+                shiftSiblingsAfter(target.getVersionId(), newParentId, target.getSortOrder() + 1, sourceId);
             } else {
                 int nextSort = getNextSortOrder(target.getVersionId(), newParentId, target.getSortOrder(), mode);
                 source.setSortOrder(nextSort);
@@ -1373,74 +1421,6 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() + 1);
         entry.setParentId(prevSibling.getId());
         entryRepository.save(entry);
-    }
-
-    private List<DataEntry> reorderByCustomTabSort(Long customTabId, List<DataEntry> entries) {
-        List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
-
-        Map<String, Integer> catOrder = new HashMap<>();
-        Map<String, Integer> domOrder = new HashMap<>();
-        if (!entries.isEmpty()) {
-            Long versionId = entries.get(0).getVersionId();
-            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
-            for (int i = 0; i < cats.size(); i++) catOrder.put(cats.get(i).getName(), i);
-            List<BaseDomain> doms = baseDomainRepository.findByVersionId(versionId);
-            doms.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
-            for (int i = 0; i < doms.size(); i++) domOrder.put(doms.get(i).getName(), i);
-        }
-
-        boolean hasNullSort = tabEntries.stream().anyMatch(te -> te.getSortOrder() == null);
-        if (hasNullSort) {
-            Map<Long, DataEntry> entryById = new HashMap<>();
-            for (DataEntry e : entries) entryById.put(e.getId(), e);
-            tabEntries.sort((a, b) -> {
-                boolean aHasSort = a.getSortOrder() != null;
-                boolean bHasSort = b.getSortOrder() != null;
-                if (aHasSort && bHasSort) return Integer.compare(a.getSortOrder(), b.getSortOrder());
-                if (aHasSort) return -1;
-                if (bHasSort) return 1;
-                DataEntry eA = entryById.get(a.getEntryId());
-                DataEntry eB = entryById.get(b.getEntryId());
-                if (eA != null && eB != null) {
-                    int cmp = Integer.compare(
-                        catOrder.getOrDefault(eA.getColBizCategory(), Integer.MAX_VALUE),
-                        catOrder.getOrDefault(eB.getColBizCategory(), Integer.MAX_VALUE));
-                    if (cmp != 0) return cmp;
-                    cmp = Integer.compare(
-                        domOrder.getOrDefault(eA.getColBizDomain(), Integer.MAX_VALUE),
-                        domOrder.getOrDefault(eB.getColBizDomain(), Integer.MAX_VALUE));
-                    if (cmp != 0) return cmp;
-                }
-                return Long.compare(a.getEntryId(), b.getEntryId());
-            });
-            int order = 0;
-            for (CustomTabEntry te : tabEntries) {
-                te.setSortOrder(order++);
-                customTabEntryRepository.save(te);
-            }
-        }
-        Map<Long, Integer> sortMap = new HashMap<>();
-        for (CustomTabEntry te : tabEntries) {
-            sortMap.put(te.getEntryId(), te.getSortOrder() != null ? te.getSortOrder() : 0);
-        }
-        entries.sort((a, b) -> {
-            int cmp = Integer.compare(
-                catOrder.getOrDefault(a.getColBizCategory(), Integer.MAX_VALUE),
-                catOrder.getOrDefault(b.getColBizCategory(), Integer.MAX_VALUE));
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(
-                domOrder.getOrDefault(a.getColBizDomain(), Integer.MAX_VALUE),
-                domOrder.getOrDefault(b.getColBizDomain(), Integer.MAX_VALUE));
-            if (cmp != 0) return cmp;
-            Integer sortA = sortMap.get(a.getId());
-            Integer sortB = sortMap.get(b.getId());
-            if (sortA == null && sortB == null) return Long.compare(a.getId(), b.getId());
-            if (sortA == null) return 1;
-            if (sortB == null) return -1;
-            if (!sortA.equals(sortB)) return Integer.compare(sortA, sortB);
-            return Long.compare(a.getId(), b.getId());
-        });
-        return entries;
     }
 
     @Transactional
@@ -1755,9 +1735,16 @@ public class DataEntryService {
         StringBuilder nav = new StringBuilder();
         StringBuilder body = new StringBuilder();
 
+        Set<Long> loadedVersionDims = new HashSet<>();
+        Map<String, int[]> globalDimMap = new HashMap<>();
+
         for (Long entryId : entryIds) {
             DataEntry l3 = entryRepository.findById(entryId).orElse(null);
             if (l3 == null) continue;
+            if (!loadedVersionDims.contains(l3.getVersionId())) {
+                loadImageDimensions(l3.getVersionId(), globalDimMap);
+                loadedVersionDims.add(l3.getVersionId());
+            }
             List<DataEntry> all = collectL3AndDescendants(l3);
             for (DataEntry e : all) {
                 if ("驳回".equals(e.getApprovalStatus())) {
@@ -1776,10 +1763,21 @@ public class DataEntryService {
             for (List<DataEntry> list : childrenMap.values()) {
                 list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
             }
-            buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role, mode);
+            buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role, mode, globalDimMap);
         }
 
         return buildPreviewHtmlWrapper(nav, body);
+    }
+
+    private void loadImageDimensions(Long versionId, Map<String, int[]> dimMap) {
+        List<ImageResource> images = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(versionId);
+        for (ImageResource img : images) {
+            if (img.getUrl() != null && img.getWidth() != null && img.getHeight() != null) {
+                String key = decodeUrl(img.getUrl());
+                dimMap.put(key, new int[]{img.getWidth(), img.getHeight()});
+                dimMap.put(img.getUrl(), new int[]{img.getWidth(), img.getHeight()});
+            }
+        }
     }
 
     private String buildPreviewHtmlWrapper(StringBuilder nav, StringBuilder body) {
@@ -1849,7 +1847,8 @@ public class DataEntryService {
 
     private void buildNavAndBody(DataEntry node, Map<Long, List<DataEntry>> childrenMap,
                                   StringBuilder nav, StringBuilder body, int depth,
-                                  Map<Long, String> rejectReasons, boolean isEditing, String role, String mode) {
+                                  Map<Long, String> rejectReasons, boolean isEditing, String role, String mode,
+                                  Map<String, int[]> globalDimMap) {
         String nodeId = "e" + node.getId();
         String label = node.getColProductSystem() != null ? node.getColProductSystem() : "";
         String colStatus = node.getColStatus();
@@ -1887,7 +1886,7 @@ public class DataEntryService {
         body.append("</h3>");
         String desc = "bid".equals(mode) ? node.getColBidParamDesc() : node.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
-            body.append(toPreviewParagraphs(desc));
+            body.append(toPreviewParagraphs(desc, globalDimMap));
         }
         String apprStatus = node.getApprovalStatus();
         boolean canEditByApproval = "admin".equals(role)
@@ -1928,31 +1927,26 @@ public class DataEntryService {
         if (hasChildren) {
             nav.append("<div>");
             for (DataEntry child : children) {
-                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role, mode);
+                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role, mode, globalDimMap);
             }
             nav.append("</div>");
         }
         nav.append("</div>");
     }
 
-    private Map<String, int[]> buildImageDimensionMap(List<String> batch) {
+    private Map<String, int[]> buildImageDimensionMap(List<String> batch, Map<String, int[]> globalDimMap) {
         Map<String, int[]> dimMap = new HashMap<>();
-        Map<String, String> decodedToRaw = new HashMap<>();
-        Set<String> decodedSet = new HashSet<>();
         for (String raw : batch) {
             int pi = raw.indexOf('|');
             String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
             String decoded = decodeUrl(urlPart);
-            decodedToRaw.put(decoded, urlPart);
-            decodedSet.add(decoded);
-        }
-        List<ImageResource> allImages = imageResourceRepository.findAll();
-        for (ImageResource img : allImages) {
-            if (img.getUrl() != null && img.getWidth() != null && img.getHeight() != null) {
-                String decodedDbUrl = decodeUrl(img.getUrl());
-                if (decodedSet.contains(decodedDbUrl)) {
-                    String rawKey = decodedToRaw.get(decodedDbUrl);
-                    dimMap.put(rawKey != null ? rawKey : img.getUrl(), new int[]{img.getWidth(), img.getHeight()});
+            int[] wh = globalDimMap.get(decoded);
+            if (wh != null) {
+                dimMap.put(urlPart, wh);
+            } else {
+                wh = globalDimMap.get(urlPart);
+                if (wh != null) {
+                    dimMap.put(urlPart, wh);
                 }
             }
         }
@@ -1967,7 +1961,7 @@ public class DataEntryService {
         }
     }
 
-    private String toPreviewParagraphs(String desc) {
+    private String toPreviewParagraphs(String desc, Map<String, int[]> globalDimMap) {
         String cleaned = cleanImageCardsToText(desc);
         cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
         Matcher bracketMatcher = Pattern.compile("\\[\\s*(https?://[^\\]]+?)\\s*\\]").matcher(cleaned);
@@ -2008,7 +2002,7 @@ public class DataEntryService {
             }
 
             if (!batch.isEmpty()) {
-                Map<String, int[]> dimMap = buildImageDimensionMap(batch);
+                Map<String, int[]> dimMap = buildImageDimensionMap(batch, globalDimMap);
                 List<String> portraitGroup = new ArrayList<>();
                 for (String raw : batch) {
                     int pi = raw.indexOf('|');

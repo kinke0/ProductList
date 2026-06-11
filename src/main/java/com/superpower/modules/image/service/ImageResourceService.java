@@ -87,6 +87,8 @@ public class ImageResourceService {
             throw new BusinessException("只允许上传jpg/png/gif/webp格式的图片");
         }
 
+        product = resolveL3Product(product, category, domain, versionId);
+
         String originalFilename = file.getOriginalFilename();
         String ext = getExtension(originalFilename, contentType);
         String effectiveName = (displayName != null && !displayName.isEmpty()) ? displayName : originalFilename;
@@ -163,6 +165,11 @@ public class ImageResourceService {
         image.setUploadedBy(username);
         image.setVersionId(versionId);
 
+        if (product != null && versionId != null) {
+            Long l3Id = findL3EntryId(versionId, product);
+            image.setProductId(l3Id);
+        }
+
         try {
             java.awt.image.BufferedImage bimg = javax.imageio.ImageIO.read(filePath.toFile());
             if (bimg != null) {
@@ -175,10 +182,14 @@ public class ImageResourceService {
     }
 
     public List<ImageResource> findAll(String category, String domain, String product, Long versionId, boolean includeReferenced) {
+        return findAll(category, domain, product, null, versionId, includeReferenced);
+    }
+
+    public List<ImageResource> findAll(String category, String domain, String product, Long productId, Long versionId, boolean includeReferenced) {
         final String cat = stripCountSuffix(category);
         final String dom = stripCountSuffix(domain);
         final String prod = stripCountSuffix(product);
-        List<ImageResource> direct = findDirect(cat, dom, prod, versionId);
+        List<ImageResource> direct = findDirect(cat, dom, prod, productId, versionId);
 
         if (includeReferenced && versionId != null && cat != null && dom != null) {
             List<DataEntry> matchingEntries = dataEntryRepository.findByVersionIdAndColBizCategoryAndColBizDomain(
@@ -204,7 +215,10 @@ public class ImageResourceService {
         return direct;
     }
 
-    private List<ImageResource> findDirect(String category, String domain, String product, Long versionId) {
+    private List<ImageResource> findDirect(String category, String domain, String product, Long productId, Long versionId) {
+        if (versionId != null && productId != null) {
+            return imageResourceRepository.findByVersionIdAndProductIdOrderByCreatedAtDesc(versionId, productId);
+        }
         if (versionId != null && category != null && domain != null && product != null) {
             return imageResourceRepository.findByVersionIdAndCategoryAndDomainAndProductOrderByCreatedAtDesc(versionId, category, domain, product);
         }
@@ -809,6 +823,50 @@ public class ImageResourceService {
         return val.replaceAll("\\s*\\(\\d+\\)$", "").trim();
     }
 
+    private String resolveL3Product(String product, String category, String domain, Long versionId) {
+        if (product == null || product.isEmpty() || versionId == null) return product;
+        List<DataEntry> l3Entries = dataEntryRepository.findByVersionIdAndLevelAndColBizCategoryAndColBizDomain(
+                versionId, 3, category, domain);
+        for (DataEntry e : l3Entries) {
+            if (product.equals(e.getColProductSystem())) return product;
+        }
+        List<DataEntry> allByProduct = dataEntryRepository.findByVersionIdAndColProductSystem(versionId, product);
+        for (DataEntry e : allByProduct) {
+            DataEntry ancestor = findL3Ancestor(e);
+            if (ancestor != null) return ancestor.getColProductSystem();
+        }
+        return product;
+    }
+
+    private DataEntry findL3Ancestor(DataEntry entry) {
+        if (entry == null) return null;
+        if (entry.getLevel() != null && entry.getLevel() == 3) return entry;
+        Set<Long> visited = new HashSet<>();
+        DataEntry current = entry;
+        while (current != null && current.getParentId() != null) {
+            if (visited.contains(current.getParentId())) break;
+            visited.add(current.getParentId());
+            Optional<DataEntry> parent = dataEntryRepository.findById(current.getParentId());
+            if (parent.isEmpty()) break;
+            current = parent.get();
+            if (current.getLevel() != null && current.getLevel() == 3) return current;
+        }
+        return null;
+    }
+
+    private Long findL3EntryId(Long versionId, String productName) {
+        List<DataEntry> l3Entries = dataEntryRepository.findByVersionIdAndLevel(versionId, 3);
+        for (DataEntry e : l3Entries) {
+            if (productName.equals(e.getColProductSystem())) return e.getId();
+        }
+        List<DataEntry> allByProduct = dataEntryRepository.findByVersionIdAndColProductSystem(versionId, productName);
+        for (DataEntry e : allByProduct) {
+            DataEntry l3 = findL3Ancestor(e);
+            if (l3 != null) return l3.getId();
+        }
+        return null;
+    }
+
     private String sanitizePath(String input) {
         return input.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
@@ -1079,7 +1137,8 @@ public class ImageResourceService {
             byte[] data = conn.getInputStream().readAllBytes();
             if (data.length == 0) return null;
 
-            String subPath = buildSubPath(category, domain, product);
+            String resolvedProduct = resolveL3Product(product, category, domain, versionId);
+            String subPath = buildSubPath(category, domain, resolvedProduct);
             String versionDir = versionId != null ? String.valueOf(versionId) : "0";
             Path dirPath = Paths.get(storagePath, versionDir, subPath);
             Files.createDirectories(dirPath);
@@ -1109,7 +1168,7 @@ public class ImageResourceService {
             image.setPath(filePath.toString());
             image.setCategory(category);
             image.setDomain(domain);
-            image.setProduct(product);
+            image.setProduct(resolvedProduct);
             image.setUrl(migUrlPath);
             image.setSize((long) data.length);
             image.setMimeType(contentType != null ? contentType : "image/png");

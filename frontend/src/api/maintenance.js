@@ -43,3 +43,7 @@ export function resetFixId() {
 export function executeSql(sql) {
   return request.post('/maintenance/execute-sql', { sql })
 }
+
+export function fillImageProductId() {
+  return request.post('/maintenance/fill-image-product-id')
+}

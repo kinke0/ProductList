@@ -241,7 +241,7 @@ public class CategoryService {
     }
 
     @Transactional
-    public void copyFromVersion(Long sourceVersionId, Long targetVersionId) {
+    public Map<String, Map<Long, Long>> copyFromVersion(Long sourceVersionId, Long targetVersionId) {
         Map<Long, Long> catIdMap = new HashMap<>();
         Map<Long, Long> domIdMap = new HashMap<>();
         List<BaseCategory> srcCategories = categoryRepository.findByVersionIdOrderBySortOrderAsc(sourceVersionId);
@@ -253,7 +253,7 @@ public class CategoryService {
             cat = categoryRepository.save(cat);
             catIdMap.put(src.getId(), cat.getId());
 
-            List<BaseDomain> domains = domainRepository.findByVersionIdAndCategoryIdOrderBySortOrderAsc(sourceVersionId, src.getId());
+                List<BaseDomain> domains = domainRepository.findByVersionIdAndCategoryIdOrderBySortOrderAsc(sourceVersionId, src.getId());
             for (BaseDomain srcDom : domains) {
                 BaseDomain dom = new BaseDomain();
                 dom.setVersionId(targetVersionId);
@@ -262,17 +262,11 @@ public class CategoryService {
                 dom.setSortOrder(srcDom.getSortOrder());
                 dom = domainRepository.save(dom);
                 domIdMap.put(srcDom.getId(), dom.getId());
-
-                List<BaseProduct> products = productRepository.findByVersionIdAndDomainIdOrderBySortOrderAsc(sourceVersionId, srcDom.getId());
-                for (BaseProduct srcProd : products) {
-                    BaseProduct prod = new BaseProduct();
-                    prod.setVersionId(targetVersionId);
-                    prod.setDomainId(dom.getId());
-                    prod.setName(srcProd.getName());
-                    prod.setSortOrder(srcProd.getSortOrder());
-                    productRepository.save(prod);
-                }
             }
         }
+        Map<String, Map<Long, Long>> result = new HashMap<>();
+        result.put("catIdMap", catIdMap);
+        result.put("domIdMap", domIdMap);
+        return result;
     }
 }

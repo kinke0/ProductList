@@ -27,7 +27,3 @@ export function addEntriesToTab(tabId, entryIds) {
 export function removeEntryFromTab(tabId, entryId) {
   return request.delete(`/custom-tab/${tabId}/entries/${entryId}`)
 }
-
-export function updateCustomTabSort(tabId, sortList) {
-  return request.put(`/custom-tab/${tabId}/sort`, sortList)
-}

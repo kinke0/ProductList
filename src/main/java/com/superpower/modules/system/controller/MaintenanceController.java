@@ -119,4 +119,12 @@ public class MaintenanceController {
                 "EXECUTE", "非常规操作", "执行SQL脚本");
         return Result.success(results);
     }
+
+    @PostMapping("/fill-image-product-id")
+    public Result<Map<String, Object>> fillImageProductId(Authentication auth) {
+        Map<String, Object> result = maintenanceService.fillImageProductId();
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "EXECUTE", "非常规操作", "填充图片product_id: " + result.get("updated") + "条");
+        return Result.success(result);
+    }
 }

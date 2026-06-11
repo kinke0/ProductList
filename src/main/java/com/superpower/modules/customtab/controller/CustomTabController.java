@@ -100,10 +100,4 @@ public class CustomTabController {
         customTabService.removeEntry(id, entryId);
         return Result.success();
     }
-
-    @PutMapping("/{id}/sort")
-    public Result<Void> updateSort(@PathVariable Long id, @RequestBody List<Map<String, Object>> sortList) {
-        customTabService.updateSortOrders(id, sortList);
-        return Result.success();
-    }
 }

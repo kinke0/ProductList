@@ -98,20 +98,35 @@ public class DocumentService {
         record.setGeneratedBy(userId);
         record.setGeneratedByName(userName);
         record.setStatus("generating");
+        record.setTotalEntries(0);
+        record.setProcessedEntries(0);
         record.setCreatedAt(LocalDateTime.now());
         record.setUpdatedAt(LocalDateTime.now());
         return genRecordRepository.save(record);
     }
 
     public void updateGenRecordSuccess(Long recordId, String filePath, long fileSize) {
-        genRecordRepository.findById(recordId).ifPresent(record -> {
-            record.setFilePath(filePath);
-            record.setFileSize(fileSize);
-            record.setStatus("completed");
-            record.setUpdatedAt(LocalDateTime.now());
-            genRecordRepository.save(record);
-            cancelledRecords.remove(recordId);
-        });
+        for (int retry = 0; retry < 3; retry++) {
+            try {
+                Optional<DocGenRecord> opt = genRecordRepository.findById(recordId);
+                if (opt.isPresent()) {
+                    DocGenRecord record = opt.get();
+                    record.setFilePath(filePath);
+                    record.setFileSize(fileSize);
+                    record.setStatus("completed");
+                    record.setProcessedEntries(record.getTotalEntries());
+                    record.setUpdatedAt(LocalDateTime.now());
+                    genRecordRepository.save(record);
+                    cancelledRecords.remove(recordId);
+                }
+                return;
+            } catch (Exception e) {
+                log.warn("updateGenRecordSuccess failed (retry {}): {}", retry + 1, e.getMessage());
+                if (retry < 2) {
+                    try { Thread.sleep(200); } catch (InterruptedException ie) { return; }
+                }
+            }
+        }
     }
 
     public void updateGenRecordError(Long recordId, String errorMessage) {
@@ -128,16 +143,20 @@ public class DocumentService {
 
     public void updateGenRecordProgress(Long recordId, int processed, int total) {
         if (recordId == null) return;
-        int last = lastSavedProgress.getOrDefault(recordId, -1);
-        int step = Math.max(1, total / 50);
-        if (processed - last < step && processed != total) return;
-        genRecordRepository.findById(recordId).ifPresent(record -> {
-            record.setProcessedEntries(processed);
-            record.setUpdatedAt(LocalDateTime.now());
-            genRecordRepository.save(record);
-            lastSavedProgress.put(recordId, processed);
-        });
-        if (processed >= total) lastSavedProgress.remove(recordId);
+        try {
+            int last = lastSavedProgress.getOrDefault(recordId, -1);
+            int step = Math.max(1, total / 50);
+            if (processed - last < step && processed != total) return;
+            genRecordRepository.findById(recordId).ifPresent(record -> {
+                record.setProcessedEntries(processed);
+                record.setUpdatedAt(LocalDateTime.now());
+                genRecordRepository.save(record);
+                lastSavedProgress.put(recordId, processed);
+            });
+            if (processed >= total) lastSavedProgress.remove(recordId);
+        } catch (Exception e) {
+            // ignored
+        }
     }
 
     public List<DocGenRecord> getGenRecords(Long versionId) {
@@ -174,7 +193,7 @@ public class DocumentService {
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
             if (customTabId != null) {
-                List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabIdOrderBySortOrder(customTabId);
+                List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
                 List<Long> tabEntryIds = tabEntries.stream().map(CustomTabEntry::getEntryId).collect(Collectors.toList());
                 entries = new ArrayList<>(entryRepository.findAllById(tabEntryIds));
             } else {
@@ -201,6 +220,11 @@ public class DocumentService {
         if ("word".equals(format)) {
             generateWordToFile(docType, entries, recordId, filePath, includeImages, compressImages);
         } else {
+            int filteredSize = (int) entries.stream().filter(e -> e.getLevel() != null && e.getLevel() >= 3).count();
+            genRecordRepository.findById(recordId).ifPresent(r -> {
+                r.setTotalEntries(filteredSize);
+                genRecordRepository.save(r);
+            });
             byte[] data = generateExcel(docType, entries, recordId);
             Files.write(filePath, data);
         }
@@ -1242,6 +1266,7 @@ public class DocumentService {
         }
 
         int rowIdx = 1;
+        int excelTotal = entries.size();
         for (Map.Entry<String, LinkedHashMap<String, List<DataEntry>>> catEntry : grouped.entrySet()) {
             String catName = extractText(catEntry.getKey());
             int catStart = rowIdx;
@@ -1278,6 +1303,7 @@ public class DocumentService {
                             rowIdx++;
                         }
                     }
+                    updateGenRecordProgress(recordId, rowIdx - 1, excelTotal);
                     if (rowIdx - 1 > sysStart) {
                         sheet.addMergedRegion(new CellRangeAddress(sysStart, rowIdx - 1, 2, 2));
                     }
@@ -1299,6 +1325,10 @@ public class DocumentService {
         sheet.setColumnWidth(5, 14 * 256);
         sheet.setColumnWidth(6, 14 * 256);
         sheet.setColumnWidth(7, 14 * 256);
+
+        if (recordId != null) {
+            updateGenRecordProgress(recordId, excelTotal, excelTotal);
+        }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         wb.write(out);

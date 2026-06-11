@@ -2,6 +2,9 @@ package com.superpower.modules.image.repository;
 
 import com.superpower.modules.image.entity.ImageResource;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -24,4 +27,12 @@ public interface ImageResourceRepository extends JpaRepository<ImageResource, Lo
     List<ImageResource> findByVersionIdAndCategoryAndDomainAndProductOrderByCreatedAtDesc(Long versionId, String category, String domain, String product);
 
     List<ImageResource> findByCategoryAndDomainAndProductAndStoredName(String category, String domain, String product, String storedName);
+
+    long countByVersionId(Long versionId);
+
+    List<ImageResource> findByVersionIdAndProductIdOrderByCreatedAtDesc(Long versionId, Long productId);
+
+    @Modifying
+    @Query("DELETE FROM ImageResource e WHERE e.versionId = :versionId")
+    void deleteByVersionId(@Param("versionId") Long versionId);
 }

@@ -30,6 +30,9 @@ public class ImageResource {
     @Column(name = "product", length = 200)
     private String product;
 
+    @Column(name = "product_id")
+    private Long productId;
+
     @Column(name = "url", nullable = false)
     private String url;
 

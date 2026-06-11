@@ -2,6 +2,7 @@ package com.superpower.modules.data.repository;
 
 import com.superpower.modules.data.entity.DataEntry;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -128,6 +129,23 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
 
     List<DataEntry> findByVersionIdAndColBizDomainAndLevel(Long versionId, String colBizDomain, Integer level);
 
+    List<DataEntry> findByVersionIdAndLevelAndColBizCategoryAndColBizDomain(Long versionId, Integer level, String colBizCategory, String colBizDomain);
+
     @Query("SELECT e FROM DataEntry e WHERE e.colFeatureDesc LIKE %:keyword%")
     List<DataEntry> findByColFeatureDescContaining(@Param("keyword") String keyword);
+
+    long countByVersionId(Long versionId);
+
+    @Modifying
+    @Query("DELETE FROM DataEntry e WHERE e.versionId = :versionId")
+    void deleteByVersionId(@Param("versionId") Long versionId);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.parentId IS NULL ORDER BY e.sortOrder")
+    List<DataEntry> findRootEntries(@Param("versionId") Long versionId);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.parentId IS NULL AND e.colBizDomain = :domain ORDER BY e.sortOrder")
+    List<DataEntry> findRootEntriesByDomain(@Param("versionId") Long versionId, @Param("domain") String domain);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.level = 3 AND e.colBizDomain = :domain ORDER BY e.sortOrder")
+    List<DataEntry> findL3ByDomain(@Param("versionId") Long versionId, @Param("domain") String domain);
 }

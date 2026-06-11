@@ -119,6 +119,36 @@
           <el-button @click="resetFixIdStatus" :disabled="fixIdStatus.status === 'RUNNING'">重置状态</el-button>
         </div>
       </el-tab-pane>
+      <el-tab-pane label="填充图片product_id" name="fillpid">
+        <div class="section-desc">
+          <el-alert type="warning" :closable="false" show-icon>
+            <template #title>扫描所有 image_resource 记录，根据 product 字段名称查找对应的 L3 级 data_entry ID，填充 product_id 字段。已有 product_id 的记录会跳过</template>
+          </el-alert>
+        </div>
+        <div v-if="fillPidResult" class="steps-panel">
+          <div class="step-row">
+            <span class="step-label">总计</span>
+            <span class="step-message">{{ fillPidResult.total }} 条</span>
+          </div>
+          <div class="step-row">
+            <span class="step-label">已填充</span>
+            <span class="step-message">{{ fillPidResult.updated }} 条</span>
+          </div>
+          <div class="step-row">
+            <span class="step-label">已有 product_id</span>
+            <span class="step-message">{{ fillPidResult.alreadySet }} 条</span>
+          </div>
+          <div class="step-row">
+            <span class="step-label">未匹配</span>
+            <span class="step-message">{{ fillPidResult.notMatched }} 条</span>
+          </div>
+        </div>
+        <div class="actions">
+          <el-button type="primary" :loading="fillPidRunning" @click="startFillPid">
+            {{ fillPidRunning ? '执行中...' : '执行填充' }}
+          </el-button>
+        </div>
+      </el-tab-pane>
       <el-tab-pane label="SQL脚本执行" name="sql">
         <div class="section-desc">
           <el-alert type="danger" :closable="false" show-icon>
@@ -176,7 +206,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration, syncFilenames, getFilenameSyncStatus, resetFilenameSync, fixImageCardIds, getFixIdStatus, resetFixId, executeSql } from '../../api/maintenance'
+import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration, syncFilenames, getFilenameSyncStatus, resetFilenameSync, fixImageCardIds, getFixIdStatus, resetFixId, executeSql, fillImageProductId } from '../../api/maintenance'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheckFilled, CircleCloseFilled, Loading, Clock, Upload } from '@element-plus/icons-vue'
 
@@ -475,6 +505,29 @@ function stopFixIdPolling() {
   if (fixIdPollTimer) {
     clearInterval(fixIdPollTimer)
     fixIdPollTimer = null
+  }
+}
+
+const fillPidRunning = ref(false)
+const fillPidResult = ref(null)
+
+async function startFillPid() {
+  try {
+    await ElMessageBox.confirm(
+      '确认执行填充？此操作将扫描所有 image_resource 并根据 product 字段名称匹配 L3 级条目 ID。',
+      '确认填充',
+      { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  fillPidRunning.value = true
+  try {
+    const res = await fillImageProductId()
+    fillPidResult.value = res.data
+    ElMessage.success(`填充完成：${res.data.updated} 条已更新，${res.data.notMatched} 条未匹配`)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '执行失败')
+  } finally {
+    fillPidRunning.value = false
   }
 }
 

@@ -175,6 +175,16 @@
             <span v-else class="tree-toggle-placeholder"></span>
             <el-tag v-if="row.level && row.level >= 3" :type="levelTagType(row.level)" size="small" class="level-tag">{{ levelLabel(row.level) }}</el-tag>
             <span class="product-name">{{ row.colProductSystem || '(无名称)' }}</span>
+            <template v-if="!row._isSeparator && getRemarks(row).length > 0">
+              <el-tooltip placement="top" :show-after="300" :hide-after="0">
+                <template #content>
+                  <div v-for="r in getRemarks(row)" :key="r.name" style="margin-bottom:2px;max-width:360px;">
+                    <b>{{ r.name }}</b>: {{ r.remark }}
+                  </div>
+                </template>
+                <span class="remark-badge">!</span>
+              </el-tooltip>
+            </template>
             <span v-if="row.children && row.children.length > 0" class="record-count">{{ getDescendantCount(row) }}条记录</span>
           </span>
          </div>
@@ -487,8 +497,8 @@
           <el-button type="primary" @click="confirmBatchVersion">确定</el-button>
         </template>
       </el-dialog>
-      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :version-id="props.versionId" @select="insertImage" />
-        <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :version-id="props.versionId" @select="replaceImageCard" />
+      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :default-product-id="imagePickerProductId" :version-id="props.versionId" @select="insertImage" />
+        <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :default-product-id="imagePickerProductId" :version-id="props.versionId" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" append-to-body :style="{ maxWidth: '90vw' }">
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
@@ -554,11 +564,29 @@
           <div class="ctx-menu-sep"></div>
           <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': !clipboard.mode || clipboard.entryIds.length === 0 }" @click="onCtxPasteSibling">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            <span>粘贴到下方</span>
+            <span>粘贴到同级</span>
           </div>
           <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': !clipboard.mode || clipboard.entryIds.length === 0 }" @click="onCtxPasteChild">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
             <span>粘贴到下级</span>
+          </div>
+          <div class="ctx-menu-sep"></div>
+          <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': ctxMenu.row && (ctxMenu.row.level || 3) <= 3 }" @click="onCtxLevelUp">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+            <span>升级</span>
+          </div>
+          <div class="ctx-menu-item" @click="onCtxLevelDown">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            <span>降级</span>
+          </div>
+          <div class="ctx-menu-sep"></div>
+          <div class="ctx-menu-item" @click="onCtxMoveUp">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            <span>上移</span>
+          </div>
+          <div class="ctx-menu-item" @click="onCtxMoveDown">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+            <span>下移</span>
           </div>
         </div>
       </Teleport>
@@ -567,8 +595,7 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry, renumberEntries, copyEntries, moveEntries } from '../api/data'
-import { updateCustomTabSort } from '../api/customTab'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry, renumberEntries, copyEntries, moveEntries, levelUp, levelDown, moveUp, moveDown } from '../api/data'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning, Sort } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
@@ -669,6 +696,7 @@ const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, mo
 
 const imagePickerProduct = computed(() => {
   if (editForm.level === 3) return editForm.colProductSystem
+  if (editForm.level != null && editForm.level < 3) return ''
   let node = nodeMap.value.get(editingId.value)
   while (node) {
     if (node.level === 3) return node.colProductSystem
@@ -686,7 +714,39 @@ const imagePickerProduct = computed(() => {
       p = p.parentId ? nodeMap.value.get(p.parentId) : null
     }
   }
-  return editForm.colProductSystem
+  const cat = editForm.colBizCategory || ''
+  const dom = editForm.colBizDomain || ''
+  if (cat && dom) {
+    for (const [, n] of nodeMap.value) {
+      if (n.level === 3 && n.colBizCategory === cat && n.colBizDomain === dom && n.colProductSystem) {
+        return n.colProductSystem
+      }
+    }
+  }
+  return ''
+})
+
+const imagePickerProductId = computed(() => {
+  if (editForm.level === 3) return editingId.value
+  if (editForm.level != null && editForm.level < 3) return null
+  let node = nodeMap.value.get(editingId.value)
+  while (node) {
+    if (node.level === 3) return node.id
+    if (node.parentId) {
+      node = nodeMap.value.get(node.parentId)
+    } else {
+      break
+    }
+  }
+  if (parentRow.value && parentRow.value.level === 3) return parentRow.value.id
+  if (parentRow.value) {
+    let p = nodeMap.value.get(parentRow.value.id)
+    while (p) {
+      if (p.level === 3) return p.id
+      p = p.parentId ? nodeMap.value.get(p.parentId) : null
+    }
+  }
+  return null
 })
 
 watch(showEditDialog, (val) => {
@@ -772,74 +832,96 @@ watch(showEditDialog, (val) => {
     el.classList.add('drag-source-hidden')
 
      dragMoveHandler = (ev) => {
-       if (!dragState.active) return
-       ghost.style.top = (ev.clientY - offsetY) + 'px'
-       const scrollerEl = scrollerRef.value?.$el
-       if (!scrollerEl) return
-       const scrollerRect = scrollerEl.getBoundingClientRect()
-       const itemSize = 36
-       const rawIdx = Math.floor((ev.clientY - scrollerRect.top + scrollerEl.scrollTop) / itemSize)
-       const clampedIdx = Math.max(0, Math.min(rawIdx, displayData.value.length - 1))
+        if (!dragState.active) return
+        ghost.style.top = (ev.clientY - offsetY) + 'px'
+        const scrollerEl = scrollerRef.value?.$el
+        if (!scrollerEl) return
+        const scrollerRect = scrollerEl.getBoundingClientRect()
+        const itemSize = 36
+        const rawIdx = Math.floor((ev.clientY - scrollerRect.top + scrollerEl.scrollTop) / itemSize)
+        const clampedIdx = Math.max(0, Math.min(rawIdx, displayData.value.length - 1))
 
-       let targetIdx = -1
-       let detectedMode = 'sort'
-       let detectedNestId = null
-       let detectedSiblingId = null
-       let detectedSortEnd = false
+        let targetIdx = -1
+        let detectedMode = 'sort'
+        let detectedNestId = null
+        let detectedSiblingId = null
+        let detectedSortEnd = false
 
-       const entry = displayData.value[clampedIdx]
-        if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
-          targetIdx = clampedIdx
-          const rowLevel = entry.level || 3
-          const baseIndent = 54 + (rowLevel - 3) * 20
-          const baseX = scrollerRect.left + baseIndent
-          const mouseRelX = ev.clientX - baseX
-          if (mouseRelX < -40) {
-            detectedMode = 'sibling'
-            detectedSiblingId = entry.id
-          } else if (mouseRelX > 40) {
-            detectedMode = 'nest'
-            detectedNestId = entry.id
-          } else {
-            detectedMode = 'sort'
-            if (rawIdx >= displayData.value.length) {
-              detectedSortEnd = true
+        const srcRow = displayData.value[dragState.sourceIndex]
+        const srcLevel = srcRow?.level || 3
+        const srcIndent = 54 + (srcLevel - 3) * 20
+        const srcX = scrollerRect.left + srcIndent
+        const mouseRelX = ev.clientX - srcX
+
+        const entry = displayData.value[clampedIdx]
+         if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
+           targetIdx = clampedIdx
+           if (mouseRelX < -40) {
+             detectedMode = 'sibling'
+             detectedSiblingId = entry.id
+           } else if (mouseRelX > 40) {
+             detectedMode = 'nest'
+             detectedNestId = entry.id
+           } else {
+             detectedMode = 'sort'
+             if (rawIdx >= displayData.value.length) {
+               detectedSortEnd = true
+             }
+           }
+        } else if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx === dragState.sourceIndex) {
+          // 鼠标在源行上，不改变target
+        } else {
+          let found = false
+          let searchDown = clampedIdx
+          while (searchDown < displayData.value.length) {
+            const s = displayData.value[searchDown]
+            if (s._isSeparator && (s.colBizDomain || '') !== sourceDomain) break
+            if (!s._isSeparator && (s.colBizDomain || '') === sourceDomain && searchDown !== dragState.sourceIndex) {
+              targetIdx = searchDown
+              if (mouseRelX < -40) { detectedMode = 'sibling'; detectedSiblingId = s.id }
+              else if (mouseRelX > 40) { detectedMode = 'nest'; detectedNestId = s.id }
+              else { detectedMode = 'sort' }
+              detectedSortEnd = false
+              found = true
+              break
+            }
+            searchDown++
+          }
+          if (!found) {
+            let searchUp = clampedIdx
+            while (searchUp >= 0) {
+              const s = displayData.value[searchUp]
+              if (!s._isSeparator && (s.colBizDomain || '') === sourceDomain && searchUp !== dragState.sourceIndex) {
+                targetIdx = searchUp
+                if (mouseRelX < -40) { detectedMode = 'sibling'; detectedSiblingId = s.id }
+                else if (mouseRelX > 40) { detectedMode = 'nest'; detectedNestId = s.id }
+                else { detectedMode = 'sort' }
+                detectedSortEnd = true
+                break
+              }
+              searchUp--
             }
           }
-       } else if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx === dragState.sourceIndex) {
-         // 鼠标在源行上，不改变target
-       } else {
-         let searchIdx = clampedIdx
-         while (searchIdx >= 0 && searchIdx < displayData.value.length) {
-           const s = displayData.value[searchIdx]
-           if (!s._isSeparator && (s.colBizDomain || '') === sourceDomain && searchIdx !== dragState.sourceIndex) {
-             targetIdx = searchIdx
-             detectedMode = 'sort'
-             detectedSortEnd = true
-             break
-           }
-           searchIdx--
-         }
-       }
+        }
 
-       if (targetIdx === -1) { targetIdx = dragState.sourceIndex; detectedMode = 'sort'; detectedSortEnd = false }
-       const sourceRow = displayData.value[dragState.sourceIndex]
-       const targetRow = displayData.value[targetIdx]
-       if (detectedMode === 'nest' && sourceRow && targetRow && !isNestAllowed(sourceRow, targetRow)) {
-         detectedMode = 'sort'
-         detectedNestId = null
-       }
-       if (detectedMode === 'sibling' && sourceRow && targetRow && !isSiblingAllowed(sourceRow, targetRow)) {
-         detectedMode = 'sort'
-         detectedSiblingId = null
-       }
-       dragState.targetIndex = targetIdx
-       dragState.mode = detectedMode
-       dragState.nestTargetId = detectedNestId
-       dragState.siblingTargetId = detectedSiblingId
-       dragState.sortEnd = detectedSortEnd
-       updateDragIndicator(scrollerEl)
-     }
+        if (targetIdx === -1) { targetIdx = dragState.sourceIndex; detectedMode = 'sort'; detectedSortEnd = false }
+        const sourceRow = displayData.value[dragState.sourceIndex]
+        const targetRow = displayData.value[targetIdx]
+        if (detectedMode === 'nest' && sourceRow && targetRow && !isNestAllowed(sourceRow, targetRow)) {
+          detectedMode = 'sort'
+          detectedNestId = null
+        }
+        if (detectedMode === 'sibling' && sourceRow && targetRow && !isSiblingAllowed(sourceRow, targetRow)) {
+          detectedMode = 'sort'
+          detectedSiblingId = null
+        }
+        dragState.targetIndex = targetIdx
+        dragState.mode = detectedMode
+        dragState.nestTargetId = detectedNestId
+        dragState.siblingTargetId = detectedSiblingId
+        dragState.sortEnd = detectedSortEnd
+        updateDragIndicator(scrollerEl)
+      }
 
     dragUpHandler = () => {
       if (!dragState.active) return
@@ -884,11 +966,11 @@ watch(showEditDialog, (val) => {
     return true
   }
 
-  async function applyNestMove(sourceIdx, targetId) {
+   async function applyNestMove(sourceIdx, targetId) {
     const sourceRow = displayData.value[sourceIdx]
     if (!sourceRow) return
     try {
-      await moveToParent(sourceRow.id, targetId)
+       await moveToParent(sourceRow.id, targetId)
       ElMessage.success('层级变更成功')
       handleQuery(true)
     } catch (e) {
@@ -936,8 +1018,9 @@ watch(showEditDialog, (val) => {
     const scrollerRect = scrollerEl.getBoundingClientRect()
     const itemSize = 36
     const rowTop = scrollerRect.top + ti * itemSize - scrollerEl.scrollTop
-    const rowLevel = targetData.level || 3
-    const baseIndent = 54 + (rowLevel - 3) * 20
+    const srcRow = displayData.value[dragState.sourceIndex]
+    const srcLevel = srcRow?.level || 3
+    const srcIndent = 54 + (srcLevel - 3) * 20
 
     const indicator = document.createElement('div')
     indicator.className = 'drag-indicator'
@@ -948,20 +1031,20 @@ watch(showEditDialog, (val) => {
     indicator.style.pointerEvents = 'none'
 
     if (dragState.mode === 'nest') {
-      const indent = baseIndent + 20
+      const indent = srcIndent + 20
       indicator.style.left = (scrollerRect.left + indent) + 'px'
       indicator.style.width = (scrollerRect.width - indent) + 'px'
       indicator.style.top = (rowTop - 1) + 'px'
       indicator.style.background = '#E6A23C'
     } else if (dragState.mode === 'sibling') {
-      const indent = Math.max(0, baseIndent - 20)
+      const indent = Math.max(0, srcIndent - 20)
       indicator.style.left = (scrollerRect.left + indent) + 'px'
       indicator.style.width = (scrollerRect.width - indent) + 'px'
       indicator.style.top = (rowTop - 1) + 'px'
       indicator.style.background = '#67C23A'
     } else {
-      indicator.style.left = (scrollerRect.left + baseIndent) + 'px'
-      indicator.style.width = (scrollerRect.width - baseIndent) + 'px'
+      indicator.style.left = (scrollerRect.left + srcIndent) + 'px'
+      indicator.style.width = (scrollerRect.width - srcIndent) + 'px'
       indicator.style.top = dragState.sortEnd ? (rowTop + itemSize - 1) + 'px' : (rowTop - 1) + 'px'
     }
 
@@ -983,15 +1066,17 @@ watch(showEditDialog, (val) => {
       insertIdx = toIdx > fromIdx ? toIdx - 1 : toIdx
     }
     arr.splice(insertIdx, 0, item)
-    const nonSep = arr.filter(d => !d._isSeparator)
+    const sourceDomain = item.colBizDomain || ''
+    const sourceParentId = item.parentId || null
+    const isL3 = item.level === 3
+    const sameGroup = arr.filter(d =>
+      !d._isSeparator
+      && (d.colBizDomain || '') === sourceDomain
+      && (isL3 ? d.level === 3 : (d.parentId || null) === sourceParentId)
+    )
     try {
-      if (props.customTabId) {
-        const payload = nonSep.map((d, i) => ({ entryId: d.id, sortOrder: i }))
-        await updateCustomTabSort(props.customTabId, payload)
-      } else {
-        const payload = nonSep.map((d, i) => ({ id: d.id, sortOrder: i }))
-        await updateSort(payload)
-      }
+      const payload = sameGroup.map((d, i) => ({ id: d.id, sortOrder: i }))
+      await updateSort(payload)
       ElMessage.success('排序已保存')
       handleQuery(true)
     } catch (e) {
@@ -2071,6 +2156,24 @@ function getDescendantCount(node) {
   return count
 }
 
+function collectRemarks(row, deep = false) {
+  const result = []
+  if (row.colRemark && row.colRemark.trim()) {
+    result.push({ name: row.colProductSystem || '', remark: row.colRemark.trim() })
+  }
+  const shouldRecurse = deep || (row.children && row.children.length > 0 && !expandedNodeIds.value.has(row.id))
+  if (shouldRecurse && row.children) {
+    for (const child of row.children) {
+      result.push(...collectRemarks(child, true))
+    }
+  }
+  return result
+}
+
+function getRemarks(row) {
+  return collectRemarks(row)
+}
+
 function onInsertClick() {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先勾选条目')
@@ -2110,25 +2213,31 @@ function closeContextMenu() {
 }
 
 function onCtxCopy() {
-  if (selectedIds.value.length === 0) {
+  if (manuallySelectedIds.value.length > 0) {
+    clipboard.entryIds = [...manuallySelectedIds.value]
+  } else if (ctxMenu.row) {
+    clipboard.entryIds = [ctxMenu.row.id]
+  } else {
     ElMessage.warning('请先勾选条目')
     closeContextMenu()
     return
   }
   clipboard.mode = 'copy'
-  clipboard.entryIds = [...manuallySelectedIds.value]
   closeContextMenu()
   ElMessage.success(`已复制 ${clipboard.entryIds.length} 个节点`)
 }
 
 function onCtxCut() {
-  if (selectedIds.value.length === 0) {
+  if (manuallySelectedIds.value.length > 0) {
+    clipboard.entryIds = [...manuallySelectedIds.value]
+  } else if (ctxMenu.row) {
+    clipboard.entryIds = [ctxMenu.row.id]
+  } else {
     ElMessage.warning('请先勾选条目')
     closeContextMenu()
     return
   }
   clipboard.mode = 'cut'
-  clipboard.entryIds = [...manuallySelectedIds.value]
   closeContextMenu()
   ElMessage.success(`已剪切 ${clipboard.entryIds.length} 个节点`)
 }
@@ -2175,6 +2284,56 @@ async function onCtxPasteChild() {
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxLevelUp() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await levelUp(row.id)
+    ElMessage.success('升级成功')
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '升级失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxLevelDown() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await levelDown(row.id)
+    ElMessage.success('降级成功')
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '降级失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxMoveUp() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await moveUp(row.id)
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '上移失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxMoveDown() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await moveDown(row.id)
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '下移失败')
   }
   closeContextMenu()
 }
@@ -2549,17 +2708,15 @@ function buildTree(entries) {
       roots.push(map[e.id])
     }
   })
-  if (!props.customTabId) {
-    function sortChildren(nodes) {
-      for (const n of nodes) {
-        if (n.children && n.children.length > 0) {
-          n.children.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
-          sortChildren(n.children)
-        }
+  function sortChildren(nodes) {
+    for (const n of nodes) {
+      if (n.children && n.children.length > 0) {
+        n.children.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        sortChildren(n.children)
       }
     }
-    sortChildren(roots)
   }
+  sortChildren(roots)
   return roots
 }
 
@@ -3033,4 +3190,12 @@ watch(() => props.versionId, () => {
 .ctx-menu-sep {
   height: 1px; background: #e4e7ed; margin: 4px 8px;
 }
+.remark-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #E6A23C; color: #fff; font-size: 11px; font-weight: bold;
+  margin-left: 4px; flex-shrink: 0; cursor: pointer;
+  line-height: 1;
+}
+.remark-badge:hover { background: #CF9236; }
 </style>

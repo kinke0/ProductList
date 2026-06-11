@@ -238,6 +238,28 @@ public class DataEntryController {
         return Result.success();
     }
 
+    @PutMapping("/{id}/move-up")
+    public Result<Void> moveUp(@PathVariable Long id, Authentication auth) {
+        DataEntry entry = dataEntryService.getById(id);
+        if (entry == null) return Result.failed("记录不存在");
+        checkVersionEditPermission(entry.getVersionId());
+        dataEntryService.moveUp(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "上移: " + entryTitle(entry), id, "DataEntry");
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/move-down")
+    public Result<Void> moveDown(@PathVariable Long id, Authentication auth) {
+        DataEntry entry = dataEntryService.getById(id);
+        if (entry == null) return Result.failed("记录不存在");
+        checkVersionEditPermission(entry.getVersionId());
+        dataEntryService.moveDown(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "下移: " + entryTitle(entry), id, "DataEntry");
+        return Result.success();
+    }
+
     @PutMapping("/{id}/move-to-parent")
     public Result<Void> moveToParent(@PathVariable Long id, @RequestBody Map<String, Object> body, Authentication auth) {
         Long newParentId = Long.valueOf(body.get("newParentId").toString());

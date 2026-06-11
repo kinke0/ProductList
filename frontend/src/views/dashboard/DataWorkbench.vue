@@ -248,7 +248,8 @@
 
     <template #footer>
       <el-button @click="showDocDialog = false">取消</el-button>
-      <el-button v-if="isAdmin" type="primary" :loading="docLoading" @click="handleGenerate">生成</el-button>
+      <el-button v-if="isAdmin" type="primary" :loading="docLoading" :disabled="hasGenerating" @click="handleGenerate">生成</el-button>
+      <span v-if="hasGenerating" style="margin-left:8px;color:var(--el-color-warning);font-size:12px;">有文档正在生成中，请等待完成</span>
     </template>
   </el-dialog>
 
@@ -328,6 +329,7 @@ const docCustomTabId = ref(null)
 const docLoading = ref(false)
 const docName = ref('')
 const genRecords = ref([])
+const hasGenerating = computed(() => genRecords.value.some(r => r.status === 'generating'))
 const recordsLoading = ref(false)
 const filterCreator = ref('')
 const filterTime = ref('')
@@ -377,6 +379,10 @@ function getRecordPercent(row) {
   return 0
 }
 
+const progressStartTime = ref(null)
+
+const progressStuckWarned = ref(false)
+
 async function pollProgress() {
   if (!activeGenRecordId.value) return
   try {
@@ -391,22 +397,31 @@ async function pollProgress() {
         loadGenRecords()
       } else if (progressTotal.value > 0 && progressProcessed.value >= progressTotal.value) {
         if (!progressFullTimestamp) progressFullTimestamp = Date.now()
-        else if (Date.now() - progressFullTimestamp > 120000) {
+        else if (Date.now() - progressFullTimestamp > 30000) {
+          console.warn('进度100%但30秒未完成，强制刷新')
           stopProgressPoll()
-          progressStatus.value = 'error'
           loadGenRecords()
-          ElMessage.error('文档生成超时，可能因文件过大导致序列化失败')
         }
+      } else if (progressStartTime.value && Date.now() - progressStartTime.value > 300000) {
+        stopProgressPoll()
+        progressStatus.value = 'error'
+        loadGenRecords()
+        ElMessage.error('文档生成超时')
+      } else if (progressStartTime.value && progressProcessed.value === 0 && Date.now() - progressStartTime.value > 60000 && !progressStuckWarned.value) {
+        progressStuckWarned.value = true
+        ElMessage.warning('任务可能正在排队，请耐心等待')
       }
     }
   } catch (e) {
-    // ignore
+    console.error('轮询进度失败:', e)
   }
 }
 
 function startProgressPoll() {
   stopProgressPoll()
   progressFullTimestamp = null
+  progressStuckWarned.value = false
+  progressStartTime.value = Date.now()
   pollProgress()
   progressTimer = setInterval(pollProgress, 2000)
 }
@@ -768,6 +783,9 @@ async function onRemoveFromList(tabId, entryIds) {
 function onGenerateDoc(ids, tabId) {
   selectedEntryIds.value = ids
   docCustomTabId.value = tabId || null
+  docType.value = 'feature'
+  docFormat.value = 'excel'
+  dataScope.value = 'all'
   includeImages.value = true
   compressImages.value = false
   const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
@@ -841,6 +859,10 @@ function stopPolling() {
 }
 
 async function handleGenerate() {
+  if (genRecords.value.some(r => r.status === 'generating')) {
+    ElMessage.warning('有文档正在生成中，请等待完成')
+    return
+  }
   if (dataScope.value === 'selected' && selectedEntryIds.value.length === 0) {
     ElMessage.warning('请先选择数据')
     return

@@ -21,6 +21,8 @@ import java.io.File;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @RestController
 @RequestMapping("/api/documents")
@@ -29,6 +31,11 @@ public class DocumentController {
     private final DocumentService documentService;
     private final SysUserService sysUserService;
     private final OperationLogService logService;
+    private final ExecutorService docGenExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "doc-gen");
+        t.setDaemon(true);
+        return t;
+    });
 
     public DocumentController(DocumentService documentService, SysUserService sysUserService, OperationLogService logService) {
         this.documentService = documentService;
@@ -60,12 +67,18 @@ public class DocumentController {
                 request.getVersionId(), request.getDocName(), request.getDocType(), request.getFormat(), entryIds, userId, displayName);
 
         Long recordId = record.getId();
-        new Thread(() -> {
+        java.util.concurrent.Future<?> future = docGenExecutor.submit(() -> {
             try {
-                documentService.generateAndSaveDocument(
+                String result = documentService.generateAndSaveDocument(
                         recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId,
                         request.getIncludeImages() != null ? request.getIncludeImages() : true,
                         request.getCompressImages() != null && request.getCompressImages());
+                if (result != null) {
+                    DocGenRecord rec = documentService.getGenRecord(recordId);
+                    if (rec != null && !"completed".equals(rec.getStatus())) {
+                        documentService.updateGenRecordSuccess(recordId, result, new java.io.File(result).length());
+                    }
+                }
             } catch (Exception e) {
                 try {
                     documentService.updateGenRecordError(recordId, e.getMessage());
@@ -73,7 +86,15 @@ public class DocumentController {
                     try { documentService.updateGenRecordError(recordId, "生成失败: " + e.getClass().getSimpleName()); } catch (Exception ignored) {}
                 }
             }
-        }).start();
+        });
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                future.get(10, java.util.concurrent.TimeUnit.MINUTES);
+            } catch (java.util.concurrent.TimeoutException e) {
+                future.cancel(true);
+                try { documentService.updateGenRecordError(recordId, "生成超时（超过10分钟），已自动取消"); } catch (Exception ignored) {}
+            } catch (Exception ignored) {}
+        });
 
         logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
                 "GENERATE", "文档生成", "生成" + ("word".equals(request.getFormat()) ? "Word" : "Excel") + "文档: " + request.getDocName(),

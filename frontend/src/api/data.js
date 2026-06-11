@@ -56,6 +56,14 @@ export function levelDown(id) {
   return request.put(`/data/${id}/level-down`)
 }
 
+export function moveUp(id) {
+  return request.put(`/data/${id}/move-up`)
+}
+
+export function moveDown(id) {
+  return request.put(`/data/${id}/move-down`)
+}
+
 export function moveToParent(id, newParentId) {
   return request.put(`/data/${id}/move-to-parent`, { newParentId })
 }

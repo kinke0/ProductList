@@ -16,6 +16,14 @@ export function createVersion() {
   return request.post('/versions')
 }
 
+export function getVersionProgress() {
+  return request.get('/versions/progress')
+}
+
+export function deleteVersion(id) {
+  return request.delete(`/versions/${id}`)
+}
+
 export function releaseVersion(id) {
   return request.post(`/versions/${id}/release`)
 }

@@ -57,6 +57,7 @@ public class DataEntrySummaryDTO {
     private String colPrincipal;
     private String colProductLine;
     private String colAssetType;
+    private String colRemark;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private Long updatedBy;
@@ -112,6 +113,7 @@ public class DataEntrySummaryDTO {
         dto.setColPrincipal(e.getColPrincipal());
         dto.setColProductLine(e.getColProductLine());
         dto.setColAssetType(e.getColAssetType());
+        dto.setColRemark(e.getColRemark());
         dto.setCreatedAt(e.getCreatedAt());
         dto.setUpdatedAt(e.getUpdatedAt());
         dto.setUpdatedBy(e.getUpdatedBy());

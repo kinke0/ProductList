@@ -811,4 +811,91 @@ public class MaintenanceService {
         if (sql == null) return "";
         return sql.length() > 200 ? sql.substring(0, 200) + "..." : sql;
     }
+
+    @Transactional
+    public Map<String, Object> fillImageProductId() {
+        List<ImageResource> allImages = imageResourceRepository.findAll();
+        List<DataEntry> allEntries = dataEntryRepository.findAll();
+
+        Map<Long, List<DataEntry>> entriesByVersion = new HashMap<>();
+        for (DataEntry e : allEntries) {
+            entriesByVersion.computeIfAbsent(e.getVersionId(), k -> new ArrayList<>()).add(e);
+        }
+
+        Map<String, Long> l3Cache = new HashMap<>();
+        int updated = 0;
+        int alreadySet = 0;
+        int notMatched = 0;
+
+        for (ImageResource img : allImages) {
+            if (img.getProductId() != null) {
+                alreadySet++;
+                continue;
+            }
+            if (img.getProduct() == null || img.getProduct().isEmpty()) {
+                notMatched++;
+                continue;
+            }
+
+            String cacheKey = img.getVersionId() + "||" + img.getProduct();
+            Long l3Id = l3Cache.get(cacheKey);
+            if (l3Id == null) {
+                l3Id = findL3IdForProduct(entriesByVersion.getOrDefault(img.getVersionId(), Collections.emptyList()), img.getProduct());
+                if (l3Id != null) {
+                    l3Cache.put(cacheKey, l3Id);
+                }
+            }
+
+            if (l3Id != null) {
+                img.setProductId(l3Id);
+                imageResourceRepository.save(img);
+                updated++;
+            } else {
+                notMatched++;
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("total", allImages.size());
+        result.put("updated", updated);
+        result.put("alreadySet", alreadySet);
+        result.put("notMatched", notMatched);
+        return result;
+    }
+
+    private Long findL3IdForProduct(List<DataEntry> entries, String productName) {
+        Map<Long, DataEntry> entryMap = new HashMap<>();
+        for (DataEntry e : entries) {
+            entryMap.put(e.getId(), e);
+        }
+
+        for (DataEntry e : entries) {
+            if (productName.equals(e.getColProductSystem()) && e.getLevel() != null && e.getLevel() == 3) {
+                return e.getId();
+            }
+        }
+
+        for (DataEntry e : entries) {
+            if (productName.equals(e.getColProductSystem())) {
+                DataEntry l3 = findL3Ancestor(e, entryMap);
+                if (l3 != null) return l3.getId();
+            }
+        }
+        return null;
+    }
+
+    private DataEntry findL3Ancestor(DataEntry entry, Map<Long, DataEntry> entryMap) {
+        if (entry == null) return null;
+        if (entry.getLevel() != null && entry.getLevel() == 3) return entry;
+        Set<Long> visited = new HashSet<>();
+        DataEntry current = entry;
+        while (current != null && current.getParentId() != null) {
+            if (visited.contains(current.getParentId())) break;
+            visited.add(current.getParentId());
+            current = entryMap.get(current.getParentId());
+            if (current == null) break;
+            if (current.getLevel() != null && current.getLevel() == 3) return current;
+        }
+        return null;
+    }
 }

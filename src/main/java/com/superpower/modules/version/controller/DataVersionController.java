@@ -71,6 +71,19 @@ public class DataVersionController {
         return Result.success(v);
     }
 
+    @GetMapping("/progress")
+    public Result<DataVersionService.VersionProgress> getProgress() {
+        return Result.success(versionService.getProgress());
+    }
+
+    @DeleteMapping("/{id}")
+    public Result<Void> deleteVersion(@PathVariable Long id, Authentication auth) {
+        versionService.deleteVersion(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "DELETE", "版本管理", "删除清单版本 id=" + id, id, "DataVersion");
+        return Result.success(null);
+    }
+
     @PostMapping("/{id}/release")
     public Result<DataVersion> releaseVersion(@PathVariable Long id, Authentication auth) {
         String username = auth.getName();

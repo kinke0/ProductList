@@ -39,6 +39,7 @@ const props = defineProps({
   defaultCategory: { type: String, default: null },
   defaultDomain: { type: String, default: null },
   defaultProduct: { type: String, default: null },
+  defaultProductId: { type: Number, default: null },
   fixedCategory: { type: String, default: null },
   versionId: { type: Number, default: null }
 })
@@ -79,10 +80,14 @@ async function loadImages() {
   loading.value = true
   try {
     const params = { includeReferenced: false }
-    if (curCategory.value) params.category = curCategory.value
-    if (curDomain.value) params.domain = curDomain.value
-    if (curProduct.value) params.product = curProduct.value
     if (props.versionId) params.versionId = props.versionId
+    if (props.defaultProductId) {
+      params.productId = props.defaultProductId
+    } else {
+      if (curCategory.value) params.category = curCategory.value
+      if (curDomain.value) params.domain = curDomain.value
+      if (curProduct.value) params.product = curProduct.value
+    }
     const res = await getImages(params)
     images.value = res.data || []
   } finally {

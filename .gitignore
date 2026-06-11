@@ -24,3 +24,20 @@ src/main/resources/templates/word/*.docx
 
 # Logs
 *.log
+
+# Vite cache
+.vite/
+
+# Database backups
+superpower.db.bak*
+superpower.db.corrupted
+
+# MCP packages
+volcengine-mcp-*.tgz
+
+# Backup files
+*.bak*
+frontend/src/components/*.bak*
+
+# Uploaded images and files
+uploads/

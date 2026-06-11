@@ -184,13 +184,12 @@ public class ProductService {
         }
     }
 
-    // 版本复制
     @Transactional
-    public void copyFromVersion(Long sourceVersionId, Long targetVersionId) {
+    public Map<String, Map<Long, Long>> copyFromVersion(Long sourceVersionId, Long targetVersionId) {
         Map<Long, Long> l1IdMap = new HashMap<>();
         Map<Long, Long> l2IdMap = new HashMap<>();
+        Map<Long, Long> productIdMap = new HashMap<>();
 
-        // 复制L1
         List<BaseProductL1> srcL1List = productL1Repository.findByVersionIdOrderBySortOrderAsc(sourceVersionId);
         for (BaseProductL1 src : srcL1List) {
             BaseProductL1 l1 = new BaseProductL1();
@@ -201,7 +200,6 @@ public class ProductService {
             l1IdMap.put(src.getId(), l1.getId());
         }
 
-        // 复制L2
         List<BaseProductL2> srcL2List = productL2Repository.findByVersionId(sourceVersionId);
         for (BaseProductL2 src : srcL2List) {
             BaseProductL2 l2 = new BaseProductL2();
@@ -213,7 +211,6 @@ public class ProductService {
             l2IdMap.put(src.getId(), l2.getId());
         }
 
-        // 复制L3
         List<BaseProduct> srcProducts = productRepository.findByVersionId(sourceVersionId);
         for (BaseProduct src : srcProducts) {
             BaseProduct product = new BaseProduct();
@@ -223,8 +220,15 @@ public class ProductService {
             product.setL2Id(l2IdMap.get(src.getL2Id()));
             product.setName(src.getName());
             product.setSortOrder(src.getSortOrder());
-            productRepository.save(product);
+            product = productRepository.save(product);
+            productIdMap.put(src.getId(), product.getId());
         }
+
+        Map<String, Map<Long, Long>> result = new HashMap<>();
+        result.put("l1IdMap", l1IdMap);
+        result.put("l2IdMap", l2IdMap);
+        result.put("productIdMap", productIdMap);
+        return result;
     }
 
     // 导入Excel
