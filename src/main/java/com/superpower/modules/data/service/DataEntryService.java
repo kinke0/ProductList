@@ -278,6 +278,8 @@ public class DataEntryService {
             }
         }
 
+        fillCategoryAndDomainIds(entry);
+
         return entryRepository.save(entry);
     }
 
@@ -293,6 +295,8 @@ public class DataEntryService {
         if (entry.getLevel() != null && entry.getLevel() >= 1 && entry.getLevel() <= 3) {
             cascadeLabelUpdate(entry, oldBizCategory, oldBizDomain);
         }
+
+        fillCategoryAndDomainIds(entry);
 
         return entryRepository.save(entry);
     }
@@ -668,6 +672,27 @@ public class DataEntryService {
         if (dto.getColPrincipal() != null) entry.setColPrincipal(dto.getColPrincipal());
         if (dto.getColProductLine() != null) entry.setColProductLine(dto.getColProductLine());
         if (dto.getColAssetType() != null) entry.setColAssetType(dto.getColAssetType());
+    }
+
+    private void fillCategoryAndDomainIds(DataEntry entry) {
+        if (entry.getCategoryId() == null && entry.getColBizCategory() != null && !entry.getColBizCategory().isEmpty()) {
+            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(entry.getVersionId());
+            for (BaseCategory cat : cats) {
+                if (entry.getColBizCategory().equals(cat.getName())) {
+                    entry.setCategoryId(cat.getId());
+                    break;
+                }
+            }
+        }
+        if (entry.getDomainId() == null && entry.getColBizDomain() != null && !entry.getColBizDomain().isEmpty()) {
+            List<BaseDomain> doms = baseDomainRepository.findByVersionId(entry.getVersionId());
+            for (BaseDomain dom : doms) {
+                if (entry.getColBizDomain().equals(dom.getName())) {
+                    entry.setDomainId(dom.getId());
+                    break;
+                }
+            }
+        }
     }
 
     @Transactional
@@ -1629,6 +1654,8 @@ public class DataEntryService {
             if (feat != null) {
                 entry.setColFeatureDesc(feat.replaceAll("<(https?://[^>]+)>", "[$1]"));
             }
+
+            fillCategoryAndDomainIds(entry);
 
             entryRepository.save(entry);
             nameToId.put(productName, entry.getId());

@@ -145,6 +145,7 @@
     >
       <div
         :class="['vrow', row._isSeparator ? 'sep-row' : (displayData.indexOf(row) % 2 === 0 ? 'vrow-even' : 'vrow-odd'), 'row-id-' + row.id, 'row-level-' + (row.level || 0), 'row-parent-' + (row.parentId || 0), { 'row-just-added': newlyCreatedIds.has(row.id) }]"
+        @contextmenu.prevent="showContextMenu($event, row)"
       >
         <div class="vcol vcol-num" style="width:50px;">
           <template v-if="row._isSeparator">
@@ -156,7 +157,7 @@
           </template>
           <template v-else>
             <div class="check-col-inner" :style="{ paddingLeft: props.isEditing ? '22px' : '0' }">
-              <span v-if="props.isEditing" class="drag-handle" @mousedown="startDrag($event, displayData.indexOf(row))" @contextmenu.prevent="showContextMenu($event, row)">⠿</span>
+              <span v-if="props.isEditing" class="drag-handle" @mousedown="startDrag($event, displayData.indexOf(row))">⠿</span>
               <el-checkbox :model-value="selectedIds.includes(row.id)" @change="toggleSelect(row)" size="small" />
             </div>
           </template>
@@ -710,12 +711,14 @@ watch(showEditDialog, (val) => {
 
    for (const [domain, roots] of domainGroups) {
      const category = roots[0]?.colBizCategory || ''
-     result.push({
-       _isSeparator: true,
-       colBizDomain: domain,
-       colBizCategory: category,
-       id: 'sep-' + domain
-     })
+      result.push({
+        _isSeparator: true,
+        colBizDomain: domain,
+        colBizCategory: category,
+        domainId: roots[0]?.domainId || null,
+        categoryId: roots[0]?.categoryId || null,
+        id: 'sep-' + domain
+      })
      if (!collapsedDomains.value.has(domain)) {
        function addTree(node) {
          result.push(node)
@@ -1008,16 +1011,42 @@ watch(showEditDialog, (val) => {
    rebuildDisplayData()
  }
 
-function addProductFromSeparator(row) {
+async function addProductFromSeparator(row) {
   isNew.value = true
   editingId.value = null
   parentRow.value = null
-  initEditForm()
+  Object.assign(editForm, initialFormState())
   editForm.colBizCategory = row.colBizCategory || ''
   editForm.colBizDomain = row.colBizDomain || ''
+  await resolveCategoryIds()
   syncVersionFromForm()
   activeEditorTab.value = 'feature'
   showEditDialog.value = true
+}
+
+async function resolveCategoryIds() {
+  if (!props.versionId) return
+  try {
+    const res = await getCategoryTree(props.versionId)
+    const data = res.data || []
+    if (!editForm.categoryId && editForm.colBizCategory) {
+      const l1 = data.find(d => d.label === editForm.colBizCategory)
+      if (l1) {
+        editForm.categoryId = l1.id
+        const l2List = (l1.children || [])
+        l2Options.value = l2List.map(c => ({ id: c.id, label: c.label }))
+        if (!editForm.domainId && editForm.colBizDomain) {
+          const l2 = l2List.find(c => c.label === editForm.colBizDomain)
+          if (l2) editForm.domainId = l2.id
+        }
+      }
+    }
+    l1Options.value = data.map(d => ({ id: d.id, label: d.label }))
+    if (editForm.categoryId) {
+      const matched = data.find(d => d.id == editForm.categoryId)
+      l2Options.value = (matched?.children || []).map(c => ({ id: c.id, label: c.label }))
+    }
+  } catch {}
 }
 
  function expandAll() {
@@ -2067,14 +2096,13 @@ function onRemoveClick() {
 function showContextMenu(e, row) {
   if (!props.isEditing) return
   if (row._isSeparator) return
+  e.preventDefault()
+  e.stopPropagation()
+  closeContextMenu()
   ctxMenu.x = e.clientX
   ctxMenu.y = e.clientY
   ctxMenu.row = row
   ctxMenu.visible = true
-  nextTick(() => {
-    document.addEventListener('click', closeContextMenu, { once: true })
-    document.addEventListener('contextmenu', closeContextMenu, { once: true })
-  })
 }
 
 function closeContextMenu() {
@@ -2540,11 +2568,11 @@ function buildTree(entries) {
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
-    Object.assign(editForm, row)
+    Object.assign(editForm, initialFormState(), row)
     try {
       const res = await getEntry(row.id)
-      if (res?.data?.colFeatureDesc !== undefined) {
-        editForm.colFeatureDesc = res.data.colFeatureDesc
+      if (res?.data) {
+        Object.assign(editForm, res.data)
       }
     } catch (e) { /* fallback to row data */ }
     syncVersionFromForm()
@@ -2560,11 +2588,11 @@ function buildTree(entries) {
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
-    Object.assign(editForm, row)
+    Object.assign(editForm, initialFormState(), row)
     try {
       const res = await getEntry(row.id)
-      if (res?.data?.colFeatureDesc !== undefined) {
-        editForm.colFeatureDesc = res.data.colFeatureDesc
+      if (res?.data) {
+        Object.assign(editForm, res.data)
       }
     } catch (e) { /* fallback to row data */ }
     syncVersionFromForm()
@@ -2672,14 +2700,24 @@ watch(() => props.versionId, () => {
   function handleEscClose(e) {
     if (e.key === 'Escape') closeContextMenu()
   }
+  function handleGlobalClick(e) {
+    if (ctxMenu.visible && ctxMenuRef.value && !ctxMenuRef.value.contains(e.target)) closeContextMenu()
+  }
+  function handleGlobalContextMenu(e) {
+    if (ctxMenu.visible) closeContextMenu()
+  }
   onMounted(() => {
     document.addEventListener('keydown', handleEscClose)
+    document.addEventListener('click', handleGlobalClick)
+    document.addEventListener('contextmenu', handleGlobalContextMenu)
   })
   onUnmounted(() => {
     if (dragMoveHandler) document.removeEventListener('mousemove', dragMoveHandler)
     if (dragUpHandler) document.removeEventListener('mouseup', dragUpHandler)
     if (dragState.ghostEl) dragState.ghostEl.remove()
     document.removeEventListener('keydown', handleEscClose)
+    document.removeEventListener('click', handleGlobalClick)
+    document.removeEventListener('contextmenu', handleGlobalContextMenu)
   })
 
   defineExpose({

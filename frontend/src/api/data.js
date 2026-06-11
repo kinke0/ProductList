@@ -111,9 +111,9 @@ export function renumberEntries(items) {
 }
 
 export function copyEntries(sourceIds, targetId, mode) {
-  return request.post('/data/copy', { sourceIds, targetId, mode })
+  return request.post('/data/entries/copy', { sourceIds, targetId, mode })
 }
 
 export function moveEntries(sourceIds, targetId, mode) {
-  return request.put('/data/move', { sourceIds, targetId, mode })
+  return request.put('/data/entries/move', { sourceIds, targetId, mode })
 }

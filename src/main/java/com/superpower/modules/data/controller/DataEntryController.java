@@ -347,7 +347,7 @@ public class DataEntryController {
         return Result.success();
     }
 
-    @PostMapping("/copy")
+    @PostMapping("/entries/copy")
     public Result<Void> copyEntries(@RequestBody Map<String, Object> body, Authentication auth) {
         List<Long> sourceIds = ((List<Number>) body.get("sourceIds")).stream().map(Number::longValue).toList();
         Long targetId = Long.valueOf(body.get("targetId").toString());
@@ -366,7 +366,7 @@ public class DataEntryController {
         return Result.success();
     }
 
-    @PutMapping("/move")
+    @PutMapping("/entries/move")
     public Result<Void> moveEntries(@RequestBody Map<String, Object> body, Authentication auth) {
         List<Long> sourceIds = ((List<Number>) body.get("sourceIds")).stream().map(Number::longValue).toList();
         Long targetId = Long.valueOf(body.get("targetId").toString());
