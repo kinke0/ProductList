@@ -11,6 +11,7 @@ import com.superpower.modules.category.repository.BaseDomainRepository;
 import com.superpower.modules.category.repository.BaseProductRepository;
 import com.superpower.modules.data.dto.DataEntryDTO;
 import com.superpower.modules.data.dto.ExcelImportResult;
+import com.superpower.modules.data.dto.RenumberItem;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
@@ -1646,15 +1647,20 @@ public class DataEntryService {
         if (desc != null && !desc.isBlank()) {
             body.append(toPreviewParagraphs(desc));
         }
+        String apprStatus = node.getApprovalStatus();
+        boolean canEditByApproval = "admin".equals(role)
+                || apprStatus == null || apprStatus.isEmpty()
+                || "待提交".equals(apprStatus) || "驳回".equals(apprStatus);
         if (isEditing) {
             body.append("<div class='entry-actions' data-entry-id='").append(node.getId()).append("'>");
-            body.append("<div class='ea-label'>数据操作：</div>");
-            body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'edit',entryId:").append(node.getId()).append("},'*')\">编辑</a>");
-            if (node.getLevel() != null && node.getLevel() >= 3) {
-                body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'addChild',entryId:").append(node.getId()).append("},'*')\">添加</a>");
+            if (canEditByApproval) {
+                body.append("<div class='ea-label'>数据操作：</div>");
+                body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'edit',entryId:").append(node.getId()).append("},'*')\">编辑</a>");
+                if (node.getLevel() != null && node.getLevel() >= 3) {
+                    body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'addChild',entryId:").append(node.getId()).append("},'*')\">添加</a>");
+                }
+                body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'delete',entryId:").append(node.getId()).append(",entryName:'").append(label.replace("'", "\\'")).append("'},'*')\">删除</a>");
             }
-            body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'delete',entryId:").append(node.getId()).append(",entryName:'").append(label.replace("'", "\\'")).append("'},'*')\">删除</a>");
-            String apprStatus = node.getApprovalStatus();
             boolean showApproval = isEditing && colStatus != null && colStatus.contains("可交付");
             if (showApproval) {
                 body.append("<div class='ea-label' style='margin-left:16px;'>流程操作：</div>");
@@ -2176,5 +2182,60 @@ public class DataEntryService {
         result.put("categoryFixed", categoryFixed);
         result.put("leafFixed", leafFixed);
         return result;
+    }
+
+    @Transactional
+    public void renumberEntries(Long versionId, List<RenumberItem> items) {
+        ensureVersionEditable(versionId);
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException("重编号列表不能为空");
+        }
+        for (RenumberItem item : items) {
+            DataEntry entry = entryRepository.findById(item.getEntryId())
+                    .orElseThrow(() -> new BusinessException("条目不存在: " + item.getEntryId()));
+            if (!versionId.equals(entry.getVersionId())) {
+                throw new BusinessException("条目不属于当前版本: " + item.getEntryId());
+            }
+            if (entry.getLevel() == null || entry.getLevel() < 3) {
+                throw new BusinessException("只能对产品级别(L3)及以上的条目进行编码重排序");
+            }
+
+            String l2Prefix = extractL2Prefix(entry);
+            String newPrefix = item.getNewPrefix().trim();
+            if (!newPrefix.startsWith(l2Prefix)) {
+                throw new BusinessException("新编码前缀 " + newPrefix + " 的前两段与所属L2(" + l2Prefix + ")不一致，不允许修改");
+            }
+
+            String newName = item.getNewName() != null ? item.getNewName().trim() : stripNumberPrefix(entry.getColProductSystem());
+            entry.setColProductSystem(newPrefix + " " + newName);
+            entryRepository.save(entry);
+
+            renumberChildren(entry.getId(), versionId, newPrefix);
+        }
+    }
+
+    private String extractL2Prefix(DataEntry entry) {
+        String domainName = entry.getColBizDomain();
+        if (domainName == null || domainName.isEmpty()) {
+            return "";
+        }
+        String fullPrefix = extractNumberPrefix(domainName);
+        String[] segments = fullPrefix.split("\\.");
+        if (segments.length >= 2) {
+            return segments[0] + "." + segments[1];
+        }
+        return fullPrefix;
+    }
+
+    private void renumberChildren(Long parentId, Long versionId, String parentPrefix) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        for (int i = 0; i < children.size(); i++) {
+            DataEntry child = children.get(i);
+            String newCode = parentPrefix + "." + (i + 1);
+            String oldName = stripNumberPrefix(child.getColProductSystem());
+            child.setColProductSystem(newCode + " " + oldName);
+            entryRepository.save(child);
+            renumberChildren(child.getId(), versionId, newCode);
+        }
     }
 }

@@ -1,8 +1,11 @@
 package com.superpower.modules.version.controller;
 
+import com.superpower.common.AuthUtils;
 import com.superpower.common.Result;
 import com.superpower.modules.system.entity.SysUser;
 import com.superpower.modules.system.repository.SysUserRepository;
+import com.superpower.modules.system.service.OperationLogService;
+import com.superpower.modules.system.service.SysUserService;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.service.DataVersionService;
 import org.springframework.security.core.Authentication;
@@ -19,10 +22,15 @@ public class DataVersionController {
 
     private final DataVersionService versionService;
     private final SysUserRepository sysUserRepository;
+    private final OperationLogService logService;
+    private final SysUserService sysUserService;
 
-    public DataVersionController(DataVersionService versionService, SysUserRepository sysUserRepository) {
+    public DataVersionController(DataVersionService versionService, SysUserRepository sysUserRepository,
+                                 OperationLogService logService, SysUserService sysUserService) {
         this.versionService = versionService;
         this.sysUserRepository = sysUserRepository;
+        this.logService = logService;
+        this.sysUserService = sysUserService;
     }
 
     @GetMapping
@@ -56,8 +64,11 @@ public class DataVersionController {
     }
 
     @PostMapping
-    public Result<DataVersion> createVersion() {
-        return Result.success(versionService.createVersion());
+    public Result<DataVersion> createVersion(Authentication auth) {
+        DataVersion v = versionService.createVersion();
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "CREATE", "版本管理", "创建清单版本 " + v.getVersionNo(), v.getId(), "DataVersion");
+        return Result.success(v);
     }
 
     @PostMapping("/{id}/release")
@@ -65,11 +76,17 @@ public class DataVersionController {
         String username = auth.getName();
         SysUser user = sysUserRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
-        return Result.success(versionService.releaseVersion(id, user.getId()));
+        DataVersion v = versionService.releaseVersion(id, user.getId());
+        logService.record(user.getId(), username,
+                "RELEASE", "版本管理", "发布清单版本 " + v.getVersionNo(), id, "DataVersion");
+        return Result.success(v);
     }
 
     @PostMapping("/{id}/rollback")
-    public Result<DataVersion> rollbackVersion(@PathVariable Long id) {
-        return Result.success(versionService.rollbackVersion(id));
+    public Result<DataVersion> rollbackVersion(@PathVariable Long id, Authentication auth) {
+        DataVersion v = versionService.rollbackVersion(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "ROLLBACK", "版本管理", "回滚清单版本 " + v.getVersionNo(), id, "DataVersion");
+        return Result.success(v);
     }
 }

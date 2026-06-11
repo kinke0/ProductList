@@ -24,7 +24,7 @@
         <el-table-column prop="name" label="清单名称" />
       </el-table>
       <template #footer>
-        <el-button @click="showInsertDialog = false">取消</el-button>
+        <el-button @click="onCancelInsert">取消</el-button>
       </template>
     </el-dialog>
 
@@ -155,6 +155,7 @@
           <el-radio value="feature">功能说明</el-radio>
         </el-radio-group>
         <el-checkbox v-if="docType === 'feature' && docFormat === 'word'" v-model="includeImages" style="margin-left:16px;">包含图片</el-checkbox>
+        <el-checkbox v-if="includeImages && docType === 'feature' && docFormat === 'word'" v-model="compressImages" style="margin-left:8px;">压缩图片（体积更小，清晰度略降）</el-checkbox>
       </el-form-item>
       <el-form-item label="输出格式">
         <el-radio-group v-model="docFormat">
@@ -230,6 +231,7 @@
             <el-button type="primary" link size="small" @click="handleDownload(row)">下载</el-button>
             <el-button v-if="isAdmin" type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
           </template>
+          <el-button v-else-if="row.status === 'generating' || row.status === 'processing'" type="warning" link size="small" @click="handleCancelGenerate(row)">取消</el-button>
           <el-button v-else-if="isAdmin" type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -297,7 +299,7 @@ import StatsTab from '../../components/StatsTab.vue'
 import DataListTab from '../../components/DataListTab.vue'
 import PanoramaTab from '../../components/PanoramaTab.vue'
 import PreviewDialog from '../../components/PreviewDialog.vue'
-import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
+import { generateDocument, getDocRecords, deleteDocRecord, getDocProgress } from '../../api/document'
 import { getVersions } from '../../api/version'
 import { getCustomTabs, createCustomTab, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { getOptions } from '../../api/option'
@@ -320,6 +322,7 @@ const docType = ref('feature')
 const docFormat = ref('word')
 const dataScope = ref('all')
 const includeImages = ref(true)
+const compressImages = ref(false)
 const selectedEntryIds = ref([])
 const docCustomTabId = ref(null)
 const docLoading = ref(false)
@@ -405,7 +408,7 @@ function startProgressPoll() {
   stopProgressPoll()
   progressFullTimestamp = null
   pollProgress()
-  progressTimer = setInterval(pollProgress, 100)
+  progressTimer = setInterval(pollProgress, 2000)
 }
 
 function stopProgressPoll() {
@@ -725,6 +728,11 @@ function onInsertToList(entryIds) {
   showInsertDialog.value = true
 }
 
+function onCancelInsert() {
+  showInsertDialog.value = false
+  if (dataListRef.value) dataListRef.value.setInserting(false)
+}
+
 function onSelectInsertTarget(tab) {
   if (tab) {
     showInsertDialog.value = false
@@ -761,6 +769,7 @@ function onGenerateDoc(ids, tabId) {
   selectedEntryIds.value = ids
   docCustomTabId.value = tabId || null
   includeImages.value = true
+  compressImages.value = false
   const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
   docName.value = tabName ? tabName + '-功能说明' : '功能说明'
   showDocDialog.value = true
@@ -850,7 +859,8 @@ async function handleGenerate() {
       dataScope: dataScope.value,
       entryIds: dataScope.value === 'selected' ? selectedEntryIds.value : [],
       customTabId: docCustomTabId.value,
-      includeImages: includeImages.value
+      includeImages: includeImages.value,
+      compressImages: compressImages.value
     })
     if (res.code === 200) {
       const recordId = res.data?.id
@@ -869,25 +879,9 @@ async function handleGenerate() {
   }
 }
 
-async function handleDownload(row) {
-  try {
-    const res = await downloadDocument(row.id)
-    const ext = row.format === 'word' ? 'docx' : 'xlsx'
-    const fileName = row.docName || (row.docType === 'bid' ? '招标参数' : '功能说明')
-    const blob = new Blob([res], {
-      type: row.format === 'word'
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${fileName}.${ext}`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    ElMessage.error('下载失败')
-  }
+function handleDownload(row) {
+  const token = localStorage.getItem('token')
+  window.open(`/api/documents/records/${row.id}/download?access_token=${token}`, '_blank')
 }
 
 function handlePreview(row) {
@@ -914,6 +908,21 @@ async function handleDeleteRecord(row) {
     loadGenRecords()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+async function handleCancelGenerate(row) {
+  try {
+    await ElMessageBox.confirm('确定取消生成此文档吗？', '确认', { type: 'warning' })
+    await deleteDocRecord(row.id)
+    if (activeGenRecordId.value === row.id) {
+      stopProgressPoll()
+      activeGenRecordId.value = null
+    }
+    ElMessage.success('已取消')
+    loadGenRecords()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('取消失败')
   }
 }
 </script>

@@ -26,11 +26,15 @@
       </div>
       <div class="gallery-content" v-loading="imagesLoading">
         <div v-if="currentImages.length > 0" class="gallery-toolbar">
-          <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll">全选</el-checkbox>
+          <el-checkbox v-if="viewMode === 'grid'" :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll">全选</el-checkbox>
           <el-input v-model="searchText" placeholder="搜索图片名称..." size="small" clearable style="width:200px;margin-left:12px;" />
+          <el-radio-group v-model="viewMode" size="small" style="margin-left:auto;">
+            <el-radio-button value="grid">网格</el-radio-button>
+            <el-radio-button value="list">列表</el-radio-button>
+          </el-radio-group>
         </div>
         <div v-if="filteredImages.length === 0" class="empty-tip">{{ currentImages.length > 0 ? '未找到匹配的图片' : '请选择左侧目录查看图片，或上传图片' }}</div>
-        <div v-else class="image-grid">
+        <div v-else-if="viewMode === 'grid'" class="image-grid">
           <el-tooltip v-for="img in displayList" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
             <div class="image-card" :class="{ selected: selectedIds.includes(img.id) }">
               <el-checkbox class="img-checkbox" :model-value="selectedIds.includes(img.id)" @change="toggleSelect(img)" @click.stop />
@@ -56,6 +60,32 @@
             </div>
           </el-tooltip>
         </div>
+        <el-table v-if="viewMode === 'list'" :data="displayList" size="small" @selection-change="onListSelectionChange" max-height="calc(100vh - 260px)">
+          <el-table-column type="selection" width="40" />
+          <el-table-column label="名称" min-width="200">
+            <template #default="{ row }">
+              <template v-if="editingImgId === row.id">
+                <el-button size="small" type="primary" link @click.stop="saveImgName(row)">保存</el-button>
+                <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(row)" @blur="saveImgName(row)" @click.stop style="width:120px;" />
+              </template>
+              <template v-else>
+                <el-button size="small" type="primary" link @click.stop="startEditName(row)">编辑</el-button>
+                <span style="font-size:13px;cursor:pointer;" @click="previewImage(row)">{{ row.filename }}</span>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="大小" width="90">
+            <template #default="{ row }">{{ formatSize(row.size) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="250">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" link @click="copyUrl(row)">复制URL</el-button>
+              <el-button size="small" link @click="showReferences(row)" :loading="refLoading">引用</el-button>
+              <el-button size="small" link @click="replaceImage(row)">替换</el-button>
+              <el-button size="small" type="danger" link @click="handleDelete(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </div>
     <el-dialog v-model="previewVisible" title="图片预览" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
@@ -111,6 +141,7 @@ const editingImgId = ref(null)
 const editingName = ref('')
 const replacingImg = ref(null)
 const replaceFileInput = ref(null)
+const viewMode = ref('grid')
 
 async function loadVersion() {
   const res = await getVersions()
@@ -282,6 +313,9 @@ const filteredImages = computed(() => {
   return currentImages.value.filter(img => (img.filename || '').toLowerCase().includes(keyword))
 })
 const displayList = computed(() => filteredImages.value.slice(0, displayCount.value))
+const isAllSelected = computed(() => {
+  return filteredImages.value.length > 0 && filteredImages.value.every(img => selectedIds.value.includes(img.id))
+})
 const isIndeterminate = computed(() => {
   const count = filteredImages.value.filter(img => selectedIds.value.includes(img.id)).length
   return count > 0 && count < filteredImages.value.length
@@ -296,6 +330,10 @@ function toggleSelect(img) {
 function toggleSelectAll(checked) {
   if (checked) selectedIds.value = filteredImages.value.map(img => img.id)
   else selectedIds.value = []
+}
+
+function onListSelectionChange(rows) {
+  selectedIds.value = rows.map(r => r.id)
 }
 
 async function batchDelete() {

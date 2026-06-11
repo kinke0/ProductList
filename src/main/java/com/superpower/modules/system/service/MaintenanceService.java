@@ -8,6 +8,7 @@ import com.superpower.modules.image.repository.ImageResourceRepository;
 import com.superpower.modules.requirement.entity.ReqItem;
 import com.superpower.modules.requirement.repository.ReqItemRepository;
 import com.superpower.modules.system.dto.ImageMigrationStatus;
+import com.superpower.modules.system.dto.SqlExecutionResult;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.nio.file.*;
 import java.sql.*;
+import javax.sql.DataSource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -27,6 +29,10 @@ public class MaintenanceService {
     private final ImageResourceRepository imageResourceRepository;
     private final DataEntryRepository dataEntryRepository;
     private final ReqItemRepository reqItemRepository;
+    private final DataSource dataSource;
+
+    @Value("${spring.datasource.url}")
+    private String datasourceUrl;
 
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
@@ -37,10 +43,12 @@ public class MaintenanceService {
 
     public MaintenanceService(ImageResourceRepository imageResourceRepository,
                               DataEntryRepository dataEntryRepository,
-                              ReqItemRepository reqItemRepository) {
+                              ReqItemRepository reqItemRepository,
+                              DataSource dataSource) {
         this.imageResourceRepository = imageResourceRepository;
         this.dataEntryRepository = dataEntryRepository;
         this.reqItemRepository = reqItemRepository;
+        this.dataSource = dataSource;
     }
 
     public synchronized ImageMigrationStatus getMigrationStatus() {
@@ -147,15 +155,27 @@ public class MaintenanceService {
         migrationStatus.setTotalCount(total);
     }
 
+    private Path getDbFilePath() {
+        String path = datasourceUrl.replaceFirst("^jdbc:sqlite:", "");
+        int paramIdx = path.indexOf('?');
+        if (paramIdx >= 0) {
+            path = path.substring(0, paramIdx);
+        }
+        Path dbPath = Paths.get(path);
+        if (!dbPath.isAbsolute()) {
+            dbPath = Paths.get(System.getProperty("user.dir")).resolve(path).normalize();
+        }
+        return dbPath;
+    }
+
     private void stepBackupDatabase(ImageMigrationStatus.StepResult sr) {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
-        Path source = Paths.get("superpower.db");
-        Path target = Paths.get("superpower.db.bak." + timestamp);
+        Path source = getDbFilePath();
+        Path target = source.resolveSibling(source.getFileName() + ".bak." + timestamp);
 
         if (!Files.exists(source)) {
-            sr.setStatus("COMPLETED");
-            sr.setMessage("数据库文件不存在（可能使用内嵌 Derby），跳过备份");
-            sr.setSkipCount(1);
+            sr.setStatus("FAILED");
+            sr.setMessage("数据库文件不存在: " + source.toAbsolutePath());
             return;
         }
 
@@ -725,5 +745,70 @@ public class MaintenanceService {
 
     public synchronized void resetFixId() {
         fixIdStatus = null;
+    }
+
+    private static final int MAX_QUERY_ROWS = 500;
+
+    public List<SqlExecutionResult> executeSql(String sql) {
+        List<SqlExecutionResult> results = new ArrayList<>();
+        List<String> statements = splitSqlStatements(sql);
+        try (Connection conn = dataSource.getConnection()) {
+            int index = 1;
+            for (String stmt : statements) {
+                long start = System.currentTimeMillis();
+                try (Statement statement = conn.createStatement()) {
+                    boolean isResultSet = statement.execute(stmt);
+                    if (isResultSet) {
+                        try (ResultSet rs = statement.getResultSet()) {
+                            ResultSetMetaData meta = rs.getMetaData();
+                            int colCount = meta.getColumnCount();
+                            List<String> columns = new ArrayList<>();
+                            for (int i = 1; i <= colCount; i++) {
+                                columns.add(meta.getColumnName(i));
+                            }
+                            List<List<Object>> rows = new ArrayList<>();
+                            while (rs.next() && rows.size() < MAX_QUERY_ROWS) {
+                                List<Object> row = new ArrayList<>();
+                                for (int i = 1; i <= colCount; i++) {
+                                    row.add(rs.getObject(i));
+                                }
+                                rows.add(row);
+                            }
+                            long duration = System.currentTimeMillis() - start;
+                            results.add(SqlExecutionResult.querySuccess(index, truncateSql(stmt), rows.size(), columns, rows, duration));
+                        }
+                    } else {
+                        int affected = statement.getUpdateCount();
+                        long duration = System.currentTimeMillis() - start;
+                        results.add(SqlExecutionResult.success(index, truncateSql(stmt), affected, duration));
+                    }
+                } catch (Exception e) {
+                    long duration = System.currentTimeMillis() - start;
+                    results.add(SqlExecutionResult.failure(index, truncateSql(stmt), e.getMessage(), duration));
+                }
+                index++;
+            }
+        } catch (Exception e) {
+            results.add(SqlExecutionResult.failure(0, "", "数据库连接失败: " + e.getMessage(), 0));
+        }
+        return results;
+    }
+
+    private List<String> splitSqlStatements(String sql) {
+        List<String> statements = new ArrayList<>();
+        if (sql == null || sql.isBlank()) return statements;
+        String[] parts = sql.split(";");
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                statements.add(trimmed);
+            }
+        }
+        return statements;
+    }
+
+    private String truncateSql(String sql) {
+        if (sql == null) return "";
+        return sql.length() > 200 ? sql.substring(0, 200) + "..." : sql;
     }
 }

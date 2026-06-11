@@ -6,14 +6,17 @@ import com.superpower.modules.system.dto.LoginRequest;
 import com.superpower.modules.system.dto.LoginResponse;
 import com.superpower.modules.system.entity.SysRole;
 import com.superpower.modules.system.entity.SysUser;
+import com.superpower.modules.system.service.OperationLogService;
 import com.superpower.modules.system.service.SysUserService;
 import com.superpower.security.JwtTokenProvider;
+import com.superpower.security.OnlineTracker;
 import jakarta.validation.Valid;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 
 @RestController
@@ -23,13 +26,19 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider jwtTokenProvider;
     private final SysUserService userService;
+    private final OnlineTracker onlineTracker;
+    private final OperationLogService logService;
 
     public AuthController(AuthenticationManager authenticationManager,
                           JwtTokenProvider jwtTokenProvider,
-                          SysUserService userService) {
+                          SysUserService userService,
+                          OnlineTracker onlineTracker,
+                          OperationLogService logService) {
         this.authenticationManager = authenticationManager;
         this.jwtTokenProvider = jwtTokenProvider;
         this.userService = userService;
+        this.onlineTracker = onlineTracker;
+        this.logService = logService;
     }
 
     @PostMapping("/login")
@@ -40,6 +49,11 @@ public class AuthController {
         SysUser user = userService.findByUsername(request.getUsername());
         SysRole role = user.getRole();
         String token = jwtTokenProvider.generateToken(user.getUsername(), user.getId(), role.getCode());
+
+        user.setLastLoginAt(LocalDateTime.now());
+        userService.save(user);
+        onlineTracker.online(user.getId());
+        logService.record(user.getId(), user.getUsername(), "LOGIN", "系统认证", "用户登录");
 
         return Result.success(new LoginResponse(token, user.getUsername(), user.getId(), user.getNickname(),
                 role.getCode(), role.getName()));

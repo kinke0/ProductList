@@ -33,6 +33,7 @@ import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -46,6 +47,7 @@ public class DocumentService {
     private static final double PORTRAIT_RATIO = 1.2;
     private static final int IMAGE_LANDSCAPE_WIDTH_PX = 500;
     private static final int IMAGE_PORTRAIT_HEIGHT_PX = 300;
+    private static final double COMPRESS_DPI_RATIO = 2.4;
     private static final Pattern URL_PATTERN = Pattern.compile("\\[([^\\[\\]]+)\\]");
     private static final Pattern IMAGE_CARD_PATTERN = Pattern.compile(
             "<(?:span|div)[^>]+class=\"(?:image-card|img-card)\"[^>]*>",
@@ -62,6 +64,7 @@ public class DocumentService {
     private final DataEntryRepository entryRepository;
     private final DocGenRecordRepository genRecordRepository;
     private final CustomTabEntryRepository customTabEntryRepository;
+    private final ConcurrentHashMap<Long, Boolean> cancelledRecords = new ConcurrentHashMap<>();
 
     @Value("${app.doc-storage-path:./generated-docs}")
     private String docStoragePath;
@@ -74,6 +77,14 @@ public class DocumentService {
         this.entryRepository = entryRepository;
         this.genRecordRepository = genRecordRepository;
         this.customTabEntryRepository = customTabEntryRepository;
+    }
+
+    private boolean isCancelled(Long recordId) {
+        return recordId != null && cancelledRecords.getOrDefault(recordId, false);
+    }
+
+    public void cancelGeneration(Long recordId) {
+        cancelledRecords.put(recordId, true);
     }
 
     public DocGenRecord createGenRecord(Long versionId, String docName, String docType, String format,
@@ -93,29 +104,40 @@ public class DocumentService {
     }
 
     public void updateGenRecordSuccess(Long recordId, String filePath, long fileSize) {
-        DocGenRecord record = genRecordRepository.findById(recordId).orElseThrow();
-        record.setFilePath(filePath);
-        record.setFileSize(fileSize);
-        record.setStatus("completed");
-        record.setUpdatedAt(LocalDateTime.now());
-        genRecordRepository.save(record);
+        genRecordRepository.findById(recordId).ifPresent(record -> {
+            record.setFilePath(filePath);
+            record.setFileSize(fileSize);
+            record.setStatus("completed");
+            record.setUpdatedAt(LocalDateTime.now());
+            genRecordRepository.save(record);
+            cancelledRecords.remove(recordId);
+        });
     }
 
     public void updateGenRecordError(Long recordId, String errorMessage) {
-        DocGenRecord record = genRecordRepository.findById(recordId).orElseThrow();
-        record.setErrorMessage(errorMessage);
-        record.setStatus("error");
-        record.setUpdatedAt(LocalDateTime.now());
-        genRecordRepository.save(record);
+        genRecordRepository.findById(recordId).ifPresent(record -> {
+            record.setErrorMessage(errorMessage);
+            record.setStatus("error");
+            record.setUpdatedAt(LocalDateTime.now());
+            genRecordRepository.save(record);
+            cancelledRecords.remove(recordId);
+        });
     }
+
+    private final ConcurrentHashMap<Long, Integer> lastSavedProgress = new ConcurrentHashMap<>();
 
     public void updateGenRecordProgress(Long recordId, int processed, int total) {
         if (recordId == null) return;
+        int last = lastSavedProgress.getOrDefault(recordId, -1);
+        int step = Math.max(1, total / 50);
+        if (processed - last < step && processed != total) return;
         genRecordRepository.findById(recordId).ifPresent(record -> {
             record.setProcessedEntries(processed);
             record.setUpdatedAt(LocalDateTime.now());
             genRecordRepository.save(record);
+            lastSavedProgress.put(recordId, processed);
         });
+        if (processed >= total) lastSavedProgress.remove(recordId);
     }
 
     public List<DocGenRecord> getGenRecords(Long versionId) {
@@ -127,6 +149,7 @@ public class DocumentService {
     }
 
     public void deleteGenRecord(Long id) {
+        cancelGeneration(id);
         DocGenRecord record = genRecordRepository.findById(id).orElse(null);
         if (record != null) {
             if (record.getFilePath() != null) {
@@ -139,7 +162,7 @@ public class DocumentService {
     public byte[] generateDocument(String docType, String format, List<Long> entryIds, Boolean includeImages) throws Exception {
         List<DataEntry> entries = entryRepository.findAllById(entryIds);
         if ("word".equals(format)) {
-            return generateWord(docType, entries, null, includeImages);
+            return generateWord(docType, entries, null, includeImages, false);
         } else {
             return generateExcel(docType, entries, null);
         }
@@ -147,7 +170,7 @@ public class DocumentService {
 
     public String generateAndSaveDocument(Long recordId, String docType, String format,
                                           List<Long> entryIds, Long versionId, Long customTabId,
-                                          Boolean includeImages) throws Exception {
+                                          Boolean includeImages, Boolean compressImages) throws Exception {
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
             if (customTabId != null) {
@@ -176,10 +199,15 @@ public class DocumentService {
         Path filePath = dir.resolve(filename);
 
         if ("word".equals(format)) {
-            generateWordToFile(docType, entries, recordId, filePath, includeImages);
+            generateWordToFile(docType, entries, recordId, filePath, includeImages, compressImages);
         } else {
             byte[] data = generateExcel(docType, entries, recordId);
             Files.write(filePath, data);
+        }
+
+        if (isCancelled(recordId)) {
+            try { Files.deleteIfExists(filePath); } catch (Exception ignored) {}
+            return null;
         }
 
         updateGenRecordSuccess(recordId, filePath.toString(), Files.size(filePath));
@@ -211,12 +239,12 @@ public class DocumentService {
         } while (added);
     }
 
-    private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId, Boolean includeImages) throws Exception {
+    private byte[] generateWord(String docType, List<DataEntry> entries, Long recordId, Boolean includeImages, Boolean compressImages) throws Exception {
         ZipSecureFile.setMinInflateRatio(0.001);
         ZipSecureFile.setMaxFileCount(100000);
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
-        generateFeatureWord(doc, entries, recordId, docType, includeImages);
+        generateFeatureWord(doc, entries, recordId, docType, includeImages, compressImages);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
         doc.close();
@@ -224,12 +252,12 @@ public class DocumentService {
     }
 
     private void generateWordToFile(String docType, List<DataEntry> entries, Long recordId, Path filePath,
-                                     Boolean includeImages) throws Exception {
+                                     Boolean includeImages, Boolean compressImages) throws Exception {
         ZipSecureFile.setMinInflateRatio(0.001);
         ZipSecureFile.setMaxFileCount(100000);
         XWPFDocument doc = new XWPFDocument();
         ensureBuiltinHeadingStyles(doc);
-        generateFeatureWord(doc, entries, recordId, docType, includeImages);
+        generateFeatureWord(doc, entries, recordId, docType, includeImages, compressImages);
         try (OutputStream out = Files.newOutputStream(filePath)) {
             doc.write(out);
         } finally {
@@ -275,24 +303,27 @@ public class DocumentService {
     }
 
     private void generateFeatureWord(XWPFDocument doc, List<DataEntry> entries, Long recordId, String docType,
-                                      Boolean includeImages) {
+                                      Boolean includeImages, Boolean compressImages) {
         int totalSize = entries.size();
         int[] progressCounter = {0};
         log.info("generateFeatureWord: total entries={}, recordId={}", totalSize, recordId);
 
         Set<Long> entryIds = new HashSet<>();
+        Map<Long, DataEntry> entryMap = new HashMap<>();
         for (DataEntry e : entries) {
             entryIds.add(e.getId());
+            entryMap.put(e.getId(), e);
         }
 
         LinkedHashMap<String, List<DataEntry>> categoryGroups = new LinkedHashMap<>();
         for (DataEntry e : entries) {
-            String category = e.getColBizCategory() != null ? e.getColBizCategory().trim() : "";
+            String category = resolveCategory(e, entryMap);
             categoryGroups.computeIfAbsent(category, k -> new ArrayList<>()).add(e);
         }
 
         int categoryCounter = 0;
         for (Map.Entry<String, List<DataEntry>> catEntry : categoryGroups.entrySet()) {
+            if (isCancelled(recordId)) return;
             categoryCounter++;
             String categoryText = extractText(catEntry.getKey());
             addNumberedHeading(doc, categoryText, 1, String.valueOf(categoryCounter));
@@ -300,12 +331,13 @@ public class DocumentService {
             List<DataEntry> catEntries = catEntry.getValue();
             LinkedHashMap<String, List<DataEntry>> domainGroups = new LinkedHashMap<>();
             for (DataEntry e : catEntries) {
-                String domain = e.getColBizDomain() != null ? e.getColBizDomain().trim() : "";
+                String domain = resolveDomain(e, entryMap);
                 domainGroups.computeIfAbsent(domain, k -> new ArrayList<>()).add(e);
             }
 
             int domainCounter = 0;
             for (Map.Entry<String, List<DataEntry>> domEntry : domainGroups.entrySet()) {
+                if (isCancelled(recordId)) return;
                 domainCounter++;
                 String domainText = extractText(domEntry.getKey());
                 String domainNumber = categoryCounter + "." + domainCounter;
@@ -325,16 +357,47 @@ public class DocumentService {
                 roots.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
 
                 for (int i = 0; i < roots.size(); i++) {
+                    if (isCancelled(recordId)) return;
                     String nodeNumber = domainNumber + "." + (i + 1);
-                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize, docType, includeImages);
+                    writeNode(doc, roots.get(i), nodeNumber, 3, childrenByParent, recordId, progressCounter, totalSize, docType, includeImages, compressImages);
                 }
             }
         }
     }
 
+    private String resolveCategory(DataEntry e, Map<Long, DataEntry> entryMap) {
+        if (e.getColBizCategory() != null && !e.getColBizCategory().trim().isEmpty()) {
+            return e.getColBizCategory().trim();
+        }
+        if (e.getParentId() != null && e.getParentId() > 0) {
+            DataEntry parent = entryMap.get(e.getParentId());
+            if (parent != null) {
+                String parentCat = resolveCategory(parent, entryMap);
+                if (!parentCat.equals("未分类")) return parentCat;
+            }
+        }
+        return "未分类";
+    }
+
+    private String resolveDomain(DataEntry e, Map<Long, DataEntry> entryMap) {
+        if (e.getColBizDomain() != null && !e.getColBizDomain().trim().isEmpty()) {
+            return e.getColBizDomain().trim();
+        }
+        if (e.getParentId() != null && e.getParentId() > 0) {
+            DataEntry parent = entryMap.get(e.getParentId());
+            if (parent != null) {
+                String parentDomain = resolveDomain(parent, entryMap);
+                if (!parentDomain.equals("未分类")) return parentDomain;
+            }
+        }
+        return "未分类";
+    }
+
     private void writeNode(XWPFDocument doc, DataEntry entry, String number, int level,
                            Map<Long, List<DataEntry>> childrenByParent,
-                           Long recordId, int[] progressCounter, int totalSize, String docType, Boolean includeImages) {
+                           Long recordId, int[] progressCounter, int totalSize, String docType, Boolean includeImages, Boolean compressImages) {
+        if (isCancelled(recordId)) return;
+
         int docLevel = Math.min(level, MAX_HEADING_LEVEL);
         String name = extractName(entry.getColProductSystem());
         addNumberedHeading(doc, name, docLevel, number);
@@ -342,7 +405,7 @@ public class DocumentService {
         String desc = "bid".equals(docType) ? entry.getColBidParamDesc() : entry.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
             if (Boolean.TRUE.equals(includeImages)) {
-                processDescriptionWithImages(doc, desc);
+                processDescriptionWithImages(doc, desc, compressImages);
             } else {
                 processDescriptionTextOnly(doc, desc);
             }
@@ -351,12 +414,15 @@ public class DocumentService {
         progressCounter[0]++;
         updateGenRecordProgress(recordId, progressCounter[0], totalSize);
 
+        if (isCancelled(recordId)) return;
+
         List<DataEntry> children = childrenByParent.get(entry.getId());
         if (children != null) {
             children.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
             for (int i = 0; i < children.size(); i++) {
+                if (isCancelled(recordId)) return;
                 String childNumber = number + "." + (i + 1);
-                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize, docType, includeImages);
+                writeNode(doc, children.get(i), childNumber, level + 1, childrenByParent, recordId, progressCounter, totalSize, docType, includeImages, compressImages);
             }
         }
     }
@@ -387,7 +453,7 @@ public class DocumentService {
         }
     }
 
-    private void processDescriptionWithImages(XWPFDocument doc, String description) {
+    private void processDescriptionWithImages(XWPFDocument doc, String description, Boolean compressImages) {
         String normalized = normalizeImageCards(description);
         List<String> parts = new ArrayList<>();
         Matcher matcher = URL_PATTERN.matcher(normalized);
@@ -470,13 +536,13 @@ public class DocumentService {
                                 int ri = consecutiveUrls.indexOf(url);
                                 runImgs.add(groupImages.get(ri));
                             }
-                            insertImageGrid(doc, runImgs, run);
+                            insertImageGrid(doc, runImgs, run, compressImages);
                         } else {
                             String url = run.get(0);
                             int ri = consecutiveUrls.indexOf(url);
                             ImageData imgData = groupImages.get(ri);
                             if (imgData != null) {
-                                insertSingleImage(doc, url, imgData);
+                                insertSingleImage(doc, url, imgData, compressImages);
                             } else {
                                 insertFallbackImage(doc);
                             }
@@ -486,7 +552,7 @@ public class DocumentService {
                     String url = consecutiveUrls.get(0);
                     ImageData imgData = downloadAndProcessImage(url);
                     if (imgData != null) {
-                        insertSingleImage(doc, url, imgData);
+                        insertSingleImage(doc, url, imgData, compressImages);
                     } else {
                         insertFallbackImage(doc);
                     }
@@ -685,6 +751,67 @@ public class DocumentService {
         }
     }
 
+    private byte[] compressImage(byte[] imageData, int targetWidth, int targetHeight, int pictureType) {
+        try {
+            BufferedImage original = ImageIO.read(new ByteArrayInputStream(imageData));
+            if (original == null) return null;
+            if (original.getWidth() <= targetWidth && original.getHeight() <= targetHeight) return null;
+
+            int newW = Math.min(targetWidth, original.getWidth());
+            int newH = Math.min(targetHeight, original.getHeight());
+            double ratioW = (double) targetWidth / original.getWidth();
+            double ratioH = (double) targetHeight / original.getHeight();
+            double ratio = Math.min(ratioW, ratioH);
+            newW = (int) (original.getWidth() * ratio);
+            newH = (int) (original.getHeight() * ratio);
+            if (newW < 1) newW = 1;
+            if (newH < 1) newH = 1;
+
+            java.awt.Graphics2D g;
+            if (pictureType == XWPFDocument.PICTURE_TYPE_PNG) {
+                BufferedImage scaled = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
+                g = scaled.createGraphics();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.drawImage(original, 0, 0, newW, newH, null);
+                g.dispose();
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ImageIO.write(scaled, "png", out);
+                return out.toByteArray();
+            } else {
+                BufferedImage scaled = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_RGB);
+                g = scaled.createGraphics();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(java.awt.Color.WHITE);
+                g.fillRect(0, 0, newW, newH);
+                g.drawImage(original, 0, 0, newW, newH, null);
+                g.dispose();
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                var writers = ImageIO.getImageWritersByFormatName("jpg");
+                if (writers.hasNext()) {
+                    var writer = writers.next();
+                    javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
+                    param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+                    param.setCompressionQuality(0.92f);
+                    var ios = ImageIO.createImageOutputStream(out);
+                    writer.setOutput(ios);
+                    writer.write(null, new javax.imageio.IIOImage(scaled, null, null), param);
+                    writer.dispose();
+                    ios.close();
+                } else {
+                    ImageIO.write(scaled, "jpg", out);
+                }
+                return out.toByteArray();
+            }
+        } catch (Exception e) {
+            log.debug("Image compression failed, using original", e);
+            return null;
+        }
+    }
+
     private String[] buildUrlCandidates(String rawUrl) {
         List<String> candidates = new ArrayList<>();
         candidates.add(rawUrl);
@@ -731,7 +858,7 @@ public class DocumentService {
         return candidates.toArray(new String[0]);
     }
 
-    private void insertSingleImage(XWPFDocument doc, String url, ImageData imgData) {
+    private void insertSingleImage(XWPFDocument doc, String url, ImageData imgData, Boolean compressImages) {
         try {
             double targetWidthPx, targetHeightPx;
             if (imgData.height > imgData.width * PORTRAIT_RATIO) {
@@ -747,11 +874,23 @@ public class DocumentService {
             int widthEMU = (int) (targetWidthPx * 9525);
             int heightEMU = (int) (targetHeightPx * 9525);
 
+            byte[] imageDataToEmbed = imgData.data;
+            int pictureTypeToEmbed = imgData.pictureType;
+            if (Boolean.TRUE.equals(compressImages)) {
+                byte[] compressed = compressImage(imgData.data, (int) (targetWidthPx * COMPRESS_DPI_RATIO), (int) (targetHeightPx * COMPRESS_DPI_RATIO), imgData.pictureType);
+                if (compressed != null) {
+                    imageDataToEmbed = compressed;
+                    if (imgData.pictureType != XWPFDocument.PICTURE_TYPE_PNG) {
+                        pictureTypeToEmbed = XWPFDocument.PICTURE_TYPE_JPEG;
+                    }
+                }
+            }
+
             XWPFParagraph para = doc.createParagraph();
             para.setAlignment(ParagraphAlignment.CENTER);
             para.setIndentationFirstLine(420);
             XWPFRun run = para.createRun();
-            run.addPicture(new ByteArrayInputStream(imgData.data), imgData.pictureType,
+            run.addPicture(new ByteArrayInputStream(imageDataToEmbed), pictureTypeToEmbed,
                     "image", widthEMU, heightEMU);
 
             String filename = extractFilenameFromUrl(url);
@@ -769,7 +908,7 @@ public class DocumentService {
         }
     }
 
-    private void insertImageGrid(XWPFDocument doc, List<ImageData> images, List<String> urls) {
+    private void insertImageGrid(XWPFDocument doc, List<ImageData> images, List<String> urls, Boolean compressImages) {
         int numCols = Math.min(images.size(), 3);
         int numRows = (int) Math.ceil((double) images.size() / numCols);
 
@@ -808,8 +947,19 @@ public class DocumentService {
                     int heightEMU = (int) (targetHeightPx * 9525);
 
                     try {
+                        byte[] dataToEmbed = img.data;
+                        int pType = img.pictureType;
+                        if (Boolean.TRUE.equals(compressImages)) {
+                            byte[] compressed = compressImage(img.data, (int) (targetWidthPx * COMPRESS_DPI_RATIO), (int) (targetHeightPx * COMPRESS_DPI_RATIO), img.pictureType);
+                            if (compressed != null) {
+                                dataToEmbed = compressed;
+                                if (img.pictureType != XWPFDocument.PICTURE_TYPE_PNG) {
+                                    pType = XWPFDocument.PICTURE_TYPE_JPEG;
+                                }
+                            }
+                        }
                         XWPFRun run = cellPara.createRun();
-                        run.addPicture(new ByteArrayInputStream(img.data), img.pictureType,
+                        run.addPicture(new ByteArrayInputStream(dataToEmbed), pType,
                                 "image", widthEMU, heightEMU);
                     } catch (Exception e) {
                         log.warn("Failed to insert grid image", e);

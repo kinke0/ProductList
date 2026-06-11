@@ -119,15 +119,66 @@
           <el-button @click="resetFixIdStatus" :disabled="fixIdStatus.status === 'RUNNING'">重置状态</el-button>
         </div>
       </el-tab-pane>
+      <el-tab-pane label="SQL脚本执行" name="sql">
+        <div class="section-desc">
+          <el-alert type="danger" :closable="false" show-icon>
+            <template #title>警告：此功能可直接执行数据库变更操作，请在明确了解SQL语句含义后再执行</template>
+          </el-alert>
+        </div>
+        <div class="sql-upload-row">
+          <el-upload :auto-upload="false" :show-file-list="false" accept=".sql" @change="handleSqlFileUpload">
+            <el-button type="default">
+              <el-icon><Upload /></el-icon> 上传SQL脚本
+            </el-button>
+          </el-upload>
+        </div>
+        <el-input
+          v-model="sqlText"
+          type="textarea"
+          :rows="12"
+          placeholder="请输入SQL语句，多条语句用分号分隔..."
+          class="sql-editor"
+        />
+        <div class="actions">
+          <el-button type="primary" :loading="sqlExecuting" @click="startExecuteSql">执行SQL</el-button>
+          <el-button @click="clearSql">清空</el-button>
+        </div>
+        <div v-if="sqlResults.length > 0" class="sql-results">
+          <h4>执行结果 ({{ sqlResults.length }} 条语句)</h4>
+          <div v-for="result in sqlResults" :key="result.index" class="sql-result-card" :class="{ 'sql-result-error-card': !result.success }">
+            <div class="sql-result-card-header">
+              <el-tag :type="result.success ? 'success' : 'danger'" size="small" class="sql-result-tag">
+                #{{ result.index }} {{ result.success ? '成功' : '失败' }}
+              </el-tag>
+              <span class="sql-result-stmt">{{ result.statement }}</span>
+              <span class="sql-result-meta">
+                <template v-if="result.success">
+                  <span v-if="result.columns && result.columns.length">{{ result.affectedRows }} 行</span>
+                  <span v-else-if="result.affectedRows >= 0">影响 {{ result.affectedRows }} 行</span>
+                </template>
+                <span>{{ result.durationMs }}ms</span>
+              </span>
+            </div>
+            <div v-if="!result.success" class="sql-result-error-msg">{{ result.message }}</div>
+            <div v-if="result.columns && result.columns.length > 0" class="sql-result-table-wrap">
+              <el-table :data="result.rows" size="small" border stripe max-height="350">
+                <el-table-column v-for="(col, ci) in result.columns" :key="ci" :label="col" :width="colWidth(col)" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row[ci] }}</template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration, syncFilenames, getFilenameSyncStatus, resetFilenameSync, fixImageCardIds, getFixIdStatus, resetFixId } from '../../api/maintenance'
+import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration, syncFilenames, getFilenameSyncStatus, resetFilenameSync, fixImageCardIds, getFixIdStatus, resetFixId, executeSql } from '../../api/maintenance'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleCheckFilled, CircleCloseFilled, Loading, Clock } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, Loading, Clock, Upload } from '@element-plus/icons-vue'
 
 const activeTab = ref('auto')
 const running = ref(false)
@@ -427,6 +478,55 @@ function stopFixIdPolling() {
   }
 }
 
+const sqlText = ref('')
+const sqlExecuting = ref(false)
+const sqlResults = ref([])
+
+function handleSqlFileUpload(uploadFile) {
+  const file = uploadFile.raw
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    sqlText.value = e.target.result
+  }
+  reader.readAsText(file)
+}
+
+function clearSql() {
+  sqlText.value = ''
+  sqlResults.value = []
+}
+
+function colWidth(col) {
+  return col.length > 20 ? 200 : col.length > 10 ? 150 : 120
+}
+
+async function startExecuteSql() {
+  if (!sqlText.value.trim()) {
+    ElMessage.warning('请输入SQL语句')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '确认执行以下SQL语句吗？此操作将直接修改数据库，可能无法撤销。',
+      '确认执行SQL',
+      { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  sqlExecuting.value = true
+  try {
+    const res = await executeSql(sqlText.value)
+    if (res.data) {
+      sqlResults.value = res.data
+    }
+    ElMessage.success('SQL执行完成')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '执行失败')
+  } finally {
+    sqlExecuting.value = false
+  }
+}
+
 onMounted(() => {
   fetchStatus()
   fetchSyncStatus()
@@ -467,4 +567,20 @@ onUnmounted(() => {
 .step-card-message { font-size: 12px; color: var(--si-text-secondary); margin-bottom: 4px; }
 .step-card-duration { font-size: 11px; color: var(--si-text-muted); margin-bottom: 8px; }
 .step-card-actions { display: flex; gap: 8px; }
+.sql-upload-row { margin-bottom: 12px; }
+.sql-editor { margin-bottom: 12px; }
+.sql-editor :deep(textarea) { font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; }
+.sql-results { margin-top: 16px; }
+.sql-results h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--si-text-primary); }
+.sql-result-card {
+  border: 1px solid var(--si-border); border-radius: 6px; padding: 10px 14px;
+  margin-bottom: 10px; background: var(--si-bg-card);
+}
+.sql-result-error-card { border-color: #f56c6c; background: #fef0f0; }
+.sql-result-card-header { display: flex; align-items: center; gap: 10px; }
+.sql-result-tag { flex-shrink: 0; }
+.sql-result-stmt { font-size: 12px; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; color: var(--si-text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sql-result-meta { font-size: 12px; color: var(--si-text-muted); white-space: nowrap; display: flex; gap: 8px; }
+.sql-result-error-msg { font-size: 12px; color: #f56c6c; margin-top: 6px; word-break: break-all; }
+.sql-result-table-wrap { margin-top: 10px; }
 </style>

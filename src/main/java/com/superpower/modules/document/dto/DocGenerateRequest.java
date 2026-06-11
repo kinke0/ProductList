@@ -13,4 +13,5 @@ public class DocGenerateRequest {
     private List<Long> entryIds;
     private Long customTabId;
     private Boolean includeImages = true;
+    private Boolean compressImages = false;
 }

@@ -103,6 +103,13 @@
               @click="onFixHierarchy">
               <el-icon><Fold /></el-icon>修复层级
             </el-button>
+            <el-button
+              v-if="props.isEditing"
+              type="primary" size="small" plain
+              :disabled="selectedIds.length === 0"
+              @click="openRenumberDialog">
+              <el-icon><Sort /></el-icon>编码重排序
+            </el-button>
       </div>
     </div>
 
@@ -121,11 +128,11 @@
            <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll" size="small" />
          </div>
        </div>
-        <div class="vcol" style="min-width:200px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ productCount }}个产品 / {{ totalEntryCount }}条记录</span></div>
-       <div class="vcol" style="width:80px;">审批</div>
-       <div class="vcol" style="width:80px;">状态</div>
-       <div class="vcol" style="width:100px;">产品经理</div>
-       <div class="vcol" style="width:180px;">版本划分</div>
+         <div class="vcol" style="min-width:160px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ productCount }}个产品 / {{ totalEntryCount }}条记录</span></div>
+        <div class="vcol" style="width:80px;">审批</div>
+        <div class="vcol" style="width:80px;">状态</div>
+        <div class="vcol" style="width:100px;">产品经理</div>
+        <div class="vcol" style="width:220px;">版本划分</div>
        <div class="vcol" style="width:240px;">操作</div>
     </div>
     <RecycleScroller
@@ -154,7 +161,7 @@
             </div>
           </template>
         </div>
-        <div class="vcol vcol-name" style="min-width:200px;flex:1;">
+        <div class="vcol vcol-name" style="min-width:160px;flex:1;">
           <span v-if="!row._isSeparator" class="product-cell" :style="{ paddingLeft: ((row.level || 3) - 3) * 20 + 4 + 'px' }">
             <span
               v-if="row.children && row.children.length > 0"
@@ -179,11 +186,18 @@
         <div class="vcol vcol-ellipsis" style="width:100px;">
           <span v-if="!row._isSeparator">{{ row.colProductManager }}</span>
         </div>
-        <div class="vcol" style="width:180px;">
+        <div class="vcol" style="width:220px;">
           <div v-if="!row._isSeparator" class="version-inline">
-            <el-checkbox :model-value="hasVer(row, 'A-曜系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'A-曜系列')" size="small">曜</el-checkbox>
-            <el-checkbox :model-value="hasVer(row, 'B-远系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'B-远系列')" size="small">远</el-checkbox>
-            <el-checkbox :model-value="hasVer(row, 'C-驰系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'C-驰系列')" size="small">驰</el-checkbox>
+            <span :class="['ver-cell', { 'ver-min-badge': row.colYao === '是' }]">
+              <el-checkbox :model-value="hasVer(row, 'A-曜系列')" :disabled="!props.isEditing || hasVer(row, '非标配系统')" @change="toggleVer(row, 'A-曜系列')" size="small">曜</el-checkbox>
+            </span>
+            <span :class="['ver-cell', { 'ver-min-badge': row.colYuan === '是' }]">
+              <el-checkbox :model-value="hasVer(row, 'B-远系列')" :disabled="!props.isEditing || hasVer(row, '非标配系统')" @change="toggleVer(row, 'B-远系列')" size="small">远</el-checkbox>
+            </span>
+            <span :class="['ver-cell', { 'ver-min-badge': row.colChi === '是' }]">
+              <el-checkbox :model-value="hasVer(row, 'C-驰系列')" :disabled="!props.isEditing || hasVer(row, '非标配系统')" @change="toggleVer(row, 'C-驰系列')" size="small">驰</el-checkbox>
+            </span>
+            <el-checkbox :model-value="hasVer(row, '非标配系统')" :disabled="!props.isEditing || hasVer(row, 'A-曜系列') || hasVer(row, 'B-远系列') || hasVer(row, 'C-驰系列')" @change="toggleVer(row, '非标配系统')" size="small">非标配</el-checkbox>
           </div>
         </div>
         <div class="vcol vcol-ops" style="width:240px;">
@@ -286,15 +300,15 @@
             <el-form-item label="版本划分">
               <div class="version-options">
                 <div class="version-row">
-                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing || verNonStd">A-曜系列</el-checkbox>
+                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYao = false }">A-曜系列</el-checkbox>
                   <el-checkbox v-if="verYao" v-model="minYao" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
-                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing || verNonStd">B-远系列</el-checkbox>
+                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYuan = false }">B-远系列</el-checkbox>
                   <el-checkbox v-if="verYuan" v-model="minYuan" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
-                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing || verNonStd">C-驰系列</el-checkbox>
+                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minChi = false }">C-驰系列</el-checkbox>
                   <el-checkbox v-if="verChi" v-model="minChi" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
                 </div>
                 <div class="version-row">
@@ -496,14 +510,43 @@
         </el-timeline>
         <div v-else style="color:#909399;text-align:center;padding:20px 0;">暂无审批记录</div>
       </el-dialog>
+      <el-dialog v-model="renumberVisible" title="编码重排序" width="680px" :close-on-click-modal="false">
+        <el-alert v-if="renumberItems.length === 0" type="warning" :closable="false" show-icon>
+          <template #title>请先在清单中勾选产品级别(L3)的条目</template>
+        </el-alert>
+        <div v-else>
+          <el-table :data="renumberItems" size="small" border stripe max-height="400">
+            <el-table-column label="当前编码名称" min-width="180">
+              <template #default="{ row }">
+                <span style="font-size:12px;color:#909399;">{{ row.currentLabel }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="新编码" width="150">
+              <template #default="{ row }">
+                <el-input v-model="row.newPrefix" size="small" placeholder="如 1.2.1" />
+                <div v-if="row.prefixError" style="color:#f56c6c;font-size:11px;margin-top:2px;">{{ row.prefixError }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="新名称" min-width="150">
+              <template #default="{ row }">
+                <el-input v-model="row.newName" size="small" placeholder="名称" />
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <template #footer>
+          <el-button @click="renumberVisible = false">取消</el-button>
+          <el-button type="primary" :loading="renumberLoading" :disabled="renumberItems.length === 0 || renumberHasError" @click="doRenumber">确认重排序</el-button>
+        </template>
+      </el-dialog>
       </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry, renumberEntries } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning, Sort } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
@@ -570,6 +613,9 @@ const l2Options = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
 const fixingHierarchy = ref(false)
+const renumberVisible = ref(false)
+const renumberLoading = ref(false)
+const renumberItems = ref([])
 const imgPreviewUrl = ref('')
 const editorRef = ref(null)
 
@@ -714,21 +760,24 @@ watch(showEditDialog, (val) => {
        let detectedSortEnd = false
 
        const entry = displayData.value[clampedIdx]
-       if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
-         targetIdx = clampedIdx
-         const rowLevel = entry.level || 3
-         const baseIndent = 54 + (rowLevel - 3) * 20
-         const baseX = scrollerRect.left + baseIndent
-         const mouseRelX = ev.clientX - baseX
-         if (mouseRelX < -40) {
-           detectedMode = 'sibling'
-           detectedSiblingId = entry.id
-         } else if (mouseRelX > 40) {
-           detectedMode = 'nest'
-           detectedNestId = entry.id
-         } else {
-           detectedMode = 'sort'
-         }
+        if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
+          targetIdx = clampedIdx
+          const rowLevel = entry.level || 3
+          const baseIndent = 54 + (rowLevel - 3) * 20
+          const baseX = scrollerRect.left + baseIndent
+          const mouseRelX = ev.clientX - baseX
+          if (mouseRelX < -40) {
+            detectedMode = 'sibling'
+            detectedSiblingId = entry.id
+          } else if (mouseRelX > 40) {
+            detectedMode = 'nest'
+            detectedNestId = entry.id
+          } else {
+            detectedMode = 'sort'
+            if (rawIdx >= displayData.value.length) {
+              detectedSortEnd = true
+            }
+          }
        } else if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx === dragState.sourceIndex) {
          // 鼠标在源行上，不改变target
        } else {
@@ -874,18 +923,18 @@ watch(showEditDialog, (val) => {
       const indent = baseIndent + 20
       indicator.style.left = (scrollerRect.left + indent) + 'px'
       indicator.style.width = (scrollerRect.width - indent) + 'px'
-      indicator.style.top = (rowTop + itemSize - 1) + 'px'
+      indicator.style.top = (rowTop - 1) + 'px'
       indicator.style.background = '#E6A23C'
     } else if (dragState.mode === 'sibling') {
       const indent = Math.max(0, baseIndent - 20)
       indicator.style.left = (scrollerRect.left + indent) + 'px'
       indicator.style.width = (scrollerRect.width - indent) + 'px'
-      indicator.style.top = (rowTop + itemSize - 1) + 'px'
+      indicator.style.top = (rowTop - 1) + 'px'
       indicator.style.background = '#67C23A'
     } else {
       indicator.style.left = (scrollerRect.left + baseIndent) + 'px'
       indicator.style.width = (scrollerRect.width - baseIndent) + 'px'
-      indicator.style.top = (rowTop + itemSize - 1) + 'px'
+      indicator.style.top = dragState.sortEnd ? (rowTop + itemSize - 1) + 'px' : (rowTop - 1) + 'px'
     }
 
     document.body.appendChild(indicator)
@@ -1051,11 +1100,21 @@ function hasVer(row, ver) {
 async function toggleVer(row, ver) {
   const parts = (row.colVersionDivision || '').split(' ').filter(Boolean)
   const idx = parts.indexOf(ver)
-  if (idx >= 0) parts.splice(idx, 1)
-  else parts.push(ver)
+  if (idx >= 0) {
+    parts.splice(idx, 1)
+    if (ver === 'A-曜系列') row.colYao = '否'
+    if (ver === 'B-远系列') row.colYuan = '否'
+    if (ver === 'C-驰系列') row.colChi = '否'
+  } else {
+    parts.push(ver)
+  }
   row.colVersionDivision = parts.join(' ')
-   await updateEntry(row.id, { colVersionDivision: row.colVersionDivision })
-   handleQuery(true)
+  const update = { colVersionDivision: row.colVersionDivision }
+  if (ver === 'A-曜系列') update.colYao = row.colYao
+  if (ver === 'B-远系列') update.colYuan = row.colYuan
+  if (ver === 'C-驰系列') update.colChi = row.colChi
+  await updateEntry(row.id, update)
+  handleQuery(true)
 }
 
 const approvalRole = computed(() => {
@@ -1896,7 +1955,6 @@ function onL2Change(val) {
     } else {
       newSet.add(row.id)
       for (const id of collectDescendantIds(row)) newSet.add(id)
-      for (const id of collectAncestorIds(row)) newSet.add(id)
       manuallySelectedIds.value.add(row.id)
     }
     selectedIds.value = [...newSet]
@@ -1966,7 +2024,7 @@ function onInsertClick() {
   }
   if (inserting.value) return
   inserting.value = true
-  emit('insertToList', [...selectedIds.value])
+  emit('insertToList', collectFullBranch())
 }
 
 function onRemoveClick() {
@@ -2032,6 +2090,93 @@ async function onFixHierarchy() {
     ElMessage.error('修复层级失败')
   } finally {
     fixingHierarchy.value = false
+  }
+}
+
+function extractNumberPrefix(name) {
+  if (!name) return ''
+  const m = name.match(/^[\d.]+/)
+  return m ? m[0].replace(/\.$/, '') : ''
+}
+
+function stripNumberPrefix(name) {
+  if (!name) return ''
+  return name.replace(/^[\d.]+\s*/, '').trim()
+}
+
+function extractL2Prefix(row) {
+  const domain = row.colBizDomain || ''
+  const prefix = extractNumberPrefix(domain)
+  const segs = prefix.split('.')
+  return segs.length >= 2 ? segs[0] + '.' + segs[1] : prefix
+}
+
+const renumberHasError = computed(() => renumberItems.value.some(r => !!r.prefixError))
+
+function openRenumberDialog() {
+  const l3Rows = displayData.value.filter(r => !r._isSeparator && selectedIds.value.includes(r.id) && r.level === 3)
+  if (l3Rows.length === 0) {
+    ElMessage.warning('请先勾选产品级别(L3)的条目')
+    return
+  }
+  renumberItems.value = l3Rows.map(row => {
+    const prefix = extractNumberPrefix(row.colProductSystem || '')
+    const name = stripNumberPrefix(row.colProductSystem || '')
+    return reactive({
+      entryId: row.id,
+      currentLabel: row.colProductSystem || '',
+      newPrefix: prefix,
+      newName: name,
+      l2Prefix: extractL2Prefix(row),
+      prefixError: ''
+    })
+  })
+  renumberVisible.value = true
+}
+
+watch(() => renumberItems, () => {
+  for (const item of renumberItems.value) {
+    if (item.newPrefix && !item.newPrefix.startsWith(item.l2Prefix)) {
+      item.prefixError = `前两段必须为 ${item.l2Prefix}`
+    } else {
+      item.prefixError = ''
+    }
+  }
+}, { deep: true })
+
+async function doRenumber() {
+  for (const item of renumberItems.value) {
+    if (!item.newPrefix.trim()) {
+      ElMessage.warning('编码不能为空')
+      return
+    }
+    if (item.prefixError) {
+      ElMessage.warning(item.prefixError)
+      return
+    }
+  }
+  try {
+    await ElMessageBox.confirm(
+      '确认执行编码重排序？将修改选中条目及其所有子节点的编码，此操作不可撤销。',
+      '确认重排序',
+      { confirmButtonText: '确认执行', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  renumberLoading.value = true
+  try {
+    const items = renumberItems.value.map(r => ({
+      entryId: r.entryId,
+      newPrefix: r.newPrefix.trim(),
+      newName: r.newName.trim()
+    }))
+    await renumberEntries(items)
+    ElMessage.success('编码重排序完成')
+    renumberVisible.value = false
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '编码重排序失败')
+  } finally {
+    renumberLoading.value = false
   }
 }
 
@@ -2609,7 +2754,9 @@ watch(() => props.versionId, () => {
 .op-btn:hover { text-decoration: underline; }
 .product-cell { display: inline-flex; align-items: center; gap: 4px; width: 100%; }
 .product-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.version-inline { display: flex; gap: 2px; white-space: nowrap; }
+.version-inline { display: flex; gap: 2px; white-space: nowrap; align-items: center; }
+.ver-cell { display: inline-flex; padding: 1px 6px; border: 1.5px solid transparent; border-radius: 6px; align-items: center; }
+.ver-min-badge { border-color: #67C23A; background: rgba(103, 194, 58, 0.08); }
 .record-count { color: #8f959e; font-size: 12px; margin-left: auto; white-space: nowrap; flex-shrink: 0; padding-right: 4px; }
 .level-tag { margin: 0 6px; vertical-align: middle; }
 .feature-editor { width: 100%; }

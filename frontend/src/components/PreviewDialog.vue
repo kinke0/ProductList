@@ -106,34 +106,10 @@ async function loadPreview(timestamp) {
   }
 }
 
-async function downloadPreview() {
-  if (!props.entryId || downloadLoading.value) return
-  downloadLoading.value = true
-  try {
-    const token = localStorage.getItem('token')
-    const resp = await fetch(`/api/data/${props.entryId}/preview-download?mode=${previewMode.value}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    if (!resp.ok) {
-      ElMessage.error('生成失败')
-      return
-    }
-    const blob = await resp.blob()
-    const disposition = resp.headers.get('Content-Disposition')
-    let filename = '预览文档.docx'
-    if (disposition) {
-      const match = disposition.match(/filename\*?=(?:UTF-8'')?(.+)/i)
-      if (match) filename = decodeURIComponent(match[1].replace(/['"]/g, ''))
-    }
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = filename; a.click()
-    URL.revokeObjectURL(url)
-  } catch {
-    ElMessage.error('下载失败')
-  } finally {
-    downloadLoading.value = false
-  }
+function downloadPreview() {
+  if (!props.entryId) return
+  const token = localStorage.getItem('token')
+  window.open(`/api/data/${props.entryId}/preview-download?mode=${previewMode.value}&access_token=${token}`, '_blank')
 }
 
 function findNearestHeadingId() {

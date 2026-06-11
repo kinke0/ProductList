@@ -1,9 +1,11 @@
 package com.superpower.modules.document.controller;
 
+import com.superpower.common.AuthUtils;
 import com.superpower.common.Result;
 import com.superpower.modules.document.dto.DocGenerateRequest;
 import com.superpower.modules.document.entity.DocGenRecord;
 import com.superpower.modules.document.service.DocumentService;
+import com.superpower.modules.system.service.OperationLogService;
 import com.superpower.modules.system.service.SysUserService;
 import jakarta.validation.Valid;
 import org.springframework.core.io.FileSystemResource;
@@ -26,10 +28,12 @@ public class DocumentController {
 
     private final DocumentService documentService;
     private final SysUserService sysUserService;
+    private final OperationLogService logService;
 
-    public DocumentController(DocumentService documentService, SysUserService sysUserService) {
+    public DocumentController(DocumentService documentService, SysUserService sysUserService, OperationLogService logService) {
         this.documentService = documentService;
         this.sysUserService = sysUserService;
+        this.logService = logService;
     }
 
     @PostMapping("/generate")
@@ -60,7 +64,8 @@ public class DocumentController {
             try {
                 documentService.generateAndSaveDocument(
                         recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId,
-                        request.getIncludeImages() != null ? request.getIncludeImages() : true);
+                        request.getIncludeImages() != null ? request.getIncludeImages() : true,
+                        request.getCompressImages() != null && request.getCompressImages());
             } catch (Exception e) {
                 try {
                     documentService.updateGenRecordError(recordId, e.getMessage());
@@ -70,6 +75,9 @@ public class DocumentController {
             }
         }).start();
 
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "GENERATE", "文档生成", "生成" + ("word".equals(request.getFormat()) ? "Word" : "Excel") + "文档: " + request.getDocName(),
+                record.getId(), "DocGenRecord");
         return Result.success(record);
     }
 

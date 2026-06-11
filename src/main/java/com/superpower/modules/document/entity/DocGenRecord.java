@@ -51,6 +51,9 @@ public class DocGenRecord {
     @Column(name = "processed_entries")
     private Integer processedEntries;
 
+    @Column(name = "compress_images")
+    private Boolean compressImages;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 

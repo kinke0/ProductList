@@ -19,11 +19,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomUserDetailsService userDetailsService;
+    private final OnlineTracker onlineTracker;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
-                                    CustomUserDetailsService userDetailsService) {
+                                    CustomUserDetailsService userDetailsService,
+                                    OnlineTracker onlineTracker) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.userDetailsService = userDetailsService;
+        this.onlineTracker = onlineTracker;
     }
 
     @Override
@@ -33,11 +36,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = extractToken(request);
         if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
             String username = jwtTokenProvider.getUsername(token);
+            Long userId = jwtTokenProvider.getUserId(token);
             UserDetails userDetails = userDetailsService.loadUserByUsername(username);
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
             SecurityContextHolder.getContext().setAuthentication(authentication);
+            onlineTracker.touch(userId);
         }
         filterChain.doFilter(request, response);
     }

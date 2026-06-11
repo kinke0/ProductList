@@ -81,6 +81,7 @@ async function loadImages() {
     const params = { includeReferenced: false }
     if (curCategory.value) params.category = curCategory.value
     if (curDomain.value) params.domain = curDomain.value
+    if (curProduct.value) params.product = curProduct.value
     if (props.versionId) params.versionId = props.versionId
     const res = await getImages(params)
     images.value = res.data || []

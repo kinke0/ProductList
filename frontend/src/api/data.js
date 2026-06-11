@@ -105,3 +105,7 @@ export function fixDataHierarchy(versionId) {
 export function previewEntry(id) {
   return request.get(`/data/${id}/preview`, { responseType: 'text' })
 }
+
+export function renumberEntries(items) {
+  return request.put('/data/renumber', { items })
+}

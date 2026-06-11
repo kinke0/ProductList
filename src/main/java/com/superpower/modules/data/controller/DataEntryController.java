@@ -1,12 +1,17 @@
 package com.superpower.modules.data.controller;
 
+import com.superpower.common.AuthUtils;
 import com.superpower.common.Result;
 import com.superpower.modules.data.dto.DataEntryDTO;
+import com.superpower.modules.data.dto.DataEntrySummaryDTO;
 import com.superpower.modules.data.dto.ExcelImportResult;
+import com.superpower.modules.data.dto.RenumberRequest;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.service.DataEntryService;
 import com.superpower.modules.document.service.DocumentService;
+import com.superpower.modules.system.service.OperationLogService;
+import com.superpower.modules.system.service.SysUserService;
 import com.superpower.modules.version.service.VersionService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -26,18 +31,28 @@ public class DataEntryController {
     private final DataEntryService dataEntryService;
     private final VersionService versionService;
     private final DocumentService documentService;
+    private final OperationLogService logService;
+    private final SysUserService sysUserService;
 
     public DataEntryController(DataEntryService dataEntryService, VersionService versionService,
-                               DocumentService documentService) {
+                               DocumentService documentService, OperationLogService logService,
+                               SysUserService sysUserService) {
         this.dataEntryService = dataEntryService;
         this.versionService = versionService;
         this.documentService = documentService;
+        this.logService = logService;
+        this.sysUserService = sysUserService;
     }
 
     private void checkVersionEditPermission(Long versionId) {
         if (!versionService.isEditable(versionId)) {
             throw new RuntimeException("已发布版本不可修改");
         }
+    }
+
+    private String entryTitle(DataEntry e) {
+        return e.getColProductSystem() != null && !e.getColProductSystem().isBlank()
+                ? e.getColProductSystem() : "#" + e.getId();
     }
 
     @GetMapping("/tree/{versionId}")
@@ -98,7 +113,7 @@ public class DataEntryController {
     }
 
     @GetMapping("/query/{versionId}")
-    public Result<List<DataEntry>> query(
+    public Result<List<DataEntrySummaryDTO>> query(
             @PathVariable Long versionId,
             @RequestParam(required = false) Long customTabId,
             @RequestParam(required = false) String name,
@@ -109,27 +124,33 @@ public class DataEntryController {
             @RequestParam(required = false) String bizCategory,
             @RequestParam(required = false) String bizDomain,
             @RequestParam(required = false) Integer level) {
-        return Result.success(dataEntryService.query(versionId, customTabId, name, status, productManager,
-                solution, versionTag, bizCategory, bizDomain, level));
+        List<DataEntry> entries = dataEntryService.query(versionId, customTabId, name, status, productManager,
+                solution, versionTag, bizCategory, bizDomain, level);
+        return Result.success(entries.stream().map(DataEntrySummaryDTO::fromEntity).toList());
     }
 
     @PostMapping
-    public Result<DataEntry> create(@RequestBody DataEntryDTO dto) {
+    public Result<DataEntry> create(@RequestBody DataEntryDTO dto, Authentication auth) {
         checkVersionEditPermission(dto.getVersionId());
-
-        return Result.success(dataEntryService.create(dto));
+        DataEntry created = dataEntryService.create(dto);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "CREATE", "数据清单", "新建: " + entryTitle(created), created.getId(), "DataEntry");
+        return Result.success(created);
     }
 
     @PostMapping("/import-excel")
     public Result<ExcelImportResult> importExcel(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("versionId") Long versionId) {
+            @RequestParam("versionId") Long versionId, Authentication auth) {
         checkVersionEditPermission(versionId);
-        return Result.success(dataEntryService.importFromExcel(file, versionId));
+        ExcelImportResult result = dataEntryService.importFromExcel(file, versionId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "IMPORT", "数据清单", "Excel导入 " + result.getSuccessRows() + " 条 (版本#" + versionId + ")");
+        return Result.success(result);
     }
 
     @PutMapping("/{id}")
-    public Result<DataEntry> update(@PathVariable Long id, @RequestBody DataEntryDTO dto) {
+    public Result<DataEntry> update(@PathVariable Long id, @RequestBody DataEntryDTO dto, Authentication auth) {
         DataEntry entry = dataEntryService.getById(id);
 
         if (entry == null) {
@@ -137,12 +158,14 @@ public class DataEntryController {
         }
 
         checkVersionEditPermission(entry.getVersionId());
-
-        return Result.success(dataEntryService.update(id, dto));
+        DataEntry updated = dataEntryService.update(id, dto);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "编辑: " + entryTitle(entry), id, "DataEntry");
+        return Result.success(updated);
     }
 
     @PutMapping("/sort")
-    public Result<Void> updateSort(@RequestBody List<Map<String, Object>> sortList) {
+    public Result<Void> updateSort(@RequestBody List<Map<String, Object>> sortList, Authentication auth) {
         for (Map<String, Object> item : sortList) {
             Object versionId = item.get("versionId");
             if (versionId != null) {
@@ -151,32 +174,40 @@ public class DataEntryController {
         }
 
         dataEntryService.updateSort(sortList);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "拖拽排序调整 " + sortList.size() + " 条");
         return Result.success();
     }
 
     @PutMapping("/reorder/{versionId}")
-    public Result<Void> reorder(@PathVariable Long versionId) {
+    public Result<Void> reorder(@PathVariable Long versionId, Authentication auth) {
         checkVersionEditPermission(versionId);
         dataEntryService.reorderAll(versionId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "全量重排序 (版本#" + versionId + ")");
         return Result.success();
     }
 
     @DeleteMapping("/dedup/{versionId}")
-    public Result<Integer> dedup(@PathVariable Long versionId) {
+    public Result<Integer> dedup(@PathVariable Long versionId, Authentication auth) {
         checkVersionEditPermission(versionId);
         int count = dataEntryService.dedupByVersion(versionId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "DELETE", "数据清单", "去重删除 " + count + " 条 (版本#" + versionId + ")");
         return Result.success(count);
     }
 
     @DeleteMapping("/dedup-deep/{versionId}")
-    public Result<Integer> dedupDeep(@PathVariable Long versionId) {
+    public Result<Integer> dedupDeep(@PathVariable Long versionId, Authentication auth) {
         checkVersionEditPermission(versionId);
         int count = dataEntryService.dedupDeep(versionId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "DELETE", "数据清单", "深度去重删除 " + count + " 条 (版本#" + versionId + ")");
         return Result.success(count);
     }
 
     @PutMapping("/{id}/level-up")
-    public Result<Void> levelUp(@PathVariable Long id) {
+    public Result<Void> levelUp(@PathVariable Long id, Authentication auth) {
         DataEntry entry = dataEntryService.getById(id);
 
         if (entry == null) {
@@ -186,11 +217,13 @@ public class DataEntryController {
         checkVersionEditPermission(entry.getVersionId());
 
         dataEntryService.levelUp(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "层级升级: " + entryTitle(entry), id, "DataEntry");
         return Result.success();
     }
 
     @PutMapping("/{id}/level-down")
-    public Result<Void> levelDown(@PathVariable Long id) {
+    public Result<Void> levelDown(@PathVariable Long id, Authentication auth) {
         DataEntry entry = dataEntryService.getById(id);
 
         if (entry == null) {
@@ -200,11 +233,13 @@ public class DataEntryController {
         checkVersionEditPermission(entry.getVersionId());
 
         dataEntryService.levelDown(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "层级降级: " + entryTitle(entry), id, "DataEntry");
         return Result.success();
     }
 
     @PutMapping("/{id}/move-to-parent")
-    public Result<Void> moveToParent(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public Result<Void> moveToParent(@PathVariable Long id, @RequestBody Map<String, Object> body, Authentication auth) {
         Long newParentId = Long.valueOf(body.get("newParentId").toString());
         DataEntry entry = dataEntryService.getById(id);
         if (entry == null) {
@@ -212,11 +247,13 @@ public class DataEntryController {
         }
         checkVersionEditPermission(entry.getVersionId());
         dataEntryService.moveToParent(id, newParentId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "移动: " + entryTitle(entry), id, "DataEntry");
         return Result.success();
     }
 
     @PutMapping("/{id}/move-to-sibling")
-    public Result<Void> moveToSibling(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public Result<Void> moveToSibling(@PathVariable Long id, @RequestBody Map<String, Object> body, Authentication auth) {
         Long targetId = Long.valueOf(body.get("targetId").toString());
         DataEntry entry = dataEntryService.getById(id);
         if (entry == null) {
@@ -224,11 +261,13 @@ public class DataEntryController {
         }
         checkVersionEditPermission(entry.getVersionId());
         dataEntryService.moveToSibling(id, targetId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "移动: " + entryTitle(entry), id, "DataEntry");
         return Result.success();
     }
 
     @DeleteMapping("/{id}")
-    public Result<Void> delete(@PathVariable Long id) {
+    public Result<Void> delete(@PathVariable Long id, Authentication auth) {
         DataEntry entry = dataEntryService.getById(id);
 
         if (entry == null) {
@@ -238,13 +277,17 @@ public class DataEntryController {
         checkVersionEditPermission(entry.getVersionId());
 
         dataEntryService.delete(id);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "DELETE", "数据清单", "删除: " + entryTitle(entry), id, "DataEntry");
         return Result.success();
     }
 
     @PostMapping("/batch-delete")
-    public Result<Void> batchDelete(@RequestParam Long versionId, @RequestBody List<Long> ids) {
+    public Result<Void> batchDelete(@RequestParam Long versionId, @RequestBody List<Long> ids, Authentication auth) {
         checkVersionEditPermission(versionId);
         dataEntryService.batchDelete(ids);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "DELETE", "数据清单", "批量删除 " + ids.size() + " 条清单");
         return Result.success();
     }
 
@@ -264,7 +307,7 @@ public class DataEntryController {
     }
 
     @PutMapping("/batch-category")
-    public Result<Integer> batchUpdateCategory(@RequestBody Map<String, Object> body) {
+    public Result<Integer> batchUpdateCategory(@RequestBody Map<String, Object> body, Authentication auth) {
         Long versionId = Long.valueOf(body.get("versionId").toString());
         checkVersionEditPermission(versionId);
         List<Long> entryIds = ((List<Number>) body.get("entryIds")).stream().map(Number::longValue).toList();
@@ -273,13 +316,34 @@ public class DataEntryController {
         Long productId = body.get("productId") != null ? Long.valueOf(body.get("productId").toString()) : null;
         Long parentId = body.get("parentId") != null ? Long.valueOf(body.get("parentId").toString()) : null;
         int count = dataEntryService.batchUpdateCategory(versionId, entryIds, categoryId, domainId, productId, parentId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "批量修改分类/域 " + count + " 条");
         return Result.success(count);
     }
 
     @PutMapping("/fix-hierarchy/{versionId}")
-    public Result<Map<String, Object>> fixDataHierarchy(@PathVariable Long versionId) {
+    public Result<Map<String, Object>> fixDataHierarchy(@PathVariable Long versionId, Authentication auth) {
         checkVersionEditPermission(versionId);
         Map<String, Object> result = dataEntryService.fixDataHierarchy(versionId);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "修复层级结构 (版本#" + versionId + ")");
         return Result.success(result);
+    }
+
+    @PutMapping("/renumber")
+    public Result<Void> renumber(@RequestBody RenumberRequest request, Authentication auth) {
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            return Result.failed("重编号列表不能为空");
+        }
+        DataEntry first = dataEntryService.getById(request.getItems().get(0).getEntryId());
+        if (first == null) {
+            return Result.failed("条目不存在");
+        }
+        Long versionId = first.getVersionId();
+        checkVersionEditPermission(versionId);
+        dataEntryService.renumberEntries(versionId, request.getItems());
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "编码重排序 (" + request.getItems().size() + "条)");
+        return Result.success();
     }
 }

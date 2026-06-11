@@ -39,3 +39,7 @@ export function getFixIdStatus() {
 export function resetFixId() {
   return request.post('/maintenance/fix-image-card-ids-reset')
 }
+
+export function executeSql(sql) {
+  return request.post('/maintenance/execute-sql', { sql })
+}
