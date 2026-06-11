@@ -966,6 +966,221 @@ public class DataEntryService {
         }
     }
 
+    @Transactional
+    public void copyEntriesToTarget(List<Long> sourceIds, Long targetId, String mode) {
+        DataEntry target = entryRepository.findById(targetId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+        ensureVersionEditable(target.getVersionId());
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("目标节点层级不能低于L3");
+        }
+
+        String targetCategory = target.getColBizCategory();
+        String targetDomain = target.getColBizDomain();
+        Long targetCategoryId = target.getCategoryId();
+        Long targetDomainId = target.getDomainId();
+
+        for (Long sourceId : sourceIds) {
+            DataEntry source = entryRepository.findById(sourceId)
+                    .orElseThrow(() -> new BusinessException("源节点不存在(id=" + sourceId + ")"));
+            if (!source.getVersionId().equals(target.getVersionId())) {
+                throw new BusinessException("源节点与目标节点不在同一版本");
+            }
+            if (isDescendant(sourceId, targetId)) {
+                throw new BusinessException("不能复制到自身子节点下");
+            }
+
+            int newLevel;
+            Long newParentId;
+            if ("child".equals(mode)) {
+                newLevel = target.getLevel() + 1;
+                newParentId = targetId;
+            } else {
+                newLevel = target.getLevel();
+                newParentId = target.getParentId() != null ? target.getParentId() : findL2Ancestor(target);
+                if (newParentId == null) {
+                    throw new BusinessException("无法确定目标的父级");
+                }
+            }
+
+            int nextSortOrder = getNextSortOrder(target.getVersionId(), newParentId, target.getSortOrder(), mode);
+
+            Map<Long, Long> idMapping = new HashMap<>();
+            DataEntry clonedRoot = source.cloneWithoutId();
+            clonedRoot.setVersionId(target.getVersionId());
+            clonedRoot.setParentId(newParentId);
+            clonedRoot.setLevel(newLevel);
+            clonedRoot.setSortOrder(nextSortOrder);
+            clonedRoot.setColBizCategory(targetCategory);
+            clonedRoot.setColBizDomain(targetDomain);
+            clonedRoot.setCategoryId(targetCategoryId);
+            clonedRoot.setDomainId(targetDomainId);
+            clonedRoot.setIsLeaf(source.getIsLeaf());
+            clonedRoot.setApprovalStatus("待提交");
+            DataEntry savedRoot = entryRepository.save(clonedRoot);
+            idMapping.put(sourceId, savedRoot.getId());
+
+            cloneDescendants(source.getVersionId(), sourceId, savedRoot.getId(), newLevel, idMapping,
+                    targetCategory, targetDomain, targetCategoryId, targetDomainId);
+
+            if ("sibling".equals(mode)) {
+                shiftSiblingsAfter(target.getVersionId(), newParentId, nextSortOrder);
+            }
+
+            if ("child".equals(mode)) {
+                target.setIsLeaf(false);
+                entryRepository.save(target);
+            }
+
+            syncEntryImageClassifications(savedRoot);
+            List<DataEntry> clonedDescendants = collectDescendantsList(savedRoot.getVersionId(), savedRoot.getId());
+            for (DataEntry d : clonedDescendants) {
+                syncEntryImageClassifications(d);
+            }
+        }
+    }
+
+    private void cloneDescendants(Long versionId, Long sourceParentId, Long newParentId, int parentLevel,
+                                  Map<Long, Long> idMapping,
+                                  String targetCategory, String targetDomain,
+                                  Long targetCategoryId, Long targetDomainId) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, sourceParentId);
+        for (DataEntry child : children) {
+            DataEntry cloned = child.cloneWithoutId();
+            cloned.setVersionId(versionId);
+            cloned.setParentId(newParentId);
+            cloned.setLevel(parentLevel + 1);
+            cloned.setColBizCategory(targetCategory);
+            cloned.setColBizDomain(targetDomain);
+            cloned.setCategoryId(targetCategoryId);
+            cloned.setDomainId(targetDomainId);
+            cloned.setIsLeaf(child.getIsLeaf());
+            cloned.setApprovalStatus("待提交");
+            DataEntry saved = entryRepository.save(cloned);
+            idMapping.put(child.getId(), saved.getId());
+            cloneDescendants(versionId, child.getId(), saved.getId(), parentLevel + 1, idMapping,
+                    targetCategory, targetDomain, targetCategoryId, targetDomainId);
+        }
+    }
+
+    private int getNextSortOrder(Long versionId, Long parentId, Integer targetSortOrder, String mode) {
+        if ("sibling".equals(mode) && targetSortOrder != null) {
+            return targetSortOrder + 1;
+        }
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        if (children.isEmpty()) return 0;
+        return children.get(children.size() - 1).getSortOrder() + 1;
+    }
+
+    private void shiftSiblingsAfter(Long versionId, Long parentId, int afterSortOrder) {
+        List<DataEntry> siblings = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        for (DataEntry s : siblings) {
+            if (s.getSortOrder() != null && s.getSortOrder() >= afterSortOrder) {
+                s.setSortOrder(s.getSortOrder() + 1);
+                entryRepository.save(s);
+            }
+        }
+    }
+
+    @Transactional
+    public void moveEntriesToTarget(List<Long> sourceIds, Long targetId, String mode) {
+        DataEntry target = entryRepository.findById(targetId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+        ensureVersionEditable(target.getVersionId());
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("目标节点层级不能低于L3");
+        }
+
+        for (Long sourceId : sourceIds) {
+            if (sourceId.equals(targetId)) {
+                throw new BusinessException("不能移动到自身");
+            }
+            if (isDescendant(sourceId, targetId)) {
+                throw new BusinessException("不能移动到自身子节点下");
+            }
+        }
+
+        String targetCategory = target.getColBizCategory();
+        String targetDomain = target.getColBizDomain();
+        Long targetCategoryId = target.getCategoryId();
+        Long targetDomainId = target.getDomainId();
+
+        for (Long sourceId : sourceIds) {
+            DataEntry source = entryRepository.findById(sourceId)
+                    .orElseThrow(() -> new BusinessException("源节点不存在(id=" + sourceId + ")"));
+            if (!source.getVersionId().equals(target.getVersionId())) {
+                throw new BusinessException("源节点与目标节点不在同一版本");
+            }
+
+            Long oldParentId = source.getParentId();
+            int oldLevel = source.getLevel();
+
+            int newLevel;
+            Long newParentId;
+            if ("child".equals(mode)) {
+                newLevel = target.getLevel() + 1;
+                newParentId = targetId;
+            } else {
+                newLevel = target.getLevel();
+                newParentId = target.getParentId() != null ? target.getParentId() : findL2Ancestor(target);
+                if (newParentId == null) {
+                    throw new BusinessException("无法确定目标的父级");
+                }
+            }
+
+            int levelDelta = newLevel - oldLevel;
+            source.setParentId(newParentId);
+            source.setLevel(newLevel);
+            source.setColBizCategory(targetCategory);
+            source.setColBizDomain(targetDomain);
+            source.setCategoryId(targetCategoryId);
+            source.setDomainId(targetDomainId);
+
+            if ("sibling".equals(mode)) {
+                source.setSortOrder(target.getSortOrder() + 1);
+                shiftSiblingsAfter(target.getVersionId(), newParentId, target.getSortOrder() + 1);
+            } else {
+                int nextSort = getNextSortOrder(target.getVersionId(), newParentId, target.getSortOrder(), mode);
+                source.setSortOrder(nextSort);
+            }
+            entryRepository.save(source);
+
+            List<DataEntry> descendants = collectDescendantsList(source.getVersionId(), sourceId);
+            for (DataEntry d : descendants) {
+                d.setLevel(d.getLevel() + levelDelta);
+                d.setColBizCategory(targetCategory);
+                d.setColBizDomain(targetDomain);
+                d.setCategoryId(targetCategoryId);
+                d.setDomainId(targetDomainId);
+                entryRepository.save(d);
+            }
+
+            if (oldParentId != null) {
+                entryRepository.findById(oldParentId).ifPresent(oldParent -> {
+                    List<DataEntry> oldChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(
+                            oldParent.getVersionId(), oldParentId);
+                    oldParent.setIsLeaf(oldChildren.isEmpty());
+                    entryRepository.save(oldParent);
+                });
+            }
+
+            if ("child".equals(mode)) {
+                target.setIsLeaf(false);
+                entryRepository.save(target);
+            } else {
+                entryRepository.findById(newParentId).ifPresent(p -> {
+                    p.setIsLeaf(false);
+                    entryRepository.save(p);
+                });
+            }
+
+            syncEntryImageClassifications(source);
+            for (DataEntry d : descendants) {
+                syncEntryImageClassifications(d);
+            }
+        }
+    }
+
     private Long findL2Ancestor(DataEntry entry) {
         DataEntry current = entry;
         while (current != null) {

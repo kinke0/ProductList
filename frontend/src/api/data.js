@@ -109,3 +109,11 @@ export function previewEntry(id) {
 export function renumberEntries(items) {
   return request.put('/data/renumber', { items })
 }
+
+export function copyEntries(sourceIds, targetId, mode) {
+  return request.post('/data/copy', { sourceIds, targetId, mode })
+}
+
+export function moveEntries(sourceIds, targetId, mode) {
+  return request.put('/data/move', { sourceIds, targetId, mode })
+}

@@ -156,7 +156,7 @@
           </template>
           <template v-else>
             <div class="check-col-inner" :style="{ paddingLeft: props.isEditing ? '22px' : '0' }">
-              <span v-if="props.isEditing" class="drag-handle" @mousedown="startDrag($event, displayData.indexOf(row))">⠿</span>
+              <span v-if="props.isEditing" class="drag-handle" @mousedown="startDrag($event, displayData.indexOf(row))" @contextmenu.prevent="showContextMenu($event, row)">⠿</span>
               <el-checkbox :model-value="selectedIds.includes(row.id)" @change="toggleSelect(row)" size="small" />
             </div>
           </template>
@@ -539,12 +539,34 @@
           <el-button type="primary" :loading="renumberLoading" :disabled="renumberItems.length === 0 || renumberHasError" @click="doRenumber">确认重排序</el-button>
         </template>
       </el-dialog>
+
+      <Teleport to="body">
+        <div v-if="ctxMenu.visible" ref="ctxMenuRef" class="ctx-menu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop>
+          <div class="ctx-menu-item" @click="onCtxCopy">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span>复制</span>
+          </div>
+          <div class="ctx-menu-item" @click="onCtxCut">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+            <span>剪切</span>
+          </div>
+          <div class="ctx-menu-sep"></div>
+          <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': !clipboard.mode || clipboard.entryIds.length === 0 }" @click="onCtxPasteSibling">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <span>粘贴到下方</span>
+          </div>
+          <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': !clipboard.mode || clipboard.entryIds.length === 0 }" @click="onCtxPasteChild">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+            <span>粘贴到下级</span>
+          </div>
+        </div>
+      </Teleport>
       </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry, renumberEntries } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry, renumberEntries, copyEntries, moveEntries } from '../api/data'
 import { updateCustomTabSort } from '../api/customTab'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning, Sort } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -604,6 +626,9 @@ const migrateProgress = ref(null)
 let migratePollTimer = null
 const importing = ref(false)
 const inserting = ref(false)
+const clipboard = reactive({ mode: null, entryIds: [] })
+const ctxMenu = reactive({ visible: false, x: 0, y: 0, row: null })
+const ctxMenuRef = ref(null)
 const fileInput = ref(null)
 const batchLoading = ref(false)
 const activeEditorTab = ref('feature')
@@ -2039,6 +2064,93 @@ function onRemoveClick() {
   emit('removeFromList', ids)
 }
 
+function showContextMenu(e, row) {
+  if (!props.isEditing) return
+  if (row._isSeparator) return
+  ctxMenu.x = e.clientX
+  ctxMenu.y = e.clientY
+  ctxMenu.row = row
+  ctxMenu.visible = true
+  nextTick(() => {
+    document.addEventListener('click', closeContextMenu, { once: true })
+    document.addEventListener('contextmenu', closeContextMenu, { once: true })
+  })
+}
+
+function closeContextMenu() {
+  ctxMenu.visible = false
+}
+
+function onCtxCopy() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先勾选条目')
+    closeContextMenu()
+    return
+  }
+  clipboard.mode = 'copy'
+  clipboard.entryIds = [...manuallySelectedIds.value]
+  closeContextMenu()
+  ElMessage.success(`已复制 ${clipboard.entryIds.length} 个节点`)
+}
+
+function onCtxCut() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先勾选条目')
+    closeContextMenu()
+    return
+  }
+  clipboard.mode = 'cut'
+  clipboard.entryIds = [...manuallySelectedIds.value]
+  closeContextMenu()
+  ElMessage.success(`已剪切 ${clipboard.entryIds.length} 个节点`)
+}
+
+async function onCtxPasteSibling() {
+  if (!clipboard.mode || clipboard.entryIds.length === 0) {
+    ElMessage.warning('剪贴板为空，请先复制或剪切')
+    closeContextMenu()
+    return
+  }
+  const targetRow = ctxMenu.row
+  if (!targetRow) { closeContextMenu(); return }
+  try {
+    const api = clipboard.mode === 'copy' ? copyEntries : moveEntries
+    await api(clipboard.entryIds, targetRow.id, 'sibling')
+    ElMessage.success('粘贴成功')
+    if (clipboard.mode === 'cut') {
+      clipboard.mode = null
+      clipboard.entryIds = []
+    }
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxPasteChild() {
+  if (!clipboard.mode || clipboard.entryIds.length === 0) {
+    ElMessage.warning('剪贴板为空，请先复制或剪切')
+    closeContextMenu()
+    return
+  }
+  const targetRow = ctxMenu.row
+  if (!targetRow) { closeContextMenu(); return }
+  try {
+    const api = clipboard.mode === 'copy' ? copyEntries : moveEntries
+    await api(clipboard.entryIds, targetRow.id, 'child')
+    ElMessage.success('粘贴成功')
+    if (clipboard.mode === 'cut') {
+      clipboard.mode = null
+      clipboard.entryIds = []
+    }
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  }
+  closeContextMenu()
+}
+
 async function onMigrateImages() {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先勾选条目')
@@ -2557,10 +2669,17 @@ watch(() => props.versionId, () => {
     handleQuery(true)
   })
 
+  function handleEscClose(e) {
+    if (e.key === 'Escape') closeContextMenu()
+  }
+  onMounted(() => {
+    document.addEventListener('keydown', handleEscClose)
+  })
   onUnmounted(() => {
     if (dragMoveHandler) document.removeEventListener('mousemove', dragMoveHandler)
     if (dragUpHandler) document.removeEventListener('mouseup', dragUpHandler)
     if (dragState.ghostEl) dragState.ghostEl.remove()
+    document.removeEventListener('keydown', handleEscClose)
   })
 
   defineExpose({
@@ -2856,5 +2975,24 @@ watch(() => props.versionId, () => {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 16px;
+}
+.ctx-menu {
+  position: fixed; z-index: 10001;
+  background: #fff; border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.06);
+  padding: 4px 0; min-width: 160px;
+  font-size: 13px; color: #303133;
+}
+.ctx-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px; cursor: pointer; transition: background 0.15s;
+}
+.ctx-menu-item:hover { background: #ecf5ff; color: var(--si-primary, #409eff); }
+.ctx-menu-item.ctx-menu-disabled {
+  color: #c0c4cc; cursor: not-allowed; pointer-events: none;
+}
+.ctx-menu-item.ctx-menu-disabled:hover { background: transparent; color: #c0c4cc; }
+.ctx-menu-sep {
+  height: 1px; background: #e4e7ed; margin: 4px 8px;
 }
 </style>

@@ -346,4 +346,42 @@ public class DataEntryController {
                 "UPDATE", "数据清单", "编码重排序 (" + request.getItems().size() + "条)");
         return Result.success();
     }
+
+    @PostMapping("/copy")
+    public Result<Void> copyEntries(@RequestBody Map<String, Object> body, Authentication auth) {
+        List<Long> sourceIds = ((List<Number>) body.get("sourceIds")).stream().map(Number::longValue).toList();
+        Long targetId = Long.valueOf(body.get("targetId").toString());
+        String mode = (String) body.get("mode");
+        if (sourceIds == null || sourceIds.isEmpty()) {
+            return Result.failed("请选择要复制的节点");
+        }
+        DataEntry target = dataEntryService.getById(targetId);
+        if (target == null) {
+            return Result.failed("目标节点不存在");
+        }
+        checkVersionEditPermission(target.getVersionId());
+        dataEntryService.copyEntriesToTarget(sourceIds, targetId, mode);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "CREATE", "数据清单", "复制 " + sourceIds.size() + " 条到" + ("child".equals(mode) ? "下级" : "下方"));
+        return Result.success();
+    }
+
+    @PutMapping("/move")
+    public Result<Void> moveEntries(@RequestBody Map<String, Object> body, Authentication auth) {
+        List<Long> sourceIds = ((List<Number>) body.get("sourceIds")).stream().map(Number::longValue).toList();
+        Long targetId = Long.valueOf(body.get("targetId").toString());
+        String mode = (String) body.get("mode");
+        if (sourceIds == null || sourceIds.isEmpty()) {
+            return Result.failed("请选择要移动的节点");
+        }
+        DataEntry target = dataEntryService.getById(targetId);
+        if (target == null) {
+            return Result.failed("目标节点不存在");
+        }
+        checkVersionEditPermission(target.getVersionId());
+        dataEntryService.moveEntriesToTarget(sourceIds, targetId, mode);
+        logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
+                "UPDATE", "数据清单", "移动 " + sourceIds.size() + " 条到" + ("child".equals(mode) ? "下级" : "下方"));
+        return Result.success();
+    }
 }
