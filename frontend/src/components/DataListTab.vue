@@ -1255,7 +1255,6 @@ async function toggleVer(row, ver) {
   const update = { colVersionDivision: row.colVersionDivision }
   if (col) update[col] = row[col]
   await updateEntry(row.id, update)
-  handleQuery(true)
 }
 
 const approvalRole = computed(() => {
