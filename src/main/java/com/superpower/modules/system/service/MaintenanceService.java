@@ -180,11 +180,18 @@ public class MaintenanceService {
         }
 
         try {
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+            try (Connection conn = dataSource.getConnection();
+                 Statement stmt = conn.createStatement()) {
+                log.info("开始备份数据库: {}", target.toAbsolutePath());
+                stmt.execute("backup to '" + target.toAbsolutePath() + "'");
+                log.info("备份完成，开始VACUUM压缩主库");
+                stmt.execute("VACUUM");
+                log.info("VACUUM完成");
+            }
             sr.setSuccessCount(1);
             sr.setMessage("备份到 " + target.getFileName());
             sr.setStatus("COMPLETED");
-        } catch (IOException e) {
+        } catch (Exception e) {
             throw new RuntimeException("数据库备份失败: " + e.getMessage());
         }
     }

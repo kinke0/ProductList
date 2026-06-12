@@ -4,6 +4,10 @@ import com.superpower.modules.customtab.entity.CustomTabEntry;
 import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
+import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
+import com.superpower.modules.category.repository.BaseCategoryRepository;
+import com.superpower.modules.category.repository.BaseDomainRepository;
 import com.superpower.modules.document.entity.DocGenRecord;
 import com.superpower.modules.document.repository.DocGenRecordRepository;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
@@ -64,6 +68,8 @@ public class DocumentService {
     private final DataEntryRepository entryRepository;
     private final DocGenRecordRepository genRecordRepository;
     private final CustomTabEntryRepository customTabEntryRepository;
+    private final BaseCategoryRepository baseCategoryRepository;
+    private final BaseDomainRepository baseDomainRepository;
     private final ConcurrentHashMap<Long, Boolean> cancelledRecords = new ConcurrentHashMap<>();
 
     @Value("${app.doc-storage-path:./generated-docs}")
@@ -73,10 +79,13 @@ public class DocumentService {
     private String imageStoragePath;
 
     public DocumentService(DataEntryRepository entryRepository, DocGenRecordRepository genRecordRepository,
-                           CustomTabEntryRepository customTabEntryRepository) {
+                           CustomTabEntryRepository customTabEntryRepository,
+                           BaseCategoryRepository baseCategoryRepository, BaseDomainRepository baseDomainRepository) {
         this.entryRepository = entryRepository;
         this.genRecordRepository = genRecordRepository;
         this.customTabEntryRepository = customTabEntryRepository;
+        this.baseCategoryRepository = baseCategoryRepository;
+        this.baseDomainRepository = baseDomainRepository;
     }
 
     private boolean isCancelled(Long recordId) {
@@ -182,7 +191,8 @@ public class DocumentService {
     }
 
     public byte[] generateDocument(String docType, String format, List<Long> entryIds, Boolean includeImages) throws Exception {
-        List<DataEntry> entries = entryRepository.findAllById(entryIds);
+        List<DataEntry> entries = new ArrayList<>(entryRepository.findAllById(entryIds));
+        entries.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
         if ("word".equals(format)) {
             return generateWord(docType, entries, null, includeImages, false);
         } else {
@@ -197,17 +207,16 @@ public class DocumentService {
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
             if (customTabId != null) {
-                log.info("按自定义清单加载: customTabId={}", customTabId);
-                List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
-                List<Long> tabEntryIds = tabEntries.stream().map(CustomTabEntry::getEntryId).collect(Collectors.toList());
-                entries = new ArrayList<>(entryRepository.findAllById(tabEntryIds));
+                log.info("按自定义清单加载: customTabId={}, versionId={}", customTabId, versionId);
+                entries = entryRepository.findEntriesByTab(versionId, customTabId);
             } else {
                 log.info("按版本加载: versionId={}", versionId);
-                entries = entryRepository.findByVersionId(versionId);
+                entries = entryRepository.findAllEntries(versionId);
             }
         } else {
             log.info("按ID列表加载: count={}", entryIds.size());
             entries = new ArrayList<>(entryRepository.findAllById(entryIds));
+            entries.sort(Comparator.comparingInt(a -> a.getSortOrder() != null ? a.getSortOrder() : 0));
         }
         int totalSize = entries.size();
         log.info("数据加载完成: recordId={}, totalSize={}", recordId, totalSize);
@@ -241,6 +250,8 @@ public class DocumentService {
 
         if (isCancelled(recordId)) {
             try { Files.deleteIfExists(filePath); } catch (Exception ignored) {}
+            log.info("任务已取消，清除标记: recordId={}", recordId);
+            cancelledRecords.remove(recordId);
             return null;
         }
 
@@ -1241,6 +1252,31 @@ public class DocumentService {
         setFontStyle(run);
     }
 
+    private Long extractVersionId(List<DataEntry> entries) {
+        return entries.stream()
+                .filter(e -> e.getVersionId() != null)
+                .map(DataEntry::getVersionId)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void sortByCategoryOrder(List<DataEntry> entries) {
+        Long versionId = extractVersionId(entries);
+        if (versionId == null) return;
+        List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+        Map<String, Integer> catOrder = new LinkedHashMap<>();
+        for (int i = 0; i < cats.size(); i++) catOrder.put(cats.get(i).getName(), i);
+        List<BaseDomain> domains = baseDomainRepository.findByVersionId(versionId);
+        domains.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+        Map<String, Integer> l2Order = new LinkedHashMap<>();
+        for (int i = 0; i < domains.size(); i++) l2Order.put(domains.get(i).getName(), i);
+        entries.sort(Comparator.comparingInt((DataEntry e) -> catOrder.getOrDefault(e.getColBizCategory(), Integer.MAX_VALUE))
+                .thenComparingInt(e -> l2Order.getOrDefault(e.getColBizDomain(), Integer.MAX_VALUE))
+                .thenComparingInt(e -> e.getLevel() != null ? e.getLevel() : 3)
+                .thenComparing(e -> e.getParentId(), Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+    }
+
     private byte[] generateExcel(String docType, List<DataEntry> entries, Long recordId) throws Exception {
         entries = entries.stream()
                 .filter(e -> e.getLevel() != null && e.getLevel() >= 3)
@@ -1268,10 +1304,12 @@ public class DocumentService {
             entryMap.put(e.getId(), e);
         }
 
+        sortByCategoryOrder(entries);
+
         LinkedHashMap<String, LinkedHashMap<String, List<DataEntry>>> grouped = new LinkedHashMap<>();
         for (DataEntry e : entries) {
-            String cat = e.getColBizCategory() != null ? e.getColBizCategory().trim() : "";
-            String dom = e.getColBizDomain() != null ? e.getColBizDomain().trim() : "";
+            String cat = resolveCategory(e, entryMap);
+            String dom = resolveDomain(e, entryMap);
             grouped.computeIfAbsent(cat, k -> new LinkedHashMap<>())
                     .computeIfAbsent(dom, k -> new ArrayList<>()).add(e);
         }
@@ -1395,29 +1433,32 @@ public class DocumentService {
         c4.setCellStyle(leftStyle);
 
         String vd = target.getColVersionDivision() != null ? target.getColVersionDivision() : "";
+        boolean isYao = vd.contains("A-曜系列");
+        boolean isChi = vd.contains("C-驰系列");
+        boolean isYuan = vd.contains("B-远系列");
 
         Cell c5 = row.createCell(5);
-        c5.setCellValue(vd.contains("A-曜系列") ? "√" : "");
+        c5.setCellValue(isYao ? "√" : "");
         c5.setCellStyle(centerStyle);
 
         Cell c6 = row.createCell(6);
-        c6.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
+        if (isYao) c6.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
         c6.setCellStyle(centerStyle);
 
         Cell c7 = row.createCell(7);
-        c7.setCellValue(vd.contains("C-驰系列") ? "√" : "");
+        c7.setCellValue(isChi ? "√" : "");
         c7.setCellStyle(centerStyle);
 
         Cell c8 = row.createCell(8);
-        c8.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
+        if (isChi) c8.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
         c8.setCellStyle(centerStyle);
 
         Cell c9 = row.createCell(9);
-        c9.setCellValue(vd.contains("B-远系列") ? "√" : "");
+        c9.setCellValue(isYuan ? "√" : "");
         c9.setCellStyle(centerStyle);
 
         Cell c10 = row.createCell(10);
-        c10.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
+        if (isYuan) c10.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
         c10.setCellStyle(centerStyle);
     }
 }

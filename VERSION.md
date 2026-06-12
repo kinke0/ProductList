@@ -17,10 +17,18 @@
 ### 系统管理
 - 非常规操作新增"版本操作"页签：将导入本地Excel、迁移图片、修复层级三个操作从产品清单工具栏迁移到非常规操作页面的独立页签中，增加版本选择器，操作界面更清晰
 - 产品清单工具栏精简：移除导入本地Excel、迁移图片、修复层级三个按钮，这些操作统一在非常规操作页面执行
+- 备份数据库修复：改用 SQLite backup to 命令替代 Files.copy，解决服务器上数据库被活跃连接占用时备份失败的问题；备份后自动 VACUUM 压缩主库，防止数据库文件体积膨胀
 
 ### 文档生成
 - 修复服务器上文档生成（Excel + Word）永远卡在 generating 状态的问题：文档生成线程池从单线程改为3线程，避免任务排队阻塞；HikariCP 增加 connection-timeout 和 leak-detection 配置；生成流程各环节添加关键日志；Excel 进度100%移到序列化完成之后；updateGenRecordSuccess 重试增强（3次→10次，间隔200ms→1s）
 - Excel生成格式调整：原来"曜系列最小集/驰系列最小集/远系列最小集"三列改为"曜/曜最小集/驰/驰最小集/远/远最小集"六列，新增的曜/驰/远列从版本划分字段判断系列归属显示√，最小集列显示是/否
+- Excel生成排序修复：自定义清单和版本全量生成改用已排序的查询方法（findEntriesByTab/findAllEntries），排序逻辑与前端一致（base_category.sortOrder → base_domain.sortOrder → level → parentId → sortOrder），不再使用编号前缀排序
+- Excel生成内容不全修复：分组时递归向上查找父节点的分类/域信息，避免条目自身分类域为空时丢失
+- Excel最小集列显示优化：系列被选中时最小集列显示"是"或"否"，系列未被选中时最小集列留空
+- Excel生成状态修复：修复删除旧生成记录后再生成时任务被误判为已取消导致卡在"生成中"的问题（cancelledRecords标记残留）；修复result为null时状态永远停留在generating的问题
+
+#### 图床管理
+- 图片目录超L3层级数据修复脚本（db_changes/V1.0.9_fix_l3_image_directory.py）：修复版本3中200条 image_resource 记录的 product/url/path 指向了深层条目而非L3产品的问题，同步更新 data_entry 描述中的URL引用，移动物理文件到正确L3目录
 
 ---
 

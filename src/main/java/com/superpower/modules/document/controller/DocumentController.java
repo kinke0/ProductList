@@ -89,6 +89,12 @@ public class DocumentController {
                     if (rec != null && !"completed".equals(rec.getStatus())) {
                         documentService.updateGenRecordSuccess(recordId, result, new java.io.File(result).length());
                     }
+                } else {
+                    DocGenRecord rec = documentService.getGenRecord(recordId);
+                    if (rec != null && "generating".equals(rec.getStatus())) {
+                        log.warn("文档生成result为null但状态仍为generating，标记为错误: recordId={}", recordId);
+                        documentService.updateGenRecordError(recordId, "生成被取消或未正常完成");
+                    }
                 }
             } catch (Exception e) {
                 log.error("文档生成任务异常: recordId={}, error={}", recordId, e.getMessage(), e);
