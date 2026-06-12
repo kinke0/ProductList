@@ -17,22 +17,29 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.File;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RestController
 @RequestMapping("/api/documents")
 public class DocumentController {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentController.class);
+    private static final AtomicInteger threadCounter = new AtomicInteger(0);
+
     private final DocumentService documentService;
     private final SysUserService sysUserService;
     private final OperationLogService logService;
-    private final ExecutorService docGenExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "doc-gen");
+    private final ExecutorService docGenExecutor = Executors.newFixedThreadPool(3, r -> {
+        Thread t = new Thread(r, "doc-gen-" + threadCounter.incrementAndGet());
         t.setDaemon(true);
         return t;
     });
@@ -67,12 +74,16 @@ public class DocumentController {
                 request.getVersionId(), request.getDocName(), request.getDocType(), request.getFormat(), entryIds, userId, displayName);
 
         Long recordId = record.getId();
+        log.info("文档生成任务提交: recordId={}, docType={}, format={}, entryCount={}, customTabId={}",
+                recordId, request.getDocType(), request.getFormat(), entryIds.size(), customTabId);
         java.util.concurrent.Future<?> future = docGenExecutor.submit(() -> {
+            log.info("文档生成任务开始执行: recordId={}", recordId);
             try {
                 String result = documentService.generateAndSaveDocument(
                         recordId, request.getDocType(), request.getFormat(), entryIds, request.getVersionId(), customTabId,
                         request.getIncludeImages() != null ? request.getIncludeImages() : true,
                         request.getCompressImages() != null && request.getCompressImages());
+                log.info("文档生成任务完成: recordId={}, result={}", recordId, result);
                 if (result != null) {
                     DocGenRecord rec = documentService.getGenRecord(recordId);
                     if (rec != null && !"completed".equals(rec.getStatus())) {
@@ -80,6 +91,7 @@ public class DocumentController {
                     }
                 }
             } catch (Exception e) {
+                log.error("文档生成任务异常: recordId={}, error={}", recordId, e.getMessage(), e);
                 try {
                     documentService.updateGenRecordError(recordId, e.getMessage());
                 } catch (Exception ex) {

@@ -374,6 +374,7 @@ public class DataEntryController {
         List<Long> sourceIds = ((List<Number>) body.get("sourceIds")).stream().map(Number::longValue).toList();
         Long targetId = Long.valueOf(body.get("targetId").toString());
         String mode = (String) body.get("mode");
+        Long customTabId = body.get("customTabId") != null ? Long.valueOf(body.get("customTabId").toString()) : null;
         if (sourceIds == null || sourceIds.isEmpty()) {
             return Result.failed("请选择要复制的节点");
         }
@@ -382,7 +383,7 @@ public class DataEntryController {
             return Result.failed("目标节点不存在");
         }
         checkVersionEditPermission(target.getVersionId());
-        dataEntryService.copyEntriesToTarget(sourceIds, targetId, mode);
+        dataEntryService.copyEntriesToTarget(sourceIds, targetId, mode, customTabId);
         logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
                 "CREATE", "数据清单", "复制 " + sourceIds.size() + " 条到" + ("child".equals(mode) ? "下级" : "下方"));
         return Result.success();
@@ -393,6 +394,7 @@ public class DataEntryController {
         List<Long> sourceIds = ((List<Number>) body.get("sourceIds")).stream().map(Number::longValue).toList();
         Long targetId = Long.valueOf(body.get("targetId").toString());
         String mode = (String) body.get("mode");
+        Long customTabId = body.get("customTabId") != null ? Long.valueOf(body.get("customTabId").toString()) : null;
         if (sourceIds == null || sourceIds.isEmpty()) {
             return Result.failed("请选择要移动的节点");
         }
@@ -401,7 +403,7 @@ public class DataEntryController {
             return Result.failed("目标节点不存在");
         }
         checkVersionEditPermission(target.getVersionId());
-        dataEntryService.moveEntriesToTarget(sourceIds, targetId, mode);
+        dataEntryService.moveEntriesToTarget(sourceIds, targetId, mode, customTabId);
         logService.record(AuthUtils.getUserId(auth, sysUserService), AuthUtils.getUsername(auth),
                 "UPDATE", "数据清单", "移动 " + sourceIds.size() + " 条到" + ("child".equals(mode) ? "下级" : "下方"));
         return Result.success();

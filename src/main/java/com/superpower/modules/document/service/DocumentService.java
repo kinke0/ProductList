@@ -106,7 +106,7 @@ public class DocumentService {
     }
 
     public void updateGenRecordSuccess(Long recordId, String filePath, long fileSize) {
-        for (int retry = 0; retry < 3; retry++) {
+        for (int retry = 0; retry < 10; retry++) {
             try {
                 Optional<DocGenRecord> opt = genRecordRepository.findById(recordId);
                 if (opt.isPresent()) {
@@ -119,17 +119,20 @@ public class DocumentService {
                     genRecordRepository.save(record);
                     cancelledRecords.remove(recordId);
                 }
+                log.info("updateGenRecordSuccess: recordId={}, filePath={}, fileSize={}", recordId, filePath, fileSize);
                 return;
             } catch (Exception e) {
-                log.warn("updateGenRecordSuccess failed (retry {}): {}", retry + 1, e.getMessage());
-                if (retry < 2) {
-                    try { Thread.sleep(200); } catch (InterruptedException ie) { return; }
+                log.warn("updateGenRecordSuccess failed (retry {}): recordId={}, error={}", retry + 1, recordId, e.getMessage());
+                if (retry < 9) {
+                    try { Thread.sleep(1000); } catch (InterruptedException ie) { return; }
                 }
             }
         }
+        log.error("updateGenRecordSuccess failed after 10 retries: recordId={}", recordId);
     }
 
     public void updateGenRecordError(Long recordId, String errorMessage) {
+        log.error("文档生成失败: recordId={}, error={}", recordId, errorMessage);
         genRecordRepository.findById(recordId).ifPresent(record -> {
             record.setErrorMessage(errorMessage);
             record.setStatus("error");
@@ -155,7 +158,7 @@ public class DocumentService {
             });
             if (processed >= total) lastSavedProgress.remove(recordId);
         } catch (Exception e) {
-            // ignored
+            log.warn("updateGenRecordProgress failed: recordId={}, processed={}, error={}", recordId, processed, e.getMessage());
         }
     }
 
@@ -190,19 +193,24 @@ public class DocumentService {
     public String generateAndSaveDocument(Long recordId, String docType, String format,
                                           List<Long> entryIds, Long versionId, Long customTabId,
                                           Boolean includeImages, Boolean compressImages) throws Exception {
+        log.info("generateAndSaveDocument开始: recordId={}, docType={}, format={}", recordId, docType, format);
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
             if (customTabId != null) {
+                log.info("按自定义清单加载: customTabId={}", customTabId);
                 List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
                 List<Long> tabEntryIds = tabEntries.stream().map(CustomTabEntry::getEntryId).collect(Collectors.toList());
                 entries = new ArrayList<>(entryRepository.findAllById(tabEntryIds));
             } else {
+                log.info("按版本加载: versionId={}", versionId);
                 entries = entryRepository.findByVersionId(versionId);
             }
         } else {
+            log.info("按ID列表加载: count={}", entryIds.size());
             entries = new ArrayList<>(entryRepository.findAllById(entryIds));
         }
         int totalSize = entries.size();
+        log.info("数据加载完成: recordId={}, totalSize={}", recordId, totalSize);
         genRecordRepository.findById(recordId).ifPresent(r -> {
             r.setTotalEntries(totalSize);
             r.setProcessedEntries(0);
@@ -221,11 +229,13 @@ public class DocumentService {
             generateWordToFile(docType, entries, recordId, filePath, includeImages, compressImages);
         } else {
             int filteredSize = (int) entries.stream().filter(e -> e.getLevel() != null && e.getLevel() >= 3).count();
+            log.info("Excel生成: recordId={}, filteredSize={}", recordId, filteredSize);
             genRecordRepository.findById(recordId).ifPresent(r -> {
                 r.setTotalEntries(filteredSize);
                 genRecordRepository.save(r);
             });
             byte[] data = generateExcel(docType, entries, recordId);
+            log.info("Excel生成完成，写入文件: recordId={}, size={}KB", recordId, data.length / 1024);
             Files.write(filePath, data);
         }
 
@@ -234,6 +244,7 @@ public class DocumentService {
             return null;
         }
 
+        log.info("更新状态为completed: recordId={}, filePath={}", recordId, filePath);
         updateGenRecordSuccess(recordId, filePath.toString(), Files.size(filePath));
         return filePath.toString();
     }
@@ -1242,7 +1253,7 @@ public class DocumentService {
         CellStyle centerStyle = createExcelStyle(wb, false, HorizontalAlignment.CENTER);
         CellStyle leftStyle = createExcelStyle(wb, false, HorizontalAlignment.LEFT);
 
-        String[] headers = {"业务分类", "业务域", "系统", "模块", "状态", "曜系列最小集", "驰系列最小集", "远系列最小集"};
+        String[] headers = {"业务分类", "业务域", "系统", "模块", "状态", "曜", "曜最小集", "驰", "驰最小集", "远", "远最小集"};
         Row headerRow = sheet.createRow(0);
         for (int i = 0; i < headers.length; i++) {
             Cell cell = headerRow.createCell(i);
@@ -1322,17 +1333,25 @@ public class DocumentService {
         sheet.setColumnWidth(2, 25 * 256);
         sheet.setColumnWidth(3, 25 * 256);
         sheet.setColumnWidth(4, 10 * 256);
-        sheet.setColumnWidth(5, 14 * 256);
-        sheet.setColumnWidth(6, 14 * 256);
-        sheet.setColumnWidth(7, 14 * 256);
+        sheet.setColumnWidth(5, 6 * 256);
+        sheet.setColumnWidth(6, 10 * 256);
+        sheet.setColumnWidth(7, 6 * 256);
+        sheet.setColumnWidth(8, 10 * 256);
+        sheet.setColumnWidth(9, 6 * 256);
+        sheet.setColumnWidth(10, 10 * 256);
 
         if (recordId != null) {
-            updateGenRecordProgress(recordId, excelTotal, excelTotal);
+            log.info("Excel数据填充完成，开始序列化: recordId={}, rows={}", recordId, excelTotal);
         }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         wb.write(out);
         wb.close();
+
+        if (recordId != null) {
+            updateGenRecordProgress(recordId, excelTotal, excelTotal);
+            log.info("Excel序列化完成: recordId={}, size={}KB", recordId, out.size() / 1024);
+        }
         return out.toByteArray();
     }
 
@@ -1375,16 +1394,30 @@ public class DocumentService {
         c4.setCellValue(target.getColStatus() != null ? target.getColStatus() : "");
         c4.setCellStyle(leftStyle);
 
+        String vd = target.getColVersionDivision() != null ? target.getColVersionDivision() : "";
+
         Cell c5 = row.createCell(5);
-        c5.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
-        c5.setCellStyle(leftStyle);
+        c5.setCellValue(vd.contains("A-曜系列") ? "√" : "");
+        c5.setCellStyle(centerStyle);
 
         Cell c6 = row.createCell(6);
-        c6.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
-        c6.setCellStyle(leftStyle);
+        c6.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
+        c6.setCellStyle(centerStyle);
 
         Cell c7 = row.createCell(7);
-        c7.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
-        c7.setCellStyle(leftStyle);
+        c7.setCellValue(vd.contains("C-驰系列") ? "√" : "");
+        c7.setCellStyle(centerStyle);
+
+        Cell c8 = row.createCell(8);
+        c8.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
+        c8.setCellStyle(centerStyle);
+
+        Cell c9 = row.createCell(9);
+        c9.setCellValue(vd.contains("B-远系列") ? "√" : "");
+        c9.setCellStyle(centerStyle);
+
+        Cell c10 = row.createCell(10);
+        c10.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
+        c10.setCellStyle(centerStyle);
     }
 }

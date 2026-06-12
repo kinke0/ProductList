@@ -1,15 +1,30 @@
-# 当前研发版本: V1.0.8 beta
+# 当前研发版本: V1.0.9 beta
 
 ## 功能变更说明
 
 ### 产品清单
-- 图片关联改用产品ID：image_resource 新增 product_id 字段，关联 L3 级 data_entry 的 ID，替代原有 product 文本名称匹配；L3 改名后图片关联不再断裂；ImagePicker 查询改用 product_id 精确匹配
-- 拖拽升级降级修复：nest 模式（降级）改为调用 moveToParent，sibling 模式（升级）调用 moveToSibling，降级行为正确
-- 拖拽图片保护：moveToParent 和 moveToSibling 中移除 syncEntryImageClassifications 调用，拖拽操作不再移动图片物理文件和修改 image_resource 分类字段
+- 自定义清单粘贴修复：前端 copyEntries/moveEntries API 增加 customTabId 参数；后端 copyEntriesToTarget/moveEntriesToTarget 增加 customTabId 参数，完成后将新节点插入 custom_tab_entry
+- 复制粘贴 bug 修复：修复多选复制时子节点重复克隆的问题（过滤嵌套的 sourceIds）；修复复制到自身下级导致无限递归（增加自引用检查和递归深度保护 MAX_CLONE_DEPTH=20）；修复 @Transactional 位置错误导致异常时部分数据不回滚
+- 粘贴操作增加全屏遮罩提示，防止用户重复操作
+- 跨版本复制：支持从已发布版本复制数据到编辑中版本，复制时自动克隆图片文件和 image_resource 记录，更新描述中的 data-url 和 data-id
+- 复制/剪切图片克隆逻辑优化：同 L3 产品内复制不克隆图片（避免重名冲突）；不同 L3 产品间复制克隆图片确保各自独立编辑；剪切移动时不同 L3 产品间自动移动图片文件
+- 已发布版本右键菜单：只显示"复制"按钮，隐藏剪切/粘贴/升级/降级/上移/下移
+- 已发布版本工具栏：隐藏所有修改操作按钮，只保留文档生成、查询、重置、展开/折叠
+
+### 需求管理
+（无变更）
+
+### 系统管理
+- 非常规操作新增"版本操作"页签：将导入本地Excel、迁移图片、修复层级三个操作从产品清单工具栏迁移到非常规操作页面的独立页签中，增加版本选择器，操作界面更清晰
+- 产品清单工具栏精简：移除导入本地Excel、迁移图片、修复层级三个按钮，这些操作统一在非常规操作页面执行
+
+### 文档生成
+- 修复服务器上文档生成（Excel + Word）永远卡在 generating 状态的问题：文档生成线程池从单线程改为3线程，避免任务排队阻塞；HikariCP 增加 connection-timeout 和 leak-detection 配置；生成流程各环节添加关键日志；Excel 进度100%移到序列化完成之后；updateGenRecordSuccess 重试增强（3次→10次，间隔200ms→1s）
+- Excel生成格式调整：原来"曜系列最小集/驰系列最小集/远系列最小集"三列改为"曜/曜最小集/驰/驰最小集/远/远最小集"六列，新增的曜/驰/远列从版本划分字段判断系列归属显示√，最小集列显示是/否
 
 ---
 
-# 当前研发版本: V1.0.7 beta
+# 当前研发版本: V1.0.8 beta
 
 ## 功能变更说明
 

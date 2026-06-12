@@ -397,8 +397,8 @@ async function pollProgress() {
         loadGenRecords()
       } else if (progressTotal.value > 0 && progressProcessed.value >= progressTotal.value) {
         if (!progressFullTimestamp) progressFullTimestamp = Date.now()
-        else if (Date.now() - progressFullTimestamp > 30000) {
-          console.warn('进度100%但30秒未完成，强制刷新')
+        else if (Date.now() - progressFullTimestamp > 120000) {
+          console.warn('进度100%但120秒未完成，强制刷新')
           stopProgressPoll()
           loadGenRecords()
         }

@@ -20,6 +20,8 @@ spring:
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1
+      connection-timeout: 60000
+      leak-detection-threshold: 30000
   jpa:
     database-platform: com.superpower.config.SqliteDialect
     hibernate:

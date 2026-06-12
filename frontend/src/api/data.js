@@ -118,10 +118,10 @@ export function renumberEntries(items) {
   return request.put('/data/renumber', { items })
 }
 
-export function copyEntries(sourceIds, targetId, mode) {
-  return request.post('/data/entries/copy', { sourceIds, targetId, mode })
+export function copyEntries(sourceIds, targetId, mode, customTabId) {
+  return request.post('/data/entries/copy', { sourceIds, targetId, mode, customTabId })
 }
 
-export function moveEntries(sourceIds, targetId, mode) {
-  return request.put('/data/entries/move', { sourceIds, targetId, mode })
+export function moveEntries(sourceIds, targetId, mode, customTabId) {
+  return request.put('/data/entries/move', { sourceIds, targetId, mode, customTabId })
 }

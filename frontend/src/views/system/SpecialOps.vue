@@ -149,6 +149,53 @@
           </el-button>
         </div>
       </el-tab-pane>
+      <el-tab-pane label="版本操作" name="version-ops">
+        <div class="section-desc">
+          <el-alert type="warning" :closable="false" show-icon>
+            <template #title>以下操作针对选定的编辑中版本执行，请谨慎操作</template>
+          </el-alert>
+        </div>
+        <div class="version-ops-selector">
+          <span class="version-ops-label">选择版本：</span>
+          <el-select v-model="selectedVersionId" placeholder="请选择版本" style="width: 260px;" :loading="versionsLoading">
+            <el-option v-for="v in versions" :key="v.id" :label="'v' + v.versionNo + (v.status === 'draft' ? '（编辑中）' : '（已发布）')" :value="v.id" :disabled="v.status !== 'draft'" />
+          </el-select>
+        </div>
+        <div class="version-ops-cards">
+          <div class="version-op-card">
+            <div class="version-op-title">
+              <el-icon><Upload /></el-icon>
+              <span>导入本地Excel</span>
+            </div>
+            <div class="version-op-desc">将本地Excel文件中的数据导入到选定版本，自动匹配分类和域</div>
+            <div class="version-op-actions">
+              <el-upload :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls" @change="handleVersionExcelUpload">
+                <el-button type="primary" :loading="versionExcelLoading" :disabled="!selectedVersionId">选择文件并导入</el-button>
+              </el-upload>
+            </div>
+          </div>
+          <div class="version-op-card">
+            <div class="version-op-title">
+              <el-icon><Picture /></el-icon>
+              <span>迁移图片</span>
+            </div>
+            <div class="version-op-desc">将选定版本中引用的外部图片迁移到系统统一管理的图片目录中</div>
+            <div class="version-op-actions">
+              <el-button type="primary" :loading="versionMigrateLoading" :disabled="!selectedVersionId" @click="startVersionMigrate">执行迁移</el-button>
+            </div>
+          </div>
+          <div class="version-op-card">
+            <div class="version-op-title">
+              <el-icon><Fold /></el-icon>
+              <span>修复层级</span>
+            </div>
+            <div class="version-op-desc">扫描并修复选定版本中数据节点的层级关系、父节点关联等异常数据</div>
+            <div class="version-op-actions">
+              <el-button type="primary" :loading="versionFixLoading" :disabled="!selectedVersionId" @click="startVersionFix">执行修复</el-button>
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
       <el-tab-pane label="SQL脚本执行" name="sql">
         <div class="section-desc">
           <el-alert type="danger" :closable="false" show-icon>
@@ -207,8 +254,11 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { migrateImageAll, migrateStep, getMigrationStatus, resetMigration, syncFilenames, getFilenameSyncStatus, resetFilenameSync, fixImageCardIds, getFixIdStatus, resetFixId, executeSql, fillImageProductId } from '../../api/maintenance'
+import { getVersions } from '../../api/version'
+import { importExcel, fixDataHierarchy } from '../../api/data'
+import { migrateImages } from '../../api/image'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleCheckFilled, CircleCloseFilled, Loading, Clock, Upload } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, Loading, Clock, Upload, Picture, Fold } from '@element-plus/icons-vue'
 
 const activeTab = ref('auto')
 const running = ref(false)
@@ -508,6 +558,89 @@ function stopFixIdPolling() {
   }
 }
 
+const selectedVersionId = ref(null)
+const versions = ref([])
+const versionsLoading = ref(false)
+const versionExcelLoading = ref(false)
+const versionMigrateLoading = ref(false)
+const versionFixLoading = ref(false)
+
+async function loadVersions() {
+  versionsLoading.value = true
+  try {
+    const res = await getVersions()
+    versions.value = res.data || []
+    const draft = versions.value.find(v => v.status === 'draft')
+    if (draft) selectedVersionId.value = draft.id
+  } catch {
+    ElMessage.error('获取版本列表失败')
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+async function handleVersionExcelUpload(uploadFile) {
+  const file = uploadFile.raw
+  if (!file || !selectedVersionId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认将Excel数据导入到版本 ${versions.value.find(v => v.id === selectedVersionId.value)?.versionNo || selectedVersionId.value}？`,
+      '确认导入',
+      { type: 'warning' }
+    )
+  } catch { return }
+  versionExcelLoading.value = true
+  try {
+    const res = await importExcel(file, selectedVersionId.value)
+    ElMessage.success(`导入完成：新增 ${res.data?.created || 0} 条，跳过 ${res.data?.skipped || 0} 条`)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '导入失败')
+  } finally {
+    versionExcelLoading.value = false
+  }
+}
+
+async function startVersionMigrate() {
+  if (!selectedVersionId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认对版本 ${versions.value.find(v => v.id === selectedVersionId.value)?.versionNo || selectedVersionId.value} 执行图片迁移？`,
+      '确认迁移',
+      { type: 'warning' }
+    )
+  } catch { return }
+  versionMigrateLoading.value = true
+  try {
+    const res = await migrateImages([selectedVersionId.value])
+    ElMessage.success('迁移完成')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '迁移失败')
+  } finally {
+    versionMigrateLoading.value = false
+  }
+}
+
+async function startVersionFix() {
+  if (!selectedVersionId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认对版本 ${versions.value.find(v => v.id === selectedVersionId.value)?.versionNo || selectedVersionId.value} 执行层级修复？`,
+      '确认修复',
+      { type: 'warning' }
+    )
+  } catch { return }
+  versionFixLoading.value = true
+  try {
+    const res = await fixDataHierarchy(selectedVersionId.value)
+    const d = res.data
+    ElMessage.success(`修复完成！层级修正: ${d?.levelFixed || 0}条, 父节点修正: ${d?.parentFixed || 0}条, 域ID修正: ${d?.domainFixed || 0}条, 分类ID修正: ${d?.categoryFixed || 0}条`)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '修复失败')
+  } finally {
+    versionFixLoading.value = false
+  }
+}
+
 const fillPidRunning = ref(false)
 const fillPidResult = ref(null)
 
@@ -584,6 +717,7 @@ onMounted(() => {
   fetchStatus()
   fetchSyncStatus()
   fetchFixIdStatus()
+  loadVersions()
 })
 
 onUnmounted(() => {
@@ -636,4 +770,14 @@ onUnmounted(() => {
 .sql-result-meta { font-size: 12px; color: var(--si-text-muted); white-space: nowrap; display: flex; gap: 8px; }
 .sql-result-error-msg { font-size: 12px; color: #f56c6c; margin-top: 6px; word-break: break-all; }
 .sql-result-table-wrap { margin-top: 10px; }
+.version-ops-selector { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.version-ops-label { font-size: 14px; font-weight: 500; color: var(--si-text-primary); }
+.version-ops-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.version-op-card {
+  border: 1px solid var(--si-border); border-radius: 8px; padding: 20px;
+  background: var(--si-bg-card); display: flex; flex-direction: column; gap: 10px;
+}
+.version-op-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: var(--si-text-primary); }
+.version-op-desc { font-size: 13px; color: var(--si-text-secondary); line-height: 1.5; }
+.version-op-actions { margin-top: auto; }
 </style>

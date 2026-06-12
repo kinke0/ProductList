@@ -1,23 +1,5 @@
 <template>
   <div class="data-list-tab">
-    <div v-if="migrating && migrateProgress" class="migrate-overlay">
-      <div class="migrate-overlay-content">
-        <el-icon class="is-loading" style="font-size:28px;color:#409eff;margin-bottom:12px;"><Loading /></el-icon>
-        <div style="font-size:15px;font-weight:600;margin-bottom:16px;">图片迁移中...</div>
-        <el-progress :percentage="migrateProgress.percentage || 0" :stroke-width="20" style="width:360px;" />
-        <div style="margin-top:12px;font-size:13px;color:#606266;">
-          已处理 {{ migrateProgress.processedEntries }} / {{ migrateProgress.totalEntries }} 条记录
-        </div>
-        <div style="margin-top:6px;font-size:12px;color:#909399;">
-          <span style="color:#67c23a;">成功 {{ migrateProgress.successImages }} 张</span>
-          <span style="margin:0 8px;color:#dcdfe6;">|</span>
-          <span style="color:#f56c6c;">失败 {{ migrateProgress.failedImages }} 张</span>
-        </div>
-        <div v-if="migrateProgress.currentEntry" style="margin-top:8px;font-size:12px;color:#909399;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-          当前：{{ migrateProgress.currentEntry }}
-        </div>
-      </div>
-    </div>
     <div class="query-bar">
       <el-form :model="queryForm" inline size="small">
         <el-form-item label="名称">
@@ -60,20 +42,11 @@
           <el-button type="success" size="small" @click="emit('generateDoc', selectedIds, props.customTabId)">
             <el-icon><Document /></el-icon>生成文档
           </el-button>
-        </template>
-          <template v-else>
-            <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
-            <el-button type="success" size="small" :loading="inserting" @click="onInsertClick">
-              <el-icon><Upload /></el-icon>插入待生成清单
-            </el-button>
-            <el-button v-if="approvalRole === 'admin'" type="info" size="small" :disabled="!props.isEditing" :loading="importing" @click="onImportExcelClick">
-              <el-icon><FolderOpened /></el-icon>导入本地Excel
-            </el-button>
-           </template>
-            <el-button v-if="props.isEditing" type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
-             <el-button v-if="props.isEditing && approvalRole === 'admin'" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
-             <el-button v-if="props.isEditing && approvalRole === 'admin'" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
-             <el-dropdown @command="onBatchCommand">
+          <template v-if="props.isEditing">
+            <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+            <el-dropdown @command="onBatchCommand">
               <el-button type="warning" size="small" plain>
                 <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
               </el-button>
@@ -84,32 +57,50 @@
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
                   <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
                   <el-dropdown-item command="version">版本划分</el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>{{ props.customTabId ? '批量移除' : '批量删除' }}</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>批量移除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
             <el-button
-              v-if="approvalRole === 'admin'"
-              type="warning" size="small" plain
-              :disabled="selectedIds.length === 0"
-              :loading="migrating"
-              @click="onMigrateImages">
-              <el-icon><Picture /></el-icon>迁移图片
-            </el-button>
-            <el-button
-              v-if="approvalRole === 'admin'"
-              type="danger" size="small" plain
-              :loading="fixingHierarchy"
-              @click="onFixHierarchy">
-              <el-icon><Fold /></el-icon>修复层级
-            </el-button>
-            <el-button
-              v-if="props.isEditing"
               type="primary" size="small" plain
               :disabled="selectedIds.length === 0"
               @click="openRenumberDialog">
               <el-icon><Sort /></el-icon>编码重排序
             </el-button>
+          </template>
+        </template>
+          <template v-else>
+            <template v-if="props.isEditing">
+            <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
+            <el-button type="success" size="small" :loading="inserting" @click="onInsertClick">
+              <el-icon><Upload /></el-icon>插入待生成清单
+            </el-button>
+            <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+            <el-dropdown @command="onBatchCommand">
+              <el-button type="warning" size="small" plain>
+                <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="status">状态修改</el-dropdown-item>
+                  <el-dropdown-item command="solution">解决方案</el-dropdown-item>
+                  <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
+                  <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
+                  <el-dropdown-item command="version">版本划分</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>批量删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button
+              type="primary" size="small" plain
+              :disabled="selectedIds.length === 0"
+              @click="openRenumberDialog">
+              <el-icon><Sort /></el-icon>编码重排序
+            </el-button>
+            </template>
+          </template>
       </div>
     </div>
 
@@ -505,7 +496,6 @@
         </div>
 </el-dialog>
       <div v-if="editorTooltip" class="editor-tooltip" :style="{ left: editorTooltip.x + 'px', top: editorTooltip.y + 'px' }">{{ editorTooltip.text }}</div>
-      <input ref="fileInput" type="file" accept=".xlsx,.xls" style="display:none" @change="onFileSelected" />
       <el-dialog v-model="approvalLogVisible" :title="approvalLogTitle" width="550px" append-to-body>
         <el-timeline v-if="approvalLogData.length > 0">
           <el-timeline-item v-for="log in approvalLogData" :key="log.id" :timestamp="log.createdAt?.substring(0, 16)" placement="top">
@@ -557,6 +547,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span>复制</span>
           </div>
+          <template v-if="props.isEditing">
           <div class="ctx-menu-item" @click="onCtxCut">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
             <span>剪切</span>
@@ -588,6 +579,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
             <span>下移</span>
           </div>
+          </template>
         </div>
       </Teleport>
       </div>
@@ -595,16 +587,16 @@
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, fixDataHierarchy, moveToParent, moveToSibling, getEntry, renumberEntries, copyEntries, moveEntries, levelUp, levelDown, moveUp, moveDown } from '../api/data'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, moveToParent, moveToSibling, getEntry, renumberEntries, copyEntries, moveEntries, levelUp, levelDown, moveUp, moveDown } from '../api/data'
 import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning, Sort } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
 import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import ImagePicker from './ImagePicker.vue'
-import { updateImage, migrateImages, getMigrationProgress } from '../api/image'
+import { updateImage } from '../api/image'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -649,15 +641,10 @@ const batchMinYao = ref(false)
 const batchMinYuan = ref(false)
 const batchMinChi = ref(false)
 const selectedIds = ref([])
-const migrating = ref(false)
-const migrateProgress = ref(null)
-let migratePollTimer = null
-const importing = ref(false)
 const inserting = ref(false)
 const clipboard = reactive({ mode: null, entryIds: [] })
 const ctxMenu = reactive({ visible: false, x: 0, y: 0, row: null })
 const ctxMenuRef = ref(null)
-const fileInput = ref(null)
 const batchLoading = ref(false)
 const activeEditorTab = ref('feature')
 const newlyCreatedIds = reactive(new Map())
@@ -665,7 +652,6 @@ const l1Options = ref([])
 const l2Options = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
-const fixingHierarchy = ref(false)
 const renumberVisible = ref(false)
 const renumberLoading = ref(false)
 const renumberItems = ref([])
@@ -675,7 +661,7 @@ const editorRef = ref(null)
 onMounted(() => {
 })
 
-const manuallySelectedIds = ref(new Set())
+  const manuallySelectedIds = computed(() => new Set(selectedIds.value))
 const pendingImageUpdates = ref([])
 const parentRow = ref(null)
 const appRoles = ref([])
@@ -2090,11 +2076,9 @@ function onL2Change(val) {
     if (isSelected) {
       newSet.delete(row.id)
       for (const id of collectDescendantIds(row)) newSet.delete(id)
-      manuallySelectedIds.value.delete(row.id)
     } else {
       newSet.add(row.id)
       for (const id of collectDescendantIds(row)) newSet.add(id)
-      manuallySelectedIds.value.add(row.id)
     }
     selectedIds.value = [...newSet]
   }
@@ -2128,7 +2112,6 @@ function onL2Change(val) {
       const allIds = new Set(selectedIds.value)
       for (const r of nonSepRows.value) {
         allIds.add(r.id)
-        manuallySelectedIds.value.add(r.id)
         for (const id of collectDescendantIds(r)) allIds.add(id)
       }
       selectedIds.value = [...allIds]
@@ -2140,7 +2123,6 @@ function onL2Change(val) {
         if (row) for (const did of collectDescendantIds(row)) toRemove.add(did)
       }
       selectedIds.value = selectedIds.value.filter(id => !toRemove.has(id))
-      for (const id of visibleIds) manuallySelectedIds.value.delete(id)
     }
   }
 
@@ -2191,13 +2173,11 @@ function onRemoveClick() {
   }
   const ids = collectSelectedWithDescendants()
   selectedIds.value = []
-  manuallySelectedIds.value = new Set()
   batchLoading.value = true
   emit('removeFromList', ids)
 }
 
 function showContextMenu(e, row) {
-  if (!props.isEditing) return
   if (row._isSeparator) return
   e.preventDefault()
   e.stopPropagation()
@@ -2213,7 +2193,7 @@ function closeContextMenu() {
 }
 
 function onCtxCopy() {
-  if (manuallySelectedIds.value.length > 0) {
+  if (manuallySelectedIds.value.size > 0) {
     clipboard.entryIds = [...manuallySelectedIds.value]
   } else if (ctxMenu.row) {
     clipboard.entryIds = [ctxMenu.row.id]
@@ -2228,7 +2208,7 @@ function onCtxCopy() {
 }
 
 function onCtxCut() {
-  if (manuallySelectedIds.value.length > 0) {
+  if (manuallySelectedIds.value.size > 0) {
     clipboard.entryIds = [...manuallySelectedIds.value]
   } else if (ctxMenu.row) {
     clipboard.entryIds = [ctxMenu.row.id]
@@ -2243,6 +2223,7 @@ function onCtxCut() {
 }
 
 async function onCtxPasteSibling() {
+  if (!props.isEditing) return
   if (!clipboard.mode || clipboard.entryIds.length === 0) {
     ElMessage.warning('剪贴板为空，请先复制或剪切')
     closeContextMenu()
@@ -2250,9 +2231,10 @@ async function onCtxPasteSibling() {
   }
   const targetRow = ctxMenu.row
   if (!targetRow) { closeContextMenu(); return }
+  const loading = ElLoading.service({ lock: true, text: '正在粘贴，请稍候...' })
   try {
     const api = clipboard.mode === 'copy' ? copyEntries : moveEntries
-    await api(clipboard.entryIds, targetRow.id, 'sibling')
+    await api(clipboard.entryIds, targetRow.id, 'sibling', props.customTabId)
     ElMessage.success('粘贴成功')
     if (clipboard.mode === 'cut') {
       clipboard.mode = null
@@ -2261,11 +2243,14 @@ async function onCtxPasteSibling() {
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  } finally {
+    loading.close()
+    closeContextMenu()
   }
-  closeContextMenu()
 }
 
 async function onCtxPasteChild() {
+  if (!props.isEditing) return
   if (!clipboard.mode || clipboard.entryIds.length === 0) {
     ElMessage.warning('剪贴板为空，请先复制或剪切')
     closeContextMenu()
@@ -2273,9 +2258,10 @@ async function onCtxPasteChild() {
   }
   const targetRow = ctxMenu.row
   if (!targetRow) { closeContextMenu(); return }
+  const loading = ElLoading.service({ lock: true, text: '正在粘贴，请稍候...' })
   try {
     const api = clipboard.mode === 'copy' ? copyEntries : moveEntries
-    await api(clipboard.entryIds, targetRow.id, 'child')
+    await api(clipboard.entryIds, targetRow.id, 'child', props.customTabId)
     ElMessage.success('粘贴成功')
     if (clipboard.mode === 'cut') {
       clipboard.mode = null
@@ -2284,8 +2270,10 @@ async function onCtxPasteChild() {
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  } finally {
+    loading.close()
+    closeContextMenu()
   }
-  closeContextMenu()
 }
 
 async function onCtxLevelUp() {
@@ -2336,60 +2324,6 @@ async function onCtxMoveDown() {
     ElMessage.error(e.response?.data?.message || e.message || '下移失败')
   }
   closeContextMenu()
-}
-
-async function onMigrateImages() {
-  if (selectedIds.value.length === 0) {
-    ElMessage.warning('请先勾选条目')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      `确认将选中的 ${selectedIds.value.length} 条记录中的外部图片下载并替换为本地图片？`,
-      '迁移图片',
-      { confirmButtonText: '确认迁移', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  migrating.value = true
-  migrateProgress.value = { totalEntries: selectedIds.value.length, processedEntries: 0, successImages: 0, failedImages: 0, currentEntry: '', status: 'RUNNING', percentage: 0 }
-  try {
-    const res = await migrateImages([...selectedIds.value])
-    if (res.code === 200 && res.data.taskId) {
-      pollMigrationProgress(res.data.taskId)
-    }
-  } catch {
-    migrating.value = false
-    migrateProgress.value = null
-    ElMessage.error('启动迁移任务失败')
-  }
-}
-
-async function onFixHierarchy() {
-  try {
-    await ElMessageBox.confirm(
-      '将根据编号前缀修正所有条目的层级(level)、父节点(parent_id)、叶子标记(is_leaf)以及分类/域ID。此操作不可撤销，确认继续？',
-      '修复层级',
-      { confirmButtonText: '确认修复', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  fixingHierarchy.value = true
-  try {
-    const res = await fixDataHierarchy(props.versionId)
-    if (res.code === 200) {
-      const d = res.data
-      ElMessage.success(`修复完成！层级修正: ${d.levelFixed || 0}条, 父节点修正: ${d.parentFixed || 0}条, 域ID修正: ${d.domainFixed || 0}条, 分类ID修正: ${d.categoryFixed || 0}条`)
-      handleQuery(true)
-    }
-  } catch (e) {
-    console.error('修复层级失败:', e)
-    ElMessage.error('修复层级失败')
-  } finally {
-    fixingHierarchy.value = false
-  }
 }
 
 function extractNumberPrefix(name) {
@@ -2479,96 +2413,6 @@ async function doRenumber() {
   }
 }
 
-function pollMigrationProgress(taskId) {
-  if (migratePollTimer) clearInterval(migratePollTimer)
-  migratePollTimer = setInterval(async () => {
-    try {
-      const res = await getMigrationProgress(taskId)
-      if (res.code === 200 && res.data) {
-        const p = res.data
-        p.percentage = p.totalEntries > 0 ? Math.round(p.processedEntries / p.totalEntries * 100) : 0
-        migrateProgress.value = p
-        if (p.status === 'COMPLETED' || p.status === 'FAILED') {
-          clearInterval(migratePollTimer)
-          migratePollTimer = null
-          showMigrationResult(p)
-        }
-      }
-    } catch {
-      clearInterval(migratePollTimer)
-      migratePollTimer = null
-      migrating.value = false
-      migrateProgress.value = null
-      ElMessage.error('查询迁移进度失败')
-    }
-  }, 1500)
-}
-
-function showMigrationResult(data) {
-  let html = `<div style="line-height:2;"><b>迁移完成</b></div>`
-  html += `<div style="margin:8px 0;color:#67c23a;">成功：${data.successImages} 张图片</div>`
-  html += `<div style="margin:8px 0;color:#f56c6c;">失败：${data.failedImages} 张图片</div>`
-  if (data.failures && data.failures.length > 0) {
-    html += `<div style="margin-top:12px;font-weight:bold;">失败明细：</div>`
-    html += `<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;">`
-    html += `<tr style="background:#f5f7fa;text-align:left;"><th style="padding:6px 8px;">章节</th><th style="padding:6px 8px;text-align:center;">失败/总数</th></tr>`
-    data.failures.forEach(f => {
-      html += `<tr><td style="padding:6px 8px;">${f.productName || '(ID:' + f.entryId + ')'}</td><td style="padding:6px 8px;text-align:center;color:#f56c6c;">${f.failedImageCount}/${f.totalImageCount}</td></tr>`
-    })
-    html += `</table>`
-  }
-  ElMessageBox.alert(html, '迁移结果', {
-    dangerouslyUseHTMLString: true,
-    confirmButtonText: '确定',
-    customClass: 'migration-result-dialog'
-  }).then(() => {
-    migrating.value = false
-    migrateProgress.value = null
-    handleQuery()
-  }).catch(() => {
-    migrating.value = false
-    migrateProgress.value = null
-    handleQuery()
-  })
-}
-
-function onImportExcelClick() {
-  fileInput.value?.click()
-}
-
-async function onFileSelected(e) {
-  const file = e.target?.files?.[0]
-  if (!file) return
-  importing.value = true
-  const formData = new FormData()
-  formData.append('file', file)
-  try {
-    const res = await importExcel(file, props.versionId)
-    if (res.code === 200) {
-      const data = res.data
-      let html = `<div style="line-height:2;"><b>导入完成</b></div>`
-      html += `<div style="margin:4px 0;">总行数：${data.totalRows}</div>`
-      html += `<div style="margin:4px 0;color:#67c23a;">成功：${data.successRows} 行（其中更新 ${data.updateRows} 行）</div>`
-      html += `<div style="margin:4px 0;color:#f56c6c;">失败：${data.failRows} 行</div>`
-      if (data.errors && data.errors.length > 0) {
-        html += `<div style="margin-top:8px;font-weight:bold;color:#f56c6c;">错误详情：</div>`
-        data.errors.slice(0, 20).forEach(err => {
-          html += `<div style="font-size:12px;color:#909399;">${err}</div>`
-        })
-        if (data.errors.length > 20) html += `<div style="font-size:12px;color:#909399;">...还有 ${data.errors.length - 20} 条错误</div>`
-      }
-      ElMessageBox.alert(html, '导入结果', {
-        dangerouslyUseHTMLString: true,
-        confirmButtonText: '确定'
-      })
-      handleQuery()
-    }
-  } catch {
-  } finally {
-    importing.value = false
-    if (fileInput.value) fileInput.value.value = ''
-  }
-}
 
 function collectFullBranch() {
   const result = new Set()
@@ -2906,27 +2750,6 @@ watch(() => props.versionId, () => {
   font-size: 12px;
   color: #94A3B8;
   margin-bottom: 8px;
-}
-.migrate-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 3000;
-}
-.migrate-overlay-content {
-  background: #fff;
-  border-radius: 12px;
-  padding: 32px 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
 .coming-soon-placeholder {
   display: flex;

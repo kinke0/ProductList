@@ -900,6 +900,7 @@ public class DataEntryService {
 
         target.setIsLeaf(false);
         entryRepository.save(target);
+        syncImagesProductIdForBranch(entry);
     }
     public void moveToSibling(Long id, Long targetId) {
         DataEntry entry = getById(id);
@@ -976,10 +977,15 @@ public class DataEntryService {
             newParent.setIsLeaf(false);
             entryRepository.save(newParent);
         });
+        syncImagesProductIdForBranch(entry);
+    }
+
+    public List<Long> copyEntriesToTarget(List<Long> sourceIds, Long targetId, String mode) {
+        return copyEntriesToTarget(sourceIds, targetId, mode, null);
     }
 
     @Transactional
-    public void copyEntriesToTarget(List<Long> sourceIds, Long targetId, String mode) {
+    public List<Long> copyEntriesToTarget(List<Long> sourceIds, Long targetId, String mode, Long customTabId) {
         DataEntry target = entryRepository.findById(targetId)
                 .orElseThrow(() -> new BusinessException("目标节点不存在"));
         ensureVersionEditable(target.getVersionId());
@@ -991,14 +997,20 @@ public class DataEntryService {
         String targetDomain = target.getColBizDomain();
         Long targetCategoryId = target.getCategoryId();
         Long targetDomainId = target.getDomainId();
+        List<Long> newEntryIds = new ArrayList<>();
 
-        for (Long sourceId : sourceIds) {
-            DataEntry source = entryRepository.findById(sourceId)
-                    .orElseThrow(() -> new BusinessException("源节点不存在(id=" + sourceId + ")"));
-            if (!source.getVersionId().equals(target.getVersionId())) {
-                throw new BusinessException("源节点与目标节点不在同一版本");
+        List<Long> topLevelIds = new ArrayList<>(sourceIds);
+        topLevelIds.removeIf(id -> sourceIds.stream()
+                .filter(other -> !other.equals(id))
+                .anyMatch(other -> isDescendant(other, id)));
+
+        for (Long sourceId : topLevelIds) {
+            DataEntry source = entryRepository.findById(sourceId).orElse(null);
+            if (source == null) continue;
+            if (sourceId.equals(targetId) && "child".equals(mode)) {
+                throw new BusinessException("不能复制节点到自身下级");
             }
-            if (isDescendant(sourceId, targetId)) {
+            if (source.getVersionId().equals(target.getVersionId()) && isDescendant(sourceId, targetId)) {
                 throw new BusinessException("不能复制到自身子节点下");
             }
 
@@ -1031,9 +1043,15 @@ public class DataEntryService {
             clonedRoot.setApprovalStatus("待提交");
             DataEntry savedRoot = entryRepository.save(clonedRoot);
             idMapping.put(sourceId, savedRoot.getId());
+            newEntryIds.add(savedRoot.getId());
 
             cloneDescendants(source.getVersionId(), sourceId, savedRoot.getId(), newLevel, idMapping,
-                    targetCategory, targetDomain, targetCategoryId, targetDomainId);
+                    targetCategory, targetDomain, targetCategoryId, targetDomainId, target.getVersionId());
+            for (Long mappedId : idMapping.values()) {
+                if (!mappedId.equals(savedRoot.getId())) {
+                    newEntryIds.add(mappedId);
+                }
+            }
 
             if ("sibling".equals(mode)) {
                 shiftSiblingsAfter(target.getVersionId(), newParentId, nextSortOrder, savedRoot.getId());
@@ -1044,22 +1062,56 @@ public class DataEntryService {
                 entryRepository.save(target);
             }
 
-            syncEntryImageClassifications(savedRoot);
             List<DataEntry> clonedDescendants = collectDescendantsList(savedRoot.getVersionId(), savedRoot.getId());
-            for (DataEntry d : clonedDescendants) {
-                syncEntryImageClassifications(d);
+
+            if (shouldCloneImages(source, target)) {
+                cloneEntryImages(source, savedRoot, target.getVersionId(),
+                        targetCategory, targetDomain, targetCategoryId, targetDomainId);
+                for (DataEntry d : clonedDescendants) {
+                    Long sourceDescId = idMapping.entrySet().stream()
+                            .filter(e -> e.getValue().equals(d.getId()))
+                            .map(Map.Entry::getKey).findFirst().orElse(null);
+                    if (sourceDescId != null) {
+                        DataEntry sourceDesc = entryRepository.findById(sourceDescId).orElse(null);
+                        if (sourceDesc != null) {
+                            cloneEntryImages(sourceDesc, d, target.getVersionId(),
+                                    targetCategory, targetDomain, targetCategoryId, targetDomainId);
+                        }
+                    }
+                }
+            } else {
+                syncEntryImageClassifications(savedRoot);
+                for (DataEntry d : clonedDescendants) {
+                    syncEntryImageClassifications(d);
+                }
             }
         }
+
+        if (customTabId != null) {
+            for (Long newId : newEntryIds) {
+                CustomTabEntry cte = new CustomTabEntry();
+                cte.setCustomTabId(customTabId);
+                cte.setEntryId(newId);
+                customTabEntryRepository.save(cte);
+            }
+        }
+
+        return newEntryIds;
     }
 
-    private void cloneDescendants(Long versionId, Long sourceParentId, Long newParentId, int parentLevel,
+    private static final int MAX_CLONE_DEPTH = 20;
+
+    private void cloneDescendants(Long sourceVersionId, Long sourceParentId, Long newParentId, int parentLevel,
                                   Map<Long, Long> idMapping,
                                   String targetCategory, String targetDomain,
-                                  Long targetCategoryId, Long targetDomainId) {
-        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, sourceParentId);
+                                  Long targetCategoryId, Long targetDomainId, Long targetVersionId) {
+        if (parentLevel >= MAX_CLONE_DEPTH) {
+            return;
+        }
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(sourceVersionId, sourceParentId);
         for (DataEntry child : children) {
             DataEntry cloned = child.cloneWithoutId();
-            cloned.setVersionId(versionId);
+            cloned.setVersionId(targetVersionId);
             cloned.setParentId(newParentId);
             cloned.setLevel(parentLevel + 1);
             cloned.setColBizCategory(targetCategory);
@@ -1070,8 +1122,8 @@ public class DataEntryService {
             cloned.setApprovalStatus("待提交");
             DataEntry saved = entryRepository.save(cloned);
             idMapping.put(child.getId(), saved.getId());
-            cloneDescendants(versionId, child.getId(), saved.getId(), parentLevel + 1, idMapping,
-                    targetCategory, targetDomain, targetCategoryId, targetDomainId);
+            cloneDescendants(sourceVersionId, child.getId(), saved.getId(), parentLevel + 1, idMapping,
+                    targetCategory, targetDomain, targetCategoryId, targetDomainId, targetVersionId);
         }
     }
 
@@ -1156,7 +1208,7 @@ public class DataEntryService {
     }
 
     @Transactional
-    public void moveEntriesToTarget(List<Long> sourceIds, Long targetId, String mode) {
+    public void moveEntriesToTarget(List<Long> sourceIds, Long targetId, String mode, Long customTabId) {
         DataEntry target = entryRepository.findById(targetId)
                 .orElseThrow(() -> new BusinessException("目标节点不存在"));
         ensureVersionEditable(target.getVersionId());
@@ -1177,10 +1229,16 @@ public class DataEntryService {
         String targetDomain = target.getColBizDomain();
         Long targetCategoryId = target.getCategoryId();
         Long targetDomainId = target.getDomainId();
+        List<Long> movedEntryIds = new ArrayList<>();
 
-        for (Long sourceId : sourceIds) {
-            DataEntry source = entryRepository.findById(sourceId)
-                    .orElseThrow(() -> new BusinessException("源节点不存在(id=" + sourceId + ")"));
+        List<Long> topLevelIds = new ArrayList<>(sourceIds);
+        topLevelIds.removeIf(id -> sourceIds.stream()
+                .filter(other -> !other.equals(id))
+                .anyMatch(other -> isDescendant(other, id)));
+
+        for (Long sourceId : topLevelIds) {
+            DataEntry source = entryRepository.findById(sourceId).orElse(null);
+            if (source == null) continue;
             if (!source.getVersionId().equals(target.getVersionId())) {
                 throw new BusinessException("源节点与目标节点不在同一版本");
             }
@@ -1217,6 +1275,7 @@ public class DataEntryService {
                 source.setSortOrder(nextSort);
             }
             entryRepository.save(source);
+            movedEntryIds.add(sourceId);
 
             List<DataEntry> descendants = collectDescendantsList(source.getVersionId(), sourceId);
             for (DataEntry d : descendants) {
@@ -1226,6 +1285,7 @@ public class DataEntryService {
                 d.setCategoryId(targetCategoryId);
                 d.setDomainId(targetDomainId);
                 entryRepository.save(d);
+                movedEntryIds.add(d.getId());
             }
 
             if (oldParentId != null) {
@@ -1247,9 +1307,20 @@ public class DataEntryService {
                 });
             }
 
-            syncEntryImageClassifications(source);
-            for (DataEntry d : descendants) {
-                syncEntryImageClassifications(d);
+            if (shouldCloneImages(source, target)) {
+                syncEntryImageClassifications(source);
+                for (DataEntry d : descendants) {
+                    syncEntryImageClassifications(d);
+                }
+            }
+        }
+
+        if (customTabId != null) {
+            for (Long entryId : movedEntryIds) {
+                CustomTabEntry cte = new CustomTabEntry();
+                cte.setCustomTabId(customTabId);
+                cte.setEntryId(entryId);
+                customTabEntryRepository.save(cte);
             }
         }
     }
@@ -1343,6 +1414,179 @@ public class DataEntryService {
         }
     }
 
+    private boolean shouldCloneImages(DataEntry source, DataEntry target) {
+        if (!source.getVersionId().equals(target.getVersionId())) return true;
+        Long sourceL3 = findL3AncestorId(source);
+        Long targetL3 = findL3AncestorId(target);
+        return !Objects.equals(sourceL3, targetL3);
+    }
+
+    private Long findL3AncestorId(DataEntry entry) {
+        DataEntry current = entry;
+        int guard = 0;
+        while (current != null && guard < 20) {
+            if (current.getLevel() != null && current.getLevel() == 3) return current.getId();
+            if (current.getParentId() == null) return null;
+            current = entryRepository.findById(current.getParentId()).orElse(null);
+            guard++;
+        }
+        return null;
+    }
+
+    private void syncImagesProductIdForBranch(DataEntry entry) {
+        Long l3Id = findL3AncestorId(entry);
+        if (l3Id == null) {
+            if (entry.getLevel() != null && entry.getLevel() == 3) l3Id = entry.getId();
+            else return;
+        }
+        List<DataEntry> branch = new ArrayList<>();
+        branch.add(entry);
+        branch.addAll(collectDescendantsList(entry.getVersionId(), entry.getId()));
+        for (DataEntry node : branch) {
+            String desc = node.getColFeatureDesc();
+            if (desc == null) continue;
+            Pattern idPattern = Pattern.compile("data-id=\"(\\d+)\"");
+            Matcher m = idPattern.matcher(desc);
+            while (m.find()) {
+                Long imgId = Long.valueOf(m.group(1));
+                ImageResource img = imageResourceRepository.findById(imgId).orElse(null);
+                if (img != null && !l3Id.equals(img.getProductId())) {
+                    img.setProductId(l3Id);
+                    imageResourceRepository.save(img);
+                }
+            }
+        }
+    }
+
+    private void cloneEntryImages(DataEntry sourceEntry, DataEntry clonedEntry,
+                                  Long targetVersionId,
+                                  String targetCategory, String targetDomain,
+                                  Long targetCategoryId, Long targetDomainId) {
+        String desc = sourceEntry.getColFeatureDesc();
+        if (desc == null || desc.isEmpty()) return;
+
+        String urlPrefix = "/api/images/file/" + sourceEntry.getVersionId() + "/";
+        String newUrlPrefix = "/api/images/file/" + targetVersionId + "/";
+
+        List<ImageResource> sourceImages = imageResourceRepository
+                .findByVersionIdOrderByCreatedAtDesc(sourceEntry.getVersionId());
+
+        Map<String, ImageResource> urlToImage = new HashMap<>();
+        for (ImageResource img : sourceImages) {
+            if (img.getUrl() != null) urlToImage.put(img.getUrl(), img);
+        }
+
+        Pattern urlPattern = Pattern.compile("data-url=\"([^\"]+)\"");
+        Matcher m = urlPattern.matcher(desc);
+        Map<String, String> urlMapping = new HashMap<>();
+        Map<Long, Long> imgIdMapping = new HashMap<>();
+        while (m.find()) {
+            String oldUrl = m.group(1);
+            urlMapping.put(oldUrl, null);
+        }
+
+        String[] imgFields = {
+                sourceEntry.getColControlPointImg1(),
+                sourceEntry.getColControlPointImg2(),
+                sourceEntry.getColControlPointImg3()
+        };
+        for (String field : imgFields) {
+            if (field != null && !field.isEmpty() && field.startsWith(urlPrefix)) {
+                urlMapping.put(field, null);
+            }
+        }
+
+        if (urlMapping.isEmpty()) return;
+
+        for (String oldUrl : new ArrayList<>(urlMapping.keySet())) {
+            if (!oldUrl.startsWith(urlPrefix)) continue;
+            ImageResource srcImg = urlToImage.get(oldUrl);
+            if (srcImg == null) continue;
+
+            String newCat = targetCategory != null ? targetCategory : srcImg.getCategory();
+            String newDom = targetDomain != null ? targetDomain : srcImg.getDomain();
+            String newProd = clonedEntry.getColProductSystem() != null ? clonedEntry.getColProductSystem() : srcImg.getProduct();
+
+            String newSubPath = buildSubPath(newCat, newDom, newProd);
+            String targetDir = String.valueOf(targetVersionId);
+            Path newFilePath = Paths.get(imageStoragePath, targetDir, newSubPath, srcImg.getStoredName());
+
+            try {
+                Path srcFilePath = Paths.get(srcImg.getPath());
+                if (Files.exists(srcFilePath)) {
+                    Files.createDirectories(newFilePath.getParent());
+                    Files.copy(srcFilePath, newFilePath, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (Exception e) {
+                log.warn("复制图片文件失败 src={}: {}", srcImg.getPath(), e.getMessage());
+                continue;
+            }
+
+            String newUrl = newUrlPrefix + newSubPath + "/" + srcImg.getStoredName();
+
+            ImageResource newImg = new ImageResource();
+            newImg.setFilename(srcImg.getFilename());
+            newImg.setStoredName(srcImg.getStoredName());
+            newImg.setPath(newFilePath.toString());
+            newImg.setCategory(newCat);
+            newImg.setDomain(newDom);
+            newImg.setProduct(newProd);
+            newImg.setUrl(newUrl);
+            newImg.setSize(srcImg.getSize());
+            newImg.setMimeType(srcImg.getMimeType());
+            newImg.setUploadedBy(srcImg.getUploadedBy());
+            newImg.setVersionId(targetVersionId);
+            newImg.setWidth(srcImg.getWidth());
+            newImg.setHeight(srcImg.getHeight());
+
+            Long l3Id = findL3AncestorId(clonedEntry);
+            if (l3Id != null) {
+                newImg.setProductId(l3Id);
+            }
+
+            imageResourceRepository.save(newImg);
+            urlMapping.put(oldUrl, newUrl);
+            imgIdMapping.put(srcImg.getId(), newImg.getId());
+        }
+
+        String newDesc = clonedEntry.getColFeatureDesc();
+        if (newDesc != null) {
+            for (Map.Entry<String, String> entry : urlMapping.entrySet()) {
+                if (entry.getValue() != null && !entry.getKey().equals(entry.getValue())) {
+                    newDesc = newDesc.replace(entry.getKey(), entry.getValue());
+                }
+            }
+            for (Map.Entry<Long, Long> idEntry : imgIdMapping.entrySet()) {
+                newDesc = newDesc.replace("data-id=\"" + idEntry.getKey() + "\"", "data-id=\"" + idEntry.getValue() + "\"");
+            }
+            clonedEntry.setColFeatureDesc(newDesc);
+        }
+
+        if (clonedEntry.getColControlPointImg1() != null && clonedEntry.getColControlPointImg1().startsWith(urlPrefix)) {
+            String mapped = urlMapping.get(sourceEntry.getColControlPointImg1());
+            if (mapped != null) clonedEntry.setColControlPointImg1(mapped);
+        }
+        if (clonedEntry.getColControlPointImg2() != null && clonedEntry.getColControlPointImg2().startsWith(urlPrefix)) {
+            String mapped = urlMapping.get(sourceEntry.getColControlPointImg2());
+            if (mapped != null) clonedEntry.setColControlPointImg2(mapped);
+        }
+        if (clonedEntry.getColControlPointImg3() != null && clonedEntry.getColControlPointImg3().startsWith(urlPrefix)) {
+            String mapped = urlMapping.get(sourceEntry.getColControlPointImg3());
+            if (mapped != null) clonedEntry.setColControlPointImg3(mapped);
+        }
+
+        entryRepository.save(clonedEntry);
+    }
+
+    private Long findL3EntryId(Long versionId, String productName) {
+        List<DataEntry> entries = entryRepository.findByVersionIdAndColBizCategoryAndColBizDomainAndColProductSystem(
+                versionId, null, null, productName);
+        for (DataEntry e : entries) {
+            if (e.getLevel() != null && e.getLevel() == 3) return e.getId();
+        }
+        return null;
+    }
+
     private String buildSubPath(String category, String domain, String product) {
         StringBuilder sb = new StringBuilder();
         if (category != null && !category.isEmpty()) {
@@ -1396,6 +1640,7 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() - 1);
         entry.setParentId(parent.getParentId());
         entryRepository.save(entry);
+        syncImagesProductIdForBranch(entry);
     }
 
     @Transactional
@@ -1421,6 +1666,7 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() + 1);
         entry.setParentId(prevSibling.getId());
         entryRepository.save(entry);
+        syncImagesProductIdForBranch(entry);
     }
 
     @Transactional
