@@ -1505,7 +1505,14 @@ public class DataEntryService {
 
             String newCat = targetCategory != null ? targetCategory : srcImg.getCategory();
             String newDom = targetDomain != null ? targetDomain : srcImg.getDomain();
-            String newProd = clonedEntry.getColProductSystem() != null ? clonedEntry.getColProductSystem() : srcImg.getProduct();
+            Long l3Id = findL3AncestorId(clonedEntry);
+            String newProd;
+            if (l3Id != null) {
+                DataEntry l3Entry = entryRepository.findById(l3Id).orElse(null);
+                newProd = l3Entry != null ? l3Entry.getColProductSystem() : srcImg.getProduct();
+            } else {
+                newProd = srcImg.getProduct();
+            }
 
             String newSubPath = buildSubPath(newCat, newDom, newProd);
             String targetDir = String.valueOf(targetVersionId);
@@ -1539,7 +1546,6 @@ public class DataEntryService {
             newImg.setWidth(srcImg.getWidth());
             newImg.setHeight(srcImg.getHeight());
 
-            Long l3Id = findL3AncestorId(clonedEntry);
             if (l3Id != null) {
                 newImg.setProductId(l3Id);
             }

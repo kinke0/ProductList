@@ -123,7 +123,7 @@
         <div class="vcol" style="width:80px;">审批</div>
         <div class="vcol" style="width:80px;">状态</div>
         <div class="vcol" style="width:100px;">产品经理</div>
-        <div class="vcol" style="width:220px;">版本划分</div>
+        <div class="vcol" style="width:220px;">版本划分<span class="ver-cell ver-min-badge" style="margin-left:6px; font-size:12px; font-weight:normal;">最小集</span></div>
        <div class="vcol" style="width:240px;">操作</div>
     </div>
     <RecycleScroller
@@ -205,13 +205,13 @@
         <div class="vcol vcol-ops" style="width:240px;">
            <template v-if="!row._isSeparator">
                <template v-if="(row.colStatus || '').includes('可交付') && props.isEditing">
-                 <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
-                 <span v-else-if="canWithdraw(row)" class="op-btn op-edit" @click="handleApprove(row, 'withdraw')">撤销</span>
-                 <span v-else class="op-btn op-add invisible">提交</span>
-                 <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
-                 <span v-else class="op-btn op-add invisible">通过</span>
-                 <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
-                 <span v-else class="op-btn op-del invisible">驳回</span>
+                  <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApproveWithDescendants(row, 'submit')">提交</span>
+                  <span v-else-if="canWithdraw(row)" class="op-btn op-edit" @click="handleApproveWithDescendants(row, 'withdraw')">撤销</span>
+                  <span v-else class="op-btn op-add invisible">提交</span>
+                  <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApproveWithDescendants(row, 'approve')">通过</span>
+                  <span v-else class="op-btn op-add invisible">通过</span>
+                  <span v-if="canReject(row)" class="op-btn op-del" @click="handleRejectWithDescendants(row)">驳回</span>
+                  <span v-else class="op-btn op-del invisible">驳回</span>
                </template>
               <template v-else>
                 <span class="op-btn op-add invisible">提交</span>
@@ -1301,6 +1301,76 @@ async function handleApprove(row, action) {
   }
 }
 
+async function handleApproveWithDescendants(row, action) {
+  try {
+    const allIds = [row.id, ...collectDescendantIds(row)]
+    const validStatus = action === 'submit' ? ['待提交', '驳回']
+      : action === 'withdraw' ? ['待审核']
+      : action === 'approve' ? ['待审核'] : []
+    const validIds = []
+    for (const id of allIds) {
+      const r = findRowById(id, tableData.value)
+      const s = r?.approvalStatus || '待提交'
+      if (validStatus.includes(s)) validIds.push(id)
+    }
+    if (validIds.length === 0) {
+      ElMessage.warning('没有可操作的条目')
+      return
+    }
+    let successCount = 0
+    for (const id of validIds) {
+      try {
+        await approveEntry(id, action, '')
+        successCount++
+      } catch (e) {
+        console.error(`操作失败 id=${id}:`, e)
+      }
+    }
+    const msgMap = { submit: '提交', approve: '通过', withdraw: '撤销' }
+    ElMessage.success(`成功${msgMap[action]} ${successCount} 条`)
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+async function handleRejectWithDescendants(row) {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '驳回', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPlaceholder: '请输入驳回原因，可不填',
+      inputValidator: () => true
+    })
+    const allIds = [row.id, ...collectDescendantIds(row)]
+    const validIds = []
+    for (const id of allIds) {
+      const r = findRowById(id, tableData.value)
+      const s = r?.approvalStatus || '待提交'
+      if (s === '待审核' || s === '审核通过') validIds.push(id)
+    }
+    if (validIds.length === 0) {
+      ElMessage.warning('没有可操作的条目')
+      return
+    }
+    let successCount = 0
+    for (const id of validIds) {
+      try {
+        await approveEntry(id, 'reject', value || '')
+        successCount++
+      } catch (e) {
+        console.error(`驳回失败 id=${id}:`, e)
+      }
+    }
+    ElMessage.success(`成功驳回 ${successCount} 条`)
+    handleQuery(true)
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e?.response?.data?.message || '驳回失败')
+    }
+  }
+}
+
 const approvalLogVisible = ref(false)
 const approvalLogTitle = ref('')
 const approvalLogData = ref([])
@@ -2208,9 +2278,7 @@ function closeContextMenu() {
 }
 
 function onCtxCopy() {
-  if (manuallySelectedIds.value.size > 0) {
-    clipboard.entryIds = [...manuallySelectedIds.value]
-  } else if (ctxMenu.row) {
+  if (ctxMenu.row) {
     clipboard.entryIds = [ctxMenu.row.id]
   } else {
     ElMessage.warning('请先勾选条目')
@@ -2223,9 +2291,7 @@ function onCtxCopy() {
 }
 
 function onCtxCut() {
-  if (manuallySelectedIds.value.size > 0) {
-    clipboard.entryIds = [...manuallySelectedIds.value]
-  } else if (ctxMenu.row) {
+  if (ctxMenu.row) {
     clipboard.entryIds = [ctxMenu.row.id]
   } else {
     ElMessage.warning('请先勾选条目')
@@ -2505,6 +2571,9 @@ function onChildSelectionChange(rows) {
 }
 
 async function handleQuery(preserveExpand = false) {
+   if (!preserveExpand) {
+     selectedIds.value = []
+   }
    dataLoading.value = true
    try {
      const res = await queryEntries(props.versionId, {

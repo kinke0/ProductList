@@ -19,7 +19,7 @@ spring:
     url: jdbc:sqlite:superpower.db?busy_timeout=30000
     driver-class-name: org.sqlite.JDBC
     hikari:
-      maximum-pool-size: 2
+      maximum-pool-size: 3
       connection-timeout: 60000
       leak-detection-threshold: 30000
   jpa:

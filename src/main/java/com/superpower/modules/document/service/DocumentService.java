@@ -96,6 +96,25 @@ public class DocumentService {
         cancelledRecords.put(recordId, true);
     }
 
+    private void saveGenRecordWithRetry(DocGenRecord record, int maxRetries) {
+        for (int retry = 0; retry < maxRetries; retry++) {
+            try {
+                genRecordRepository.save(record);
+                return;
+            } catch (Exception e) {
+                log.warn("saveGenRecord retry {}/{}: id={}, error={}", retry + 1, maxRetries, record.getId(), e.getMessage());
+                if (retry < maxRetries - 1) {
+                    try { Thread.sleep(1000); } catch (InterruptedException ie) { return; }
+                }
+            }
+        }
+        log.error("saveGenRecord failed after {} retries: id={}", maxRetries, record.getId());
+    }
+
+    private void saveGenRecordWithRetry(DocGenRecord record) {
+        saveGenRecordWithRetry(record, 5);
+    }
+
     public DocGenRecord createGenRecord(Long versionId, String docName, String docType, String format,
                                         List<Long> entryIds, Long userId, String userName) {
         DocGenRecord record = new DocGenRecord();
@@ -111,7 +130,9 @@ public class DocumentService {
         record.setProcessedEntries(0);
         record.setCreatedAt(LocalDateTime.now());
         record.setUpdatedAt(LocalDateTime.now());
-        return genRecordRepository.save(record);
+        saveGenRecordWithRetry(record);
+        cancelledRecords.remove(record.getId());
+        return record;
     }
 
     public void updateGenRecordSuccess(Long recordId, String filePath, long fileSize) {
@@ -142,13 +163,26 @@ public class DocumentService {
 
     public void updateGenRecordError(Long recordId, String errorMessage) {
         log.error("文档生成失败: recordId={}, error={}", recordId, errorMessage);
-        genRecordRepository.findById(recordId).ifPresent(record -> {
-            record.setErrorMessage(errorMessage);
-            record.setStatus("error");
-            record.setUpdatedAt(LocalDateTime.now());
-            genRecordRepository.save(record);
-            cancelledRecords.remove(recordId);
-        });
+        for (int retry = 0; retry < 10; retry++) {
+            try {
+                Optional<DocGenRecord> opt = genRecordRepository.findById(recordId);
+                if (opt.isPresent()) {
+                    DocGenRecord record = opt.get();
+                    record.setErrorMessage(errorMessage);
+                    record.setStatus("error");
+                    record.setUpdatedAt(LocalDateTime.now());
+                    genRecordRepository.save(record);
+                    cancelledRecords.remove(recordId);
+                }
+                return;
+            } catch (Exception e) {
+                log.warn("updateGenRecordError failed (retry {}): recordId={}, error={}", retry + 1, recordId, e.getMessage());
+                if (retry < 9) {
+                    try { Thread.sleep(1000); } catch (InterruptedException ie) { return; }
+                }
+            }
+        }
+        log.error("updateGenRecordError failed after 10 retries: recordId={}", recordId);
     }
 
     private final ConcurrentHashMap<Long, Integer> lastSavedProgress = new ConcurrentHashMap<>();
@@ -159,12 +193,20 @@ public class DocumentService {
             int last = lastSavedProgress.getOrDefault(recordId, -1);
             int step = Math.max(1, total / 50);
             if (processed - last < step && processed != total) return;
-            genRecordRepository.findById(recordId).ifPresent(record -> {
-                record.setProcessedEntries(processed);
-                record.setUpdatedAt(LocalDateTime.now());
-                genRecordRepository.save(record);
-                lastSavedProgress.put(recordId, processed);
-            });
+            for (int retry = 0; retry < 3; retry++) {
+                try {
+                    genRecordRepository.findById(recordId).ifPresent(record -> {
+                        record.setProcessedEntries(processed);
+                        record.setUpdatedAt(LocalDateTime.now());
+                        genRecordRepository.save(record);
+                        lastSavedProgress.put(recordId, processed);
+                    });
+                    break;
+                } catch (Exception e) {
+                    log.warn("updateGenRecordProgress retry {}: recordId={}, error={}", retry + 1, recordId, e.getMessage());
+                    if (retry < 2) try { Thread.sleep(500); } catch (InterruptedException ie) { return; }
+                }
+            }
             if (processed >= total) lastSavedProgress.remove(recordId);
         } catch (Exception e) {
             log.warn("updateGenRecordProgress failed: recordId={}, processed={}, error={}", recordId, processed, e.getMessage());
@@ -180,14 +222,15 @@ public class DocumentService {
     }
 
     public void deleteGenRecord(Long id) {
-        cancelGeneration(id);
         DocGenRecord record = genRecordRepository.findById(id).orElse(null);
-        if (record != null) {
-            if (record.getFilePath() != null) {
-                try { java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get(record.getFilePath())); } catch (Exception ignored) {}
-            }
-            genRecordRepository.deleteById(id);
+        if (record == null) return;
+        if ("generating".equals(record.getStatus())) {
+            cancelGeneration(id);
         }
+        if (record.getFilePath() != null) {
+            try { java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get(record.getFilePath())); } catch (Exception ignored) {}
+        }
+        genRecordRepository.deleteById(id);
     }
 
     public byte[] generateDocument(String docType, String format, List<Long> entryIds, Boolean includeImages) throws Exception {
@@ -202,7 +245,8 @@ public class DocumentService {
 
     public String generateAndSaveDocument(Long recordId, String docType, String format,
                                           List<Long> entryIds, Long versionId, Long customTabId,
-                                          Boolean includeImages, Boolean compressImages) throws Exception {
+                                           Boolean includeImages, Boolean compressImages) throws Exception {
+        cancelledRecords.remove(recordId);
         log.info("generateAndSaveDocument开始: recordId={}, docType={}, format={}", recordId, docType, format);
         List<DataEntry> entries;
         if (entryIds == null || entryIds.isEmpty()) {
@@ -224,7 +268,7 @@ public class DocumentService {
             r.setTotalEntries(totalSize);
             r.setProcessedEntries(0);
             r.setUpdatedAt(LocalDateTime.now());
-            genRecordRepository.save(r);
+            saveGenRecordWithRetry(r);
         });
 
         Path dir = Paths.get(docStoragePath);
@@ -241,7 +285,7 @@ public class DocumentService {
             log.info("Excel生成: recordId={}, filteredSize={}", recordId, filteredSize);
             genRecordRepository.findById(recordId).ifPresent(r -> {
                 r.setTotalEntries(filteredSize);
-                genRecordRepository.save(r);
+                saveGenRecordWithRetry(r);
             });
             byte[] data = generateExcel(docType, entries, recordId);
             log.info("Excel生成完成，写入文件: recordId={}, size={}KB", recordId, data.length / 1024);
@@ -760,6 +804,7 @@ public class DocumentService {
             }
             byte[] imageData = Files.readAllBytes(filePath);
             if (imageData.length == 0) return null;
+            imageData = repairAndSaveTruncatedPng(filePath, imageData);
             return parseImageData(imageData, filePath.getFileName().toString());
         } catch (Exception e) {
             log.warn("Failed to read local image: {}", rawUrl, e);
@@ -767,34 +812,134 @@ public class DocumentService {
         }
     }
 
-    private ImageData parseImageData(byte[] imageData, String urlOrName) {
+    private byte[] repairAndSaveTruncatedPng(Path filePath, byte[] imageData) {
         try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageData));
-            if (img == null) return null;
+            if (imageData.length < 8) return imageData;
+            byte[] pngSig = {(byte)0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A};
+            for (int i = 0; i < 8; i++) {
+                if (imageData[i] != pngSig[i]) return imageData;
+            }
+            boolean hasIend = false;
+            for (int i = imageData.length - PNG_IEND.length; i >= Math.max(0, imageData.length - 20); i--) {
+                boolean match = true;
+                for (int j = 0; j < PNG_IEND.length; j++) {
+                    if (imageData[i + j] != PNG_IEND[j]) { match = false; break; }
+                }
+                if (match) { hasIend = true; break; }
+            }
+            if (!hasIend) {
+                byte[] repaired = new byte[imageData.length + PNG_IEND.length];
+                System.arraycopy(imageData, 0, repaired, 0, imageData.length);
+                System.arraycopy(PNG_IEND, 0, repaired, imageData.length, PNG_IEND.length);
+                try {
+                    BufferedImage test = ImageIO.read(new ByteArrayInputStream(repaired));
+                    if (test != null) {
+                        Files.write(filePath, repaired);
+                        log.info("Repaired truncated PNG and saved: {} ({}x{})", filePath, test.getWidth(), test.getHeight());
+                        return repaired;
+                    }
+                } catch (Exception e) {
+                    log.warn("PNG repair IEND-only failed (IDAT data truncated): {} - {}", filePath, e.getMessage());
+                }
+                log.warn("PNG cannot be fully repaired, will use raw bytes with IHDR dimensions: {}", filePath);
+            }
+        } catch (Exception e) {
+            log.debug("PNG repair check failed for: {}", filePath, e);
+        }
+        return imageData;
+    }
 
+    private static final byte[] PNG_IEND = new byte[]{0x00,0x00,0x00,0x00, 0x49,0x45,0x4E,0x44, (byte)0xAE,0x42,0x60,(byte)0x82};
+
+    private ImageData parseImageData(byte[] imageData, String urlOrName) {
+        BufferedImage img = null;
+        try {
+            img = ImageIO.read(new ByteArrayInputStream(imageData));
+        } catch (Exception readEx) {
+            log.warn("ImageIO.read threw exception for {}: {}", urlOrName, readEx.getMessage());
+        }
+        if (img == null) {
+            img = tryRepairTruncatedPng(imageData);
+        }
+        if (img != null) {
             int width = img.getWidth();
             int height = img.getHeight();
+            int pictureType = detectPictureType(urlOrName, img);
+            return new ImageData(imageData, width, height, pictureType);
+        }
 
+        if (imageData.length > 100) {
+            log.warn("Embedding raw image bytes (ImageIO unusable): {} ({} bytes)", urlOrName, imageData.length);
             String lower = urlOrName.toLowerCase();
             int pictureType;
-            if (lower.contains(".png")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_PNG;
-            } else if (lower.contains(".jpg") || lower.contains(".jpeg")) {
+            if (lower.contains(".jpg") || lower.contains(".jpeg")) {
                 pictureType = XWPFDocument.PICTURE_TYPE_JPEG;
-            } else if (lower.contains(".gif")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_GIF;
-            } else if (lower.contains(".bmp")) {
-                pictureType = XWPFDocument.PICTURE_TYPE_BMP;
             } else {
-                ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
-                ImageIO.write(img, "png", pngOut);
-                imageData = pngOut.toByteArray();
                 pictureType = XWPFDocument.PICTURE_TYPE_PNG;
             }
-            return new ImageData(imageData, width, height, pictureType);
-        } catch (Exception e) {
-            return null;
+            int[] dim = extractPngDimensions(imageData);
+            return new ImageData(imageData, dim[0], dim[1], pictureType);
         }
+        return null;
+    }
+
+    private BufferedImage tryRepairTruncatedPng(byte[] imageData) {
+        try {
+            if (imageData.length < 8) return null;
+            byte[] header = new byte[]{(byte)0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A};
+            for (int i = 0; i < 8; i++) {
+                if (imageData[i] != header[i]) return null;
+            }
+            boolean hasIend = false;
+            for (int i = imageData.length - PNG_IEND.length; i >= Math.max(0, imageData.length - 20); i--) {
+                boolean match = true;
+                for (int j = 0; j < PNG_IEND.length; j++) {
+                    if (imageData[i + j] != PNG_IEND[j]) { match = false; break; }
+                }
+                if (match) { hasIend = true; break; }
+            }
+            if (!hasIend) {
+                log.info("Attempting PNG repair (appending IEND): {} bytes", imageData.length);
+                byte[] repaired = new byte[imageData.length + PNG_IEND.length];
+                System.arraycopy(imageData, 0, repaired, 0, imageData.length);
+                System.arraycopy(PNG_IEND, 0, repaired, imageData.length, PNG_IEND.length);
+                BufferedImage img = ImageIO.read(new ByteArrayInputStream(repaired));
+                if (img != null) {
+                    log.info("PNG repair succeeded: {}x{}", img.getWidth(), img.getHeight());
+                }
+                return img;
+            }
+        } catch (Exception e) {
+            log.debug("PNG repair attempt failed", e);
+        }
+        return null;
+    }
+
+    private int detectPictureType(String urlOrName, BufferedImage img) {
+        String lower = urlOrName.toLowerCase();
+        if (lower.contains(".jpg") || lower.contains(".jpeg")) {
+            return XWPFDocument.PICTURE_TYPE_JPEG;
+        } else if (lower.contains(".gif")) {
+            return XWPFDocument.PICTURE_TYPE_GIF;
+        } else if (lower.contains(".bmp")) {
+            return XWPFDocument.PICTURE_TYPE_BMP;
+        }
+        return XWPFDocument.PICTURE_TYPE_PNG;
+    }
+
+    private int[] extractPngDimensions(byte[] imageData) {
+        if (imageData.length > 24) {
+            try {
+                int w = ((imageData[16] & 0xFF) << 24) | ((imageData[17] & 0xFF) << 16)
+                      | ((imageData[18] & 0xFF) << 8) | (imageData[19] & 0xFF);
+                int h = ((imageData[20] & 0xFF) << 24) | ((imageData[21] & 0xFF) << 16)
+                      | ((imageData[22] & 0xFF) << 8) | (imageData[23] & 0xFF);
+                if (w > 0 && h > 0 && w <= 10000 && h <= 10000) {
+                    return new int[]{w, h};
+                }
+            } catch (Exception ignored) {}
+        }
+        return new int[]{500, 300};
     }
 
     private byte[] compressImage(byte[] imageData, int targetWidth, int targetHeight, int pictureType) {
