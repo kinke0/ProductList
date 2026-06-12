@@ -1,9 +1,17 @@
+# 当前研发版本: V1.0.10 beta
+
+## 功能变更说明
+
+### 产品清单
+- 版本划分交互优化：曜/远/驰复选框改为3段式操作，点击第1次勾选系列，点击第2次标记最小集（绿框），点击第3次取消勾选
+
+---
+
 # 当前研发版本: V1.0.9 beta
 
 ## 功能变更说明
 
 ### 产品清单
-- 自定义清单粘贴修复：前端 copyEntries/moveEntries API 增加 customTabId 参数；后端 copyEntriesToTarget/moveEntriesToTarget 增加 customTabId 参数，完成后将新节点插入 custom_tab_entry
 - 复制粘贴 bug 修复：修复多选复制时子节点重复克隆的问题（过滤嵌套的 sourceIds）；修复复制到自身下级导致无限递归（增加自引用检查和递归深度保护 MAX_CLONE_DEPTH=20）；修复 @Transactional 位置错误导致异常时部分数据不回滚
 - 粘贴操作增加全屏遮罩提示，防止用户重复操作
 - 跨版本复制：支持从已发布版本复制数据到编辑中版本，复制时自动克隆图片文件和 image_resource 记录，更新描述中的 data-url 和 data-id

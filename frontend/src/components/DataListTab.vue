@@ -1222,22 +1222,38 @@ function hasVer(row, ver) {
   return (row.colVersionDivision || '').includes(ver)
 }
 
+function getVerMinCol(ver) {
+  if (ver === 'A-曜系列') return 'colYao'
+  if (ver === 'B-远系列') return 'colYuan'
+  if (ver === 'C-驰系列') return 'colChi'
+  return null
+}
+
+function getVerStage(row, ver) {
+  if (!hasVer(row, ver)) return 0
+  const col = getVerMinCol(ver)
+  return (col && row[col] === '是') ? 2 : 1
+}
+
 async function toggleVer(row, ver) {
+  const stage = getVerStage(row, ver)
   const parts = (row.colVersionDivision || '').split(' ').filter(Boolean)
-  const idx = parts.indexOf(ver)
-  if (idx >= 0) {
-    parts.splice(idx, 1)
-    if (ver === 'A-曜系列') row.colYao = '否'
-    if (ver === 'B-远系列') row.colYuan = '否'
-    if (ver === 'C-驰系列') row.colChi = '否'
-  } else {
+  const col = getVerMinCol(ver)
+
+  if (stage === 0) {
     parts.push(ver)
+    if (col) row[col] = '否'
+  } else if (stage === 1) {
+    if (col) row[col] = '是'
+  } else {
+    const idx = parts.indexOf(ver)
+    if (idx >= 0) parts.splice(idx, 1)
+    if (col) row[col] = '否'
   }
+
   row.colVersionDivision = parts.join(' ')
   const update = { colVersionDivision: row.colVersionDivision }
-  if (ver === 'A-曜系列') update.colYao = row.colYao
-  if (ver === 'B-远系列') update.colYuan = row.colYuan
-  if (ver === 'C-驰系列') update.colChi = row.colChi
+  if (col) update[col] = row[col]
   await updateEntry(row.id, update)
   handleQuery(true)
 }
