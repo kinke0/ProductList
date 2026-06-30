@@ -1434,7 +1434,7 @@ public class DocumentService {
         CellStyle centerStyle = createExcelStyle(wb, false, HorizontalAlignment.CENTER);
         CellStyle leftStyle = createExcelStyle(wb, false, HorizontalAlignment.LEFT);
 
-        String[] headers = {"业务分类", "业务域", "系统", "模块", "状态", "曜", "曜最小集", "驰", "驰最小集", "远", "远最小集"};
+        String[] headers = {"业务分类", "业务域", "系统", "模块", "状态", "智能化", "曜", "曜最小集", "驰", "驰最小集", "远", "远最小集"};
         Row headerRow = sheet.createRow(0);
         for (int i = 0; i < headers.length; i++) {
             Cell cell = headerRow.createCell(i);
@@ -1488,12 +1488,13 @@ public class DocumentService {
 
                     if (l4List.isEmpty()) {
                         Row row = sheet.createRow(rowIdx);
-                        writeExcelRow(row, catName, domName, extractName(l3.getColProductSystem()), "", l3, centerStyle, leftStyle);
+                        writeExcelRow(row, catName, domName, extractName(l3.getColProductSystem()), "", l3, false, centerStyle, leftStyle);
                         rowIdx++;
                     } else {
                         for (DataEntry l4 : l4List) {
                             Row row = sheet.createRow(rowIdx);
-                            writeExcelRow(row, catName, domName, extractName(l3.getColProductSystem()), extractName(l4.getColProductSystem()), l4, centerStyle, leftStyle);
+                            boolean bubble = hasIntelligentDescendant(l4, childrenByParent);
+                            writeExcelRow(row, catName, domName, extractName(l3.getColProductSystem()), extractName(l4.getColProductSystem()), l4, bubble, centerStyle, leftStyle);
                             rowIdx++;
                         }
                     }
@@ -1516,12 +1517,13 @@ public class DocumentService {
         sheet.setColumnWidth(2, 25 * 256);
         sheet.setColumnWidth(3, 25 * 256);
         sheet.setColumnWidth(4, 10 * 256);
-        sheet.setColumnWidth(5, 6 * 256);
-        sheet.setColumnWidth(6, 10 * 256);
-        sheet.setColumnWidth(7, 6 * 256);
-        sheet.setColumnWidth(8, 10 * 256);
-        sheet.setColumnWidth(9, 6 * 256);
-        sheet.setColumnWidth(10, 10 * 256);
+        sheet.setColumnWidth(5, 8 * 256);
+        sheet.setColumnWidth(6, 6 * 256);
+        sheet.setColumnWidth(7, 10 * 256);
+        sheet.setColumnWidth(8, 6 * 256);
+        sheet.setColumnWidth(9, 10 * 256);
+        sheet.setColumnWidth(10, 6 * 256);
+        sheet.setColumnWidth(11, 10 * 256);
 
         if (recordId != null) {
             log.info("Excel数据填充完成，开始序列化: recordId={}, rows={}", recordId, excelTotal);
@@ -1556,7 +1558,7 @@ public class DocumentService {
     }
 
     private void writeExcelRow(Row row, String catName, String domName, String sysName, String modName,
-                                DataEntry target, CellStyle centerStyle, CellStyle leftStyle) {
+                                DataEntry target, boolean intelligentBubble, CellStyle centerStyle, CellStyle leftStyle) {
         Cell c0 = row.createCell(0);
         c0.setCellValue(catName);
         c0.setCellStyle(centerStyle);
@@ -1577,33 +1579,46 @@ public class DocumentService {
         c4.setCellValue(target.getColStatus() != null ? target.getColStatus() : "");
         c4.setCellStyle(leftStyle);
 
+        Cell c5 = row.createCell(5);
+        c5.setCellValue(("1".equals(target.getColIntelligent()) || intelligentBubble) ? "是" : "");
+        c5.setCellStyle(centerStyle);
+
         String vd = target.getColVersionDivision() != null ? target.getColVersionDivision() : "";
         boolean isYao = vd.contains("A-曜系列");
         boolean isChi = vd.contains("C-驰系列");
         boolean isYuan = vd.contains("B-远系列");
 
-        Cell c5 = row.createCell(5);
-        c5.setCellValue(isYao ? "√" : "");
-        c5.setCellStyle(centerStyle);
-
         Cell c6 = row.createCell(6);
-        if (isYao) c6.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
+        c6.setCellValue(isYao ? "√" : "");
         c6.setCellStyle(centerStyle);
 
         Cell c7 = row.createCell(7);
-        c7.setCellValue(isChi ? "√" : "");
+        if (isYao) c7.setCellValue("是".equals(target.getColYao()) ? "是" : "否");
         c7.setCellStyle(centerStyle);
 
         Cell c8 = row.createCell(8);
-        if (isChi) c8.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
+        c8.setCellValue(isChi ? "√" : "");
         c8.setCellStyle(centerStyle);
 
         Cell c9 = row.createCell(9);
-        c9.setCellValue(isYuan ? "√" : "");
+        if (isChi) c9.setCellValue("是".equals(target.getColChi()) ? "是" : "否");
         c9.setCellStyle(centerStyle);
 
         Cell c10 = row.createCell(10);
-        if (isYuan) c10.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
+        c10.setCellValue(isYuan ? "√" : "");
         c10.setCellStyle(centerStyle);
+
+        Cell c11 = row.createCell(11);
+        if (isYuan) c11.setCellValue("是".equals(target.getColYuan()) ? "是" : "否");
+        c11.setCellStyle(centerStyle);
+    }
+
+    private boolean hasIntelligentDescendant(DataEntry entry, Map<Long, List<DataEntry>> childrenByParent) {
+        if ("1".equals(entry.getColIntelligent())) return true;
+        List<DataEntry> children = childrenByParent.getOrDefault(entry.getId(), new ArrayList<>());
+        for (DataEntry child : children) {
+            if (hasIntelligentDescendant(child, childrenByParent)) return true;
+        }
+        return false;
     }
 }

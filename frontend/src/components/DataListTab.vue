@@ -24,6 +24,9 @@
           </el-select>
         </el-form-item>
         <el-form-item>
+          <el-checkbox v-model="queryForm.intelligent" size="small">智能化</el-checkbox>
+        </el-form-item>
+        <el-form-item>
           <el-button type="primary" @click="handleQuery">查询</el-button>
           <el-button @click="resetQuery">重置</el-button>
         </el-form-item>
@@ -166,6 +169,19 @@
             <span v-else class="tree-toggle-placeholder"></span>
             <el-tag v-if="row.level && row.level >= 3" :type="levelTagType(row.level)" size="small" class="level-tag">{{ levelLabel(row.level) }}</el-tag>
             <span class="product-name">{{ row.colProductSystem || '(无名称)' }}</span>
+            <template v-if="!row._isSeparator && (row.colIntelligent === '1' || getIntelligentChildren(row).length > 0)">
+              <el-tooltip placement="top" :show-after="300" :hide-after="0">
+                <template #content>
+                  <div v-if="row.colIntelligent === '1'" style="margin-bottom:2px;max-width:360px;font-weight:bold;">
+                    自身: {{ row.colProductSystem }}
+                  </div>
+                  <div v-for="item in getIntelligentChildren(row)" :key="item.id" style="margin-bottom:2px;max-width:360px;">
+                    {{ item.name }}
+                  </div>
+                </template>
+                <span class="ai-badge">AI</span>
+              </el-tooltip>
+            </template>
             <template v-if="!row._isSeparator && getRemarks(row).length > 0">
               <el-tooltip placement="top" :show-after="300" :hide-after="0">
                 <template #content>
@@ -244,14 +260,14 @@
           </div>
         </div>
       </template>
-      <el-form :model="editForm" label-width="120px" size="small">
-        <el-row :gutter="16">
-          <el-col :span="12">
+      <el-form :model="editForm" label-width="100px" size="small" class="edit-form-compact">
+        <el-row :gutter="12">
+          <el-col :span="8">
             <el-form-item :label="productLabel">
               <el-input v-model="editForm.colProductSystem" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="系统类型">
               <template v-if="props.isEditing">
                 <el-select v-model="editForm.colSystemType" style="width:100%;" placeholder="请选择" clearable filterable allow-create>
@@ -263,8 +279,13 @@
               </template>
             </el-form-item>
           </el-col>
+          <el-col :span="8">
+            <el-form-item label="智能化" label-width="100px" class="intelligent-box">
+              <el-checkbox v-model="editForm.colIntelligent" true-value="1" false-value="" size="small" :disabled="!props.isEditing">是</el-checkbox>
+            </el-form-item>
+          </el-col>
         </el-row>
-        <el-row :gutter="16">
+        <el-row :gutter="12">
           <el-col :span="8">
             <el-form-item label="业务分类">
               <template v-if="props.isEditing">
@@ -297,31 +318,50 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="16">
-          <el-col :span="12">
+        <el-row :gutter="12">
+          <el-col :span="8">
             <el-form-item label="版本划分">
-              <div class="version-options">
-                <div class="version-row">
-                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYao = false }">A-曜系列</el-checkbox>
-                  <el-checkbox v-if="verYao" v-model="minYao" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
+              <div class="version-layout">
+                <div class="version-series-row">
+                  <span class="version-slot"><el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYao = false }">A-曜</el-checkbox></span>
+                  <span class="version-slot"><el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYuan = false }">B-远</el-checkbox></span>
+                  <span class="version-slot"><el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minChi = false }">C-驰</el-checkbox></span>
+                  <span class="version-slot"><el-checkbox v-model="verNonStd" size="small" :disabled="!props.isEditing || verYao || verYuan || verChi">非标配</el-checkbox></span>
                 </div>
-                <div class="version-row">
-                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYuan = false }">B-远系列</el-checkbox>
-                  <el-checkbox v-if="verYuan" v-model="minYuan" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
-                </div>
-                <div class="version-row">
-                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minChi = false }">C-驰系列</el-checkbox>
-                  <el-checkbox v-if="verChi" v-model="minChi" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
-                </div>
-                <div class="version-row">
-                  <el-checkbox v-model="verNonStd" size="small" :disabled="!props.isEditing || verYao || verYuan || verChi">非标配</el-checkbox>
+                <div class="version-min-row">
+                  <span class="version-slot" :class="{ 'version-slot-hidden': !verYao }"><el-checkbox v-model="minYao" size="small" :disabled="!props.isEditing">A-最小集</el-checkbox></span>
+                  <span class="version-slot" :class="{ 'version-slot-hidden': !verYuan }"><el-checkbox v-model="minYuan" size="small" :disabled="!props.isEditing">B-最小集</el-checkbox></span>
+                  <span class="version-slot" :class="{ 'version-slot-hidden': !verChi }"><el-checkbox v-model="minChi" size="small" :disabled="!props.isEditing">C-最小集</el-checkbox></span>
+                  <span class="version-slot version-slot-hidden"><!-- 占位对齐 --></span>
                 </div>
               </div>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="产品经理">
               <el-input v-model="editForm.colProductManager" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="软著">
+              <el-input v-model="editForm.colCopyright" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :span="8">
+            <el-form-item label="产品线">
+              <el-input v-model="editForm.colProductLine" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="资产类型">
+              <el-input v-model="editForm.colAssetType" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="备注">
+              <el-input v-model="editForm.colRemark" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -364,26 +404,7 @@
             </el-tab-pane>
           </template>
         </el-tabs>
-        <el-row :gutter="16" style="margin-top:12px;">
-          <el-col :span="8">
-            <el-form-item label="软著">
-              <el-input v-model="editForm.colCopyright" :disabled="!props.isEditing" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="产品线">
-              <el-input v-model="editForm.colProductLine" :disabled="!props.isEditing" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="资产类型">
-              <el-input v-model="editForm.colAssetType" :disabled="!props.isEditing" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="备注">
-          <el-input v-model="editForm.colRemark" type="textarea" :rows="6" :disabled="!props.isEditing" />
-        </el-form-item>
+
       </el-form>
       <template #footer>
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
@@ -1200,18 +1221,7 @@ async function handleDedupCommand(mode) {
   }
 }
 
-let autoSaving = false
-async function onDialogChange(val) {
-  if (!val && showEditDialog.value && !autoSaving && !isNew.value && editingId.value) {
-    autoSaving = true
-    try {
-      editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
-      await updateEntry(editingId.value, editForm)
-      flushPendingImageUpdates()
-      handleQuery(true)
-    } catch (e) { /* ignore */ }
-    autoSaving = false
-  }
+function onDialogChange(val) {
   showEditDialog.value = val
   if (!val) {
     pendingImageUpdates.value = []
@@ -2037,7 +2047,8 @@ const queryForm = reactive({
   status: [],
   productManager: '',
   solution: '',
-  versionDiv: ''
+  versionDiv: '',
+  intelligent: false
 })
 
 const editForm = reactive({
@@ -2059,7 +2070,9 @@ const editForm = reactive({
   colYao: '',
   colYuan: '',
   colChi: '',
-  colSystemType: ''
+  colSystemType: '',
+  colIntelligent: '',
+  colProductLine: ''
 })
 
 const editDialogTitle = computed(() => {
@@ -2082,8 +2095,16 @@ const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
   colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
   colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colProductLine: '', colAssetType: '', colRemark: '',
-  colYao: '', colYuan: '', colChi: '', colSystemType: ''
+  colYao: '', colYuan: '', colChi: '', colSystemType: '', colIntelligent: ''
 })
+
+const formFieldKeys = Object.keys(initialFormState())
+
+function assignFormData(source) {
+  formFieldKeys.forEach(key => {
+    if (source[key] !== undefined) editForm[key] = source[key]
+  })
+}
 
 function fillCategoryAndDomain() {
   if (props.selectedNode) {
@@ -2241,6 +2262,21 @@ function getRemarks(row) {
   return collectRemarks(row)
 }
 
+function getIntelligentChildren(row, checkExpanded = true) {
+  const result = []
+  // 仅对顶层节点检查展开状态，子节点始终递归收集
+  const shouldCollect = !checkExpanded || !expandedNodeIds.value.has(row.id)
+  if (shouldCollect && row.children && row.children.length > 0) {
+    for (const child of row.children) {
+      if (child.colIntelligent === '1') {
+        result.push({ id: child.id, name: child.colProductSystem || '' })
+      }
+      result.push(...getIntelligentChildren(child, false))
+    }
+  }
+  return result
+}
+
 function onInsertClick() {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先勾选条目')
@@ -2279,7 +2315,10 @@ function closeContextMenu() {
 
 function onCtxCopy() {
   if (ctxMenu.row) {
-    clipboard.entryIds = [ctxMenu.row.id]
+    // 多选时复制所有选中行，单选时只复制右键行
+    clipboard.entryIds = selectedIds.value.includes(ctxMenu.row.id)
+      ? [...selectedIds.value]
+      : [ctxMenu.row.id]
   } else {
     ElMessage.warning('请先勾选条目')
     closeContextMenu()
@@ -2292,7 +2331,9 @@ function onCtxCopy() {
 
 function onCtxCut() {
   if (ctxMenu.row) {
-    clipboard.entryIds = [ctxMenu.row.id]
+    clipboard.entryIds = selectedIds.value.includes(ctxMenu.row.id)
+      ? [...selectedIds.value]
+      : [ctxMenu.row.id]
   } else {
     ElMessage.warning('请先勾选条目')
     closeContextMenu()
@@ -2321,6 +2362,7 @@ async function onCtxPasteSibling() {
       clipboard.mode = null
       clipboard.entryIds = []
     }
+    selectedIds.value = []
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
@@ -2348,6 +2390,7 @@ async function onCtxPasteChild() {
       clipboard.mode = null
       clipboard.entryIds = []
     }
+    selectedIds.value = []
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
@@ -2363,6 +2406,7 @@ async function onCtxLevelUp() {
   try {
     await levelUp(row.id)
     ElMessage.success('升级成功')
+    selectedIds.value = []
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '升级失败')
@@ -2376,6 +2420,7 @@ async function onCtxLevelDown() {
   try {
     await levelDown(row.id)
     ElMessage.success('降级成功')
+    selectedIds.value = []
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '降级失败')
@@ -2388,6 +2433,7 @@ async function onCtxMoveUp() {
   if (!row) { closeContextMenu(); return }
   try {
     await moveUp(row.id)
+    selectedIds.value = []
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '上移失败')
@@ -2400,6 +2446,7 @@ async function onCtxMoveDown() {
   if (!row) { closeContextMenu(); return }
   try {
     await moveDown(row.id)
+    selectedIds.value = []
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e.response?.data?.message || e.message || '下移失败')
@@ -2583,6 +2630,7 @@ async function handleQuery(preserveExpand = false) {
        productManager: queryForm.productManager || undefined,
        solution: queryForm.solution || undefined,
        versionTag: queryForm.versionDiv || undefined,
+       intelligent: queryForm.intelligent ? '1' : undefined,
        bizCategory: props.selectedNode?.id !== 'all' ? (props.selectedNode?.categoryLabel || undefined) : undefined,
        bizDomain: props.selectedNode?.id !== 'all' ? (props.selectedNode?.domainLabel || undefined) : undefined
      })
@@ -2653,11 +2701,12 @@ function buildTree(entries) {
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
-    Object.assign(editForm, initialFormState(), row)
+    Object.assign(editForm, initialFormState())
+    assignFormData(row)
     try {
       const res = await getEntry(row.id)
       if (res?.data) {
-        Object.assign(editForm, res.data)
+        assignFormData(res.data)
       }
     } catch (e) { /* fallback to row data */ }
     syncVersionFromForm()
@@ -2673,11 +2722,12 @@ function buildTree(entries) {
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
-    Object.assign(editForm, initialFormState(), row)
+    Object.assign(editForm, initialFormState())
+    assignFormData(row)
     try {
       const res = await getEntry(row.id)
       if (res?.data) {
-        Object.assign(editForm, res.data)
+        assignFormData(res.data)
       }
     } catch (e) { /* fallback to row data */ }
     syncVersionFromForm()
@@ -2736,7 +2786,6 @@ async function deleteRow(row) {
 }
 
 async function saveEdit() {
-  autoSaving = true
   try {
   syncVersionToForm()
   let savedId = null
@@ -2768,8 +2817,8 @@ async function saveEdit() {
   if (savedId) {
     emit('preview-reload', savedId)
   }
-  } finally {
-    autoSaving = false
+  } catch (e) {
+    ElMessage.error('保存失败')
   }
 }
 
@@ -3057,18 +3106,74 @@ watch(() => props.versionId, () => {
   font-size: 12px; padding: 4px 8px; border-radius: 4px; white-space: nowrap;
   line-height: 1.4; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
+.intelligent-box :deep(.el-form-item__content) {
+  background: var(--si-bg-card);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.edit-info-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.edit-info-panel .info-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--si-text-secondary);
+}
+.edit-info-panel .info-item .info-label {
+  color: var(--si-text-muted);
+  min-width: 50px;
+}
+.edit-info-panel .info-item .info-value {
+  color: var(--si-text-primary);
+}
+.edit-form-compact :deep(.el-tabs) {
+  margin-top: 0;
+}
+.edit-form-compact :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+.edit-form-compact :deep(.el-row) {
+  margin-bottom: 0;
+}
+.version-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.version-series-row,
+.version-min-row {
+  display: grid;
+  grid-template-columns: 70px 70px 70px 70px;
+}
+.version-slot {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+}
+.version-slot-hidden {
+  visibility: hidden;
+}
 .solution-section {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   border: 1px solid var(--si-border);
-  border-radius: 8px;
-  padding: 10px 16px;
-  margin-top: 4px;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-top: 2px;
   background: var(--si-bg-card);
 }
 .solution-section-label {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--si-text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
@@ -3076,7 +3181,7 @@ watch(() => props.versionId, () => {
 .solution-checkbox-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: 4px 12px;
 }
 .ctx-menu {
   position: fixed; z-index: 10001;
@@ -3105,4 +3210,11 @@ watch(() => props.versionId, () => {
   line-height: 1;
 }
 .remark-badge:hover { background: #CF9236; }
+.ai-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 5px; height: 18px; border-radius: 9px;
+  background: linear-gradient(135deg, #7B68EE, #9370DB); color: #fff; font-size: 10px; font-weight: bold;
+  margin-left: 4px; flex-shrink: 0; cursor: pointer; line-height: 1;
+}
+.ai-badge:hover { background: linear-gradient(135deg, #6A5ACD, #8B7FD4); }
 </style>

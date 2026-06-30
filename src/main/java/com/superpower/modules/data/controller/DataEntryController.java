@@ -123,9 +123,10 @@ public class DataEntryController {
             @RequestParam(required = false) String versionTag,
             @RequestParam(required = false) String bizCategory,
             @RequestParam(required = false) String bizDomain,
-            @RequestParam(required = false) Integer level) {
+            @RequestParam(required = false) Integer level,
+            @RequestParam(required = false) String intelligent) {
         List<DataEntry> entries = dataEntryService.query(versionId, customTabId, name, status, productManager,
-                solution, versionTag, bizCategory, bizDomain, level);
+                solution, versionTag, bizCategory, bizDomain, level, intelligent);
         return Result.success(entries.stream().map(DataEntrySummaryDTO::fromEntity).toList());
     }
 

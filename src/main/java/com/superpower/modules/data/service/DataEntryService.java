@@ -28,6 +28,8 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -201,7 +203,7 @@ public class DataEntryService {
 
     @Transactional
     public List<DataEntry> query(Long versionId, Long customTabId, String name, List<String> statusList, String productManager,
-                                 String solution, String versionDivision, String bizCategory, String bizDomain, Integer level) {
+                                 String solution, String versionDivision, String bizCategory, String bizDomain, Integer level, String intelligent) {
         boolean hasFilter = (name != null && !name.isEmpty()) || (statusList != null && !statusList.isEmpty())
                 || (productManager != null && !productManager.isEmpty()) || (solution != null && !solution.isEmpty())
                 || (versionDivision != null && !versionDivision.isEmpty())
@@ -230,7 +232,40 @@ public class DataEntryService {
         }
         result = new ArrayList<>(result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList());
         result = sortByCategoryOrder(result, versionId);
+        // 智能化过滤：intelligent="1" 时，保留自身 colIntelligent="1" 的条目或其子树包含智能化条目的父条目
+        if (intelligent != null && "1".equals(intelligent)) {
+            result = filterByIntelligent(result, versionId);
+        }
         return result;
+    }
+
+    private List<DataEntry> filterByIntelligent(List<DataEntry> entries, Long versionId) {
+        // 收集所有 colIntelligent="1" 的条目 ID
+        Set<Long> intelligentIds = new HashSet<>();
+        for (DataEntry e : entries) {
+            if ("1".equals(e.getColIntelligent())) {
+                intelligentIds.add(e.getId());
+            }
+        }
+        // 如果没有智能化条目，返回空列表
+        if (intelligentIds.isEmpty()) return new ArrayList<>();
+        // 收集智能化条目的所有祖先 ID
+        Map<Long, DataEntry> entryById = new HashMap<>();
+        for (DataEntry e : entries) entryById.put(e.getId(), e);
+        Set<Long> resultIds = new HashSet<>(intelligentIds);
+        for (Long id : intelligentIds) {
+            DataEntry e = entryById.get(id);
+            while (e != null && e.getParentId() != null) {
+                DataEntry parent = entryById.get(e.getParentId());
+                if (parent != null) {
+                    resultIds.add(parent.getId());
+                    e = parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        return entries.stream().filter(e -> resultIds.contains(e.getId())).toList();
     }
 
     private List<DataEntry> sortByCategoryOrder(List<DataEntry> entries, Long versionId) {
@@ -1158,13 +1193,8 @@ public class DataEntryService {
         if (idx <= 0) {
             throw new BusinessException("已经是第一个，无法上移");
         }
-        DataEntry prev = siblings.get(idx - 1);
-        Integer curSort = entry.getSortOrder();
-        Integer prevSort = prev.getSortOrder();
-        entry.setSortOrder(prevSort);
-        prev.setSortOrder(curSort);
-        entryRepository.save(entry);
-        entryRepository.save(prev);
+        siblings.add(idx - 1, siblings.remove(idx));
+        reassignSortOrder(siblings);
     }
 
     @Transactional
@@ -1179,32 +1209,42 @@ public class DataEntryService {
         if (idx < 0 || idx >= siblings.size() - 1) {
             throw new BusinessException("已经是最后一个，无法下移");
         }
-        DataEntry next = siblings.get(idx + 1);
-        Integer curSort = entry.getSortOrder();
-        Integer nextSort = next.getSortOrder();
-        entry.setSortOrder(nextSort);
-        next.setSortOrder(curSort);
-        entryRepository.save(entry);
-        entryRepository.save(next);
+        siblings.add(idx + 1, siblings.remove(idx));
+        reassignSortOrder(siblings);
+    }
+
+    private void reassignSortOrder(List<DataEntry> siblings) {
+        for (int i = 0; i < siblings.size(); i++) {
+            siblings.get(i).setSortOrder(i);
+        }
+        entryRepository.saveAll(siblings);
     }
 
     private List<DataEntry> findSiblings(DataEntry entry) {
+        List<DataEntry> siblings;
         if (entry.getLevel() != null && entry.getLevel() == 3) {
             String domain = entry.getColBizDomain();
             if (domain != null && !domain.isEmpty()) {
-                return entryRepository.findL3ByDomain(entry.getVersionId(), domain);
+                siblings = entryRepository.findL3ByDomain(entry.getVersionId(), domain);
+            } else {
+                siblings = entryRepository.findRootEntries(entry.getVersionId());
             }
-            return entryRepository.findRootEntries(entry.getVersionId());
+        } else {
+            Long parentId = entry.getParentId();
+            if (parentId != null) {
+                return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
+            }
+            String domain = entry.getColBizDomain();
+            if (domain != null && !domain.isEmpty()) {
+                siblings = entryRepository.findRootEntriesByDomain(entry.getVersionId(), domain);
+            } else {
+                siblings = entryRepository.findRootEntries(entry.getVersionId());
+            }
         }
-        Long parentId = entry.getParentId();
-        if (parentId != null) {
-            return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
-        }
-        String domain = entry.getColBizDomain();
-        if (domain != null && !domain.isEmpty()) {
-            return entryRepository.findRootEntriesByDomain(entry.getVersionId(), domain);
-        }
-        return entryRepository.findRootEntries(entry.getVersionId());
+        siblings.sort(Comparator
+                .comparing((DataEntry e) -> e.getParentId(), Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+        return siblings;
     }
 
     @Transactional
@@ -1367,6 +1407,10 @@ public class DataEntryService {
         }
         if (urls.isEmpty()) return;
         List<ImageResource> allImages = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(entry.getVersionId());
+        // 收集需要移动的图片（oldPath → finalPath），事务提交后统一移动文件
+        List<String> oldPaths = new ArrayList<>();
+        List<String> newPaths = new ArrayList<>();
+        List<Long> moveIds = new ArrayList<>();
         for (ImageResource img : allImages) {
             if (urls.contains(img.getUrl())) {
                 boolean changed = false;
@@ -1374,10 +1418,36 @@ public class DataEntryService {
                 if (dom != null && !dom.equals(img.getDomain())) { img.setDomain(dom); changed = true; }
                 if (prod != null && !prod.equals(img.getProduct())) { img.setProduct(prod); changed = true; }
                 if (changed) {
-                    moveImageFile(img);
+                    String oldP = img.getPath(); // 改实体前记录原路径
+                    recomputeImageLocation(img);  // 仅计算新 path/url，不移动文件
                     imageResourceRepository.save(img);
+                    if (oldP != null && !oldP.equals(img.getPath())) {
+                        oldPaths.add(oldP);
+                        newPaths.add(img.getPath());
+                        moveIds.add(img.getId());
+                    }
                 }
             }
+        }
+        // afterCommit：事务提交后才移动物理文件，彻底消除"文件已移、DB 回滚"的不一致窗口
+        if (!oldPaths.isEmpty() && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    for (int i = 0; i < oldPaths.size(); i++) {
+                        try {
+                            Path src = Paths.get(oldPaths.get(i));
+                            Path dst = Paths.get(newPaths.get(i));
+                            if (Files.exists(src)) {
+                                if (dst.getParent() != null) Files.createDirectories(dst.getParent());
+                                Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                        } catch (Exception e) {
+                            log.error("afterCommit 图片文件移动失败 imageId={} src={} dst={}: {}", moveIds.get(i), oldPaths.get(i), newPaths.get(i), e.getMessage());
+                        }
+                    }
+                }
+            });
         }
     }
 
@@ -1410,8 +1480,29 @@ public class DataEntryService {
                     + versionDir + "/" + subPath + "/" + img.getStoredName();
             img.setUrl(newUrl);
         } catch (Exception e) {
-            log.warn("移动图片文件失败 id={}: {}", img.getId(), e.getMessage());
+            log.error("移动图片文件失败（DB已改，物理文件未对齐） imageId={} path={}: {}", img.getId(), img.getPath(), e.getMessage());
         }
+    }
+
+    /**
+     * 根据 category/domain/product/storedName 重新计算 path/url 并 set 到实体（仅计算，不移动物理文件）。
+     * 与 ImageResourceService.recomputeImageLocation 同义，用于 syncEntryImageClassifications。
+     */
+    private void recomputeImageLocation(ImageResource img) {
+        String urlPrefix = "/api/images/file/";
+        String reqPrefix = "/api/requirements/file/";
+        String baseUrl;
+        if (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) {
+            baseUrl = imageStoragePath.replace("images", "requirements");
+        } else {
+            baseUrl = imageStoragePath;
+        }
+        String versionDir = img.getVersionId() != null ? String.valueOf(img.getVersionId()) : "0";
+        String subPath = buildSubPath(img.getCategory(), img.getDomain(), img.getProduct());
+        Path newPath = Paths.get(baseUrl, versionDir, subPath, img.getStoredName());
+        img.setPath(newPath.toString());
+        String prefix = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) ? reqPrefix : urlPrefix;
+        img.setUrl(prefix + versionDir + "/" + subPath + "/" + img.getStoredName());
     }
 
     private boolean shouldCloneImages(DataEntry source, DataEntry target) {
@@ -1646,6 +1737,12 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() - 1);
         entry.setParentId(parent.getParentId());
         entryRepository.save(entry);
+        // 级联更新所有后代节点的 level
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry desc : descendants) {
+            desc.setLevel(desc.getLevel() - 1);
+            entryRepository.save(desc);
+        }
         syncImagesProductIdForBranch(entry);
     }
 
@@ -1672,6 +1769,12 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() + 1);
         entry.setParentId(prevSibling.getId());
         entryRepository.save(entry);
+        // 级联更新所有后代节点的 level
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry desc : descendants) {
+            desc.setLevel(desc.getLevel() + 1);
+            entryRepository.save(desc);
+        }
         syncImagesProductIdForBranch(entry);
     }
 

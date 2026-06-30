@@ -58,72 +58,91 @@
     </el-dialog>
 
     <div class="workbench-body">
-      <div class="left-panel">
-        <TreePanel :version-id="selectedVersion.id" :highlight-node="treeHighlight" @select="onTreeSelect" />
-      </div>
-      <div class="right-panel">
-        <div class="tabs-wrapper">
-          <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
-            <el-tab-pane label="产品全景图" name="panorama">
-              <PanoramaTab
-                v-if="activeTab === 'panorama'"
-                :version-id="selectedVersion.id"
-                :selected-node="selectedNode"
-                @navigate-to-list="onNavigateToList"
-                @open-preview="onOpenPreview"
-              />
-            </el-tab-pane>
-            <el-tab-pane label="统计视图" name="stats">
-              <StatsTab v-if="activeTab === 'stats'" :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
-            </el-tab-pane>
-            <el-tab-pane label="数据清单" name="list">
-              <DataListTab
-                v-show="activeTab === 'list'"
-                ref="dataListRef"
-                :version-id="selectedVersion.id"
-                :selected-node="selectedNode"
-                :is-editing="selectedVersion.status === 'draft'"
-                :user-role="currentUserRole"
-                :refresh-trigger="listRefreshTrigger"
-                @insert-to-list="onInsertToList"
-                @open-preview="onOpenPreview"
-                @preview-reload="onPreviewReload"
-              />
-            </el-tab-pane>
-            <el-tab-pane
-              v-for="tab in customTabs"
-              :key="'custom-' + tab.id"
-              :name="'custom-' + tab.id"
-              :closable="isAdmin || String(tab.userId) === String(currentUserId)"
-            >
-              <template #label>
-                <span @dblclick.stop="(isAdmin || String(tab.userId) === String(currentUserId)) && onRenameTab(tab)">{{ tab.name }}</span>
-              </template>
-              <DataListTab
-                v-if="activeTab === 'custom-' + tab.id"
-                :ref="el => { if (el) customTabRefs[tab.id] = el }"
-                :version-id="selectedVersion.id"
-                :selected-node="selectedNode"
-                :is-editing="selectedVersion.status === 'draft'"
-                :custom-tab-id="tab.id"
-                :user-role="currentUserRole"
-                :refresh-trigger="customTabRefresh"
-                @insert-to-list="onInsertToList"
-                @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
-                @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
-                @open-preview="onOpenPreview"
-                @preview-reload="onPreviewReload"
-              />
-            </el-tab-pane>
-            <el-tab-pane name="__add_list" disabled>
-              <template #label>
-                <span class="add-list-tab-btn" @click.stop.prevent="onAddList">
-                  <el-icon><Plus /></el-icon> 添加清单
-                </span>
-              </template>
-            </el-tab-pane>
-          </el-tabs>
-        </div>
+      <div class="tabs-wrapper">
+        <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
+          <el-tab-pane label="产品全景图" name="panorama">
+            <PanoramaTab
+              v-if="activeTab === 'panorama'"
+              :version-id="selectedVersion.id"
+              :selected-node="selectedNode"
+              @navigate-to-list="onNavigateToList"
+              @open-preview="onOpenPreview"
+            />
+          </el-tab-pane>
+          <el-tab-pane label="统计视图" name="stats">
+            <StatsTab v-if="activeTab === 'stats'" :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
+          </el-tab-pane>
+          <el-tab-pane label="数据清单" name="list">
+            <div class="list-with-tree">
+              <div class="list-sidebar" :class="{ collapsed: sidebarCollapsed }">
+                <div class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed" :title="sidebarCollapsed ? '展开导航' : '收起导航'">
+                  <el-icon :size="16"><component :is="sidebarCollapsed ? 'DArrowRight' : 'DArrowLeft'" /></el-icon>
+                </div>
+                <div class="sidebar-content" v-show="!sidebarCollapsed">
+                  <TreePanel :version-id="selectedVersion.id" :highlight-node="treeHighlight" @select="onTreeSelect" />
+                </div>
+              </div>
+              <div class="list-content">
+                <DataListTab
+                  v-show="activeTab === 'list'"
+                  ref="dataListRef"
+                  :version-id="selectedVersion.id"
+                  :selected-node="selectedNode"
+                  :is-editing="selectedVersion.status === 'draft'"
+                  :user-role="currentUserRole"
+                  :refresh-trigger="listRefreshTrigger"
+                  @insert-to-list="onInsertToList"
+                  @open-preview="onOpenPreview"
+                  @preview-reload="onPreviewReload"
+                />
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane
+            v-for="tab in customTabs"
+            :key="'custom-' + tab.id"
+            :name="'custom-' + tab.id"
+            :closable="isAdmin || String(tab.userId) === String(currentUserId)"
+          >
+            <template #label>
+              <span @dblclick.stop="(isAdmin || String(tab.userId) === String(currentUserId)) && onRenameTab(tab)">{{ tab.name }}</span>
+            </template>
+            <div class="list-with-tree">
+              <div class="list-sidebar" :class="{ collapsed: sidebarCollapsed }">
+                <div class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed" :title="sidebarCollapsed ? '展开导航' : '收起导航'">
+                  <el-icon :size="16"><component :is="sidebarCollapsed ? 'DArrowRight' : 'DArrowLeft'" /></el-icon>
+                </div>
+                <div class="sidebar-content" v-show="!sidebarCollapsed">
+                  <TreePanel :version-id="selectedVersion.id" :highlight-node="treeHighlight" @select="onTreeSelect" />
+                </div>
+              </div>
+              <div class="list-content">
+                <DataListTab
+                  v-if="activeTab === 'custom-' + tab.id"
+                  :ref="el => { if (el) customTabRefs[tab.id] = el }"
+                  :version-id="selectedVersion.id"
+                  :selected-node="selectedNode"
+                  :is-editing="selectedVersion.status === 'draft'"
+                  :custom-tab-id="tab.id"
+                  :user-role="currentUserRole"
+                  :refresh-trigger="customTabRefresh"
+                  @insert-to-list="onInsertToList"
+                  @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
+                  @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
+                  @open-preview="onOpenPreview"
+                  @preview-reload="onPreviewReload"
+                />
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane name="__add_list" disabled>
+            <template #label>
+              <span class="add-list-tab-btn" @click.stop.prevent="onAddList">
+                <el-icon><Plus /></el-icon> 添加清单
+              </span>
+            </template>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </div>
     <PreviewDialog ref="globalPreviewRef" v-model="globalPreviewVisible" :entry-id="globalPreviewEntryId" :batch-entry-ids="globalPreviewBatchIds" @preview-message="onGlobalPreviewMessage" />
@@ -308,12 +327,14 @@ import { deleteEntry } from '../../api/data'
 import { approveEntry, getApprovalLogs } from '../../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import { DArrowLeft, DArrowRight } from '@element-plus/icons-vue'
 
 const versions = ref([])
 const currentUserRole = localStorage.getItem('roleCode') || 'USER'
 const isAdmin = currentUserRole === 'ADMIN'
 const currentUserId = localStorage.getItem('userId')
 const selectedVersion = ref(null)
+const sidebarCollapsed = ref(false)
 const showVersionDialog = ref(false)
 const selectedNode = ref(null)
 const treeHighlight = ref(null)
@@ -725,9 +746,20 @@ async function onRenameTab(tab) {
     statsRefreshTrigger.value = Date.now()
   } else if (tab.paneName === 'list') {
     listRefreshTrigger.value = Date.now()
+    syncTreeHighlight()
   } else if (tab.paneName?.startsWith('custom-')) {
     customTabRefresh.value++
+    syncTreeHighlight()
   }
+ }
+
+ function syncTreeHighlight() {
+   const node = selectedNode.value
+   if (node) {
+     treeHighlight.value = { ...node, _ts: Date.now() }
+   } else {
+     treeHighlight.value = { id: 'all', _ts: Date.now() }
+   }
  }
 
 function onInsertToList(entryIds) {
@@ -1000,6 +1032,8 @@ async function handleCancelGenerate(row) {
 .tabs-wrapper {
   position: relative;
   height: 100%;
+  flex: 1;
+  min-width: 0;
 }
 .tabs-wrapper :deep(.el-tabs__header) {
   padding-left: 8px;
@@ -1032,28 +1066,58 @@ async function handleCancelGenerate(row) {
 .workbench-body {
   display: flex;
   flex: 1;
-  gap: 12px;
   overflow: hidden;
   min-height: 0;
+  padding: 0 16px;
 }
-.left-panel {
+.list-with-tree {
+  display: flex;
+  height: 100%;
+  gap: 12px;
+}
+.list-sidebar {
   width: 260px;
   background: var(--si-bg-card);
   border: 1px solid var(--si-border);
   border-radius: var(--si-radius-lg);
-  overflow-y: auto;
+  overflow: hidden;
   flex-shrink: 0;
   box-shadow: var(--si-shadow-sm);
-}
-.right-panel {
-  flex: 1;
-  background: var(--si-bg-card);
-  border: 1px solid var(--si-border);
-  border-radius: var(--si-radius-lg);
-  overflow: hidden;
+  transition: width 0.25s ease;
+  position: relative;
   display: flex;
   flex-direction: column;
-  box-shadow: var(--si-shadow-sm);
+}
+.list-sidebar.collapsed {
+  width: 36px;
+}
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+}
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  cursor: pointer;
+  color: var(--si-text-muted);
+  border-bottom: 1px solid var(--si-border);
+  transition: background var(--si-transition), color var(--si-transition);
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover {
+  background: var(--si-bg-hover);
+  color: var(--si-text-primary);
+}
+.list-sidebar.collapsed .sidebar-toggle {
+  border-bottom: none;
+  height: 36px;
+}
+.list-content {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
 }
 :deep(.el-tabs) { display: flex; flex-direction: column; height: 100%; }
 :deep(.el-tabs__header) { flex-shrink: 0; }

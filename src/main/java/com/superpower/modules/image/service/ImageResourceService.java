@@ -23,6 +23,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -295,11 +297,11 @@ public class ImageResourceService {
                 .orElseThrow(() -> new BusinessException("图片不存在"));
         String oldUrl = image.getUrl();
         String oldName = image.getFilename();
+        String originalPath = image.getPath(); // ★ 改实体前记录原始物理路径，供 afterCommit 移动
         boolean nameChanged = body.getFilename() != null && !body.getFilename().equals(image.getFilename());
 
-        // Phase 1: 只读 + 纯计算（实体不 dirty，不触发 auto-flush）
+        // Phase 1: 纯计算 + 同名校验（不动物理文件，不触发 dirty）
         String newStoredName = null;
-        Path newPath = null;
         String newUrl = null;
         if (nameChanged) {
             String oldStoredName = image.getStoredName();
@@ -318,15 +320,6 @@ public class ImageResourceService {
                         }
                     }
                 }
-                Path oldFilePath = Paths.get(image.getPath());
-                if (Files.exists(oldFilePath)) {
-                    newPath = oldFilePath.resolveSibling(newStoredName);
-                    try {
-                        Files.move(oldFilePath, newPath, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (Exception e) {
-                        throw new BusinessException("重命名物理文件失败: " + e.getMessage());
-                    }
-                }
                 newUrl = oldUrl;
                 if (oldUrl != null && oldUrl.contains(oldStoredName)) {
                     newUrl = oldUrl.substring(0, oldUrl.lastIndexOf(oldStoredName)) + newStoredName;
@@ -336,13 +329,12 @@ public class ImageResourceService {
             }
         }
 
-        // Phase 2: 修改实体 + 保存（dirty 窗口极短）
+        // Phase 2: 修改实体 + 保存（事务体精简，持锁最短，弱网下最抗 SQLITE_BUSY）
         if (nameChanged) {
             image.setFilename(body.getFilename());
         }
         if (newStoredName != null) {
             image.setStoredName(newStoredName);
-            if (newPath != null) image.setPath(newPath.toString());
             if (newUrl != null) image.setUrl(newUrl);
         }
         boolean locationChanged = false;
@@ -358,14 +350,50 @@ public class ImageResourceService {
             image.setProduct(body.getProduct());
             locationChanged = true;
         }
-        if (locationChanged) {
-            moveImageFile(image);
+        // 目录变更或改名后，重新计算 path/url（仅计算并 set，不移动文件）
+        if (locationChanged || newStoredName != null) {
+            recomputeImageLocation(image);
         }
         imageResourceRepository.saveAndFlush(image);
 
-        // Phase 3: 引用同步（按 data-id 精确定位 image-card 块）
+        // Phase 3: 引用同步（事务内，与 image_resource 原子一致；DB 操作可回滚，必须留在事务内）
         if (nameChanged && newStoredName != null) {
             syncImageNameInReferences(image.getId(), image.getUrl(), image.getFilename());
+        }
+
+        // Phase 4: afterCommit —— 仅文件移动（不可回滚的文件系统操作，必须等事务提交后再执行）
+        final String finalPath = image.getPath();
+        final boolean needMove = !originalPath.equals(finalPath);
+        if (needMove) {
+            final Long imageId = image.getId();
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        try {
+                            Path src = Paths.get(originalPath);
+                            Path dst = Paths.get(finalPath);
+                            if (Files.exists(src)) {
+                                if (dst.getParent() != null) Files.createDirectories(dst.getParent());
+                                Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                        } catch (Exception e) {
+                            log.error("afterCommit 物理文件移动失败 imageId={} src={} dst={}: {}", imageId, originalPath, finalPath, e.getMessage());
+                        }
+                    }
+                });
+            } else {
+                try {
+                    Path src = Paths.get(originalPath);
+                    Path dst = Paths.get(finalPath);
+                    if (Files.exists(src)) {
+                        if (dst.getParent() != null) Files.createDirectories(dst.getParent());
+                        Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (Exception e) {
+                    log.error("文件移动失败（无事务上下文） imageId={} src={} dst={}: {}", image.getId(), originalPath, finalPath, e.getMessage());
+                }
+            }
         }
 
         return image;
@@ -785,8 +813,29 @@ public class ImageResourceService {
             String prefix = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) ? reqPrefix : urlPrefix;
             img.setUrl(prefix + versionDir + "/" + subPath + "/" + img.getStoredName());
         } catch (Exception e) {
-            log.warn("移动图片文件失败 id={}: {}", img.getId(), e.getMessage());
+            log.error("移动图片文件失败（DB已改，物理文件未对齐） imageId={} path={}: {}", img.getId(), img.getPath(), e.getMessage());
         }
+    }
+
+    /**
+     * 根据 category/domain/product/storedName 重新计算 path/url 并 set 到实体（仅计算，不移动物理文件）。
+     * 文件移动由调用方在事务提交后（afterCommit）执行，以保证 DB 与文件系统一致性。
+     */
+    private void recomputeImageLocation(ImageResource img) {
+        String urlPrefix = "/api/images/file/";
+        String reqPrefix = "/api/requirements/file/";
+        String baseUrl;
+        if (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) {
+            baseUrl = storagePath.replace("images", "requirements");
+        } else {
+            baseUrl = storagePath;
+        }
+        String versionDir = img.getVersionId() != null ? String.valueOf(img.getVersionId()) : "0";
+        String subPath = buildSubPath(img.getCategory(), img.getDomain(), img.getProduct());
+        Path newPath = Paths.get(baseUrl, versionDir, subPath, img.getStoredName());
+        img.setPath(newPath.toString());
+        String prefix = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) ? reqPrefix : urlPrefix;
+        img.setUrl(prefix + versionDir + "/" + subPath + "/" + img.getStoredName());
     }
 
     private String getExtension(String filename, String contentType) {

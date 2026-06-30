@@ -67,11 +67,16 @@ watch(() => props.versionId, async (val) => {
 }, { immediate: true })
 
 watch(() => props.highlightNode, (node) => {
-  if (!node || !treeRef.value) return
-  const key = findNodeKeyByLabel(node.categoryLabel, node.domainLabel)
-  if (key) {
-    selectedAll.value = false
-    treeRef.value.setCurrentKey(key)
+  if (!treeRef.value || !node) return
+  if (node.id === 'all') {
+    selectedAll.value = true
+    treeRef.value.setCurrentKey(null)
+  } else {
+    const key = findNodeKeyByLabel(node.categoryLabel, node.domainLabel)
+    if (key) {
+      selectedAll.value = false
+      treeRef.value.setCurrentKey(key)
+    }
   }
 }, { flush: 'post' })
 
