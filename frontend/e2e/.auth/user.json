@@ -1,0 +1,30 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:5173",
+      "localStorage": [
+        {
+          "name": "roleCode",
+          "value": "ADMIN"
+        },
+        {
+          "name": "token",
+          "value": "eyJhbGciOiJIUzM4NCJ9.eyJzdWIiOiJhZG1pbiIsInVzZXJJZCI6MSwicm9sZSI6IkFETUlOIiwiaWF0IjoxNzgyODE5NTc3LCJleHAiOjE3ODI5MDU5Nzd9.4TsyxeaHDbK8c0keglGBxXg77xHa_WKc61HhkDeEn9lAyYvhRTQAAJ2EFLb9sB-5"
+        },
+        {
+          "name": "userId",
+          "value": "1"
+        },
+        {
+          "name": "username",
+          "value": "admin"
+        },
+        {
+          "name": "nickname",
+          "value": "金鹤"
+        }
+      ]
+    }
+  ]
+}

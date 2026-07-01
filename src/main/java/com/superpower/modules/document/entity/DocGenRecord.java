@@ -15,6 +15,9 @@ public class DocGenRecord {
     @Column(name = "version_id", nullable = false)
     private Long versionId;
 
+    @Column(name = "doc_name", length = 200)
+    private String docName;
+
     @Column(name = "doc_type", length = 20)
     private String docType;
 
@@ -47,6 +50,9 @@ public class DocGenRecord {
 
     @Column(name = "processed_entries")
     private Integer processedEntries;
+
+    @Column(name = "compress_images")
+    private Boolean compressImages;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();

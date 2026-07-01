@@ -1,0 +1,6 @@
+# 生产环境配置 - 连接远程 PostgreSQL
+spring:
+  datasource:
+    url: jdbc:postgresql://productlist-pg:5432/productlist
+    username: productlist
+    password: ${PG_PASSWORD:productlist123}

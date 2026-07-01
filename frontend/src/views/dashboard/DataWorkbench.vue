@@ -24,7 +24,7 @@
         <el-table-column prop="name" label="清单名称" />
       </el-table>
       <template #footer>
-        <el-button @click="showInsertDialog = false">取消</el-button>
+        <el-button @click="onCancelInsert">取消</el-button>
       </template>
     </el-dialog>
 
@@ -40,7 +40,7 @@
     </div>
 
     <el-dialog v-model="showVersionDialog" title="切换版本" width="500px">
-      <el-table :data="versions" highlight-current-row @current-change="onVersionSelect" style="cursor:pointer;">
+      <el-table :data="versions" highlight-current-row @current-change="onSwitchVersion" style="cursor:pointer;">
         <el-table-column prop="versionNo" label="版本号" width="100" />
         <el-table-column prop="status" label="状态" width="80">
           <template #default="{ row }">
@@ -58,60 +58,123 @@
     </el-dialog>
 
     <div class="workbench-body">
-      <div class="left-panel">
-        <TreePanel :version-id="selectedVersion.id" @select="onTreeSelect" />
-      </div>
-      <div class="right-panel">
-        <div class="tabs-wrapper">
-          <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
-            <el-tab-pane label="统计视图" name="stats">
-              <StatsTab :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
-            </el-tab-pane>
-            <el-tab-pane label="数据清单" name="list">
-              <DataListTab
-                :version-id="selectedVersion.id"
-                :selected-node="selectedNode"
-                :is-editing="selectedVersion.status === 'draft'"
-                :user-role="currentUserRole"
-                :refresh-trigger="listRefreshTrigger"
-                @insert-to-list="onInsertToList"
-              />
-            </el-tab-pane>
-            <el-tab-pane
-              v-for="tab in customTabs"
-              :key="'custom-' + tab.id"
-              :name="'custom-' + tab.id"
-              :closable="true"
-            >
-              <template #label>
-                <span @dblclick.stop="onRenameTab(tab)">{{ tab.name }}</span>
-              </template>
-              <DataListTab
-                :version-id="selectedVersion.id"
-                :selected-node="selectedNode"
-                :is-editing="selectedVersion.status === 'draft'"
-                :custom-tab-id="tab.id"
-                :user-role="currentUserRole"
-                :refresh-trigger="customTabRefresh"
-                @insert-to-list="onInsertToList"
-                @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
-                @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
-              />
-            </el-tab-pane>
-          </el-tabs>
-          <el-button class="add-list-btn" size="small" @click="onAddList">添加清单</el-button>
-        </div>
+      <div class="tabs-wrapper">
+        <el-tabs v-model="activeTab" style="height: 100%; display: flex; flex-direction: column;" @tab-remove="onRemoveTab" @tab-click="onTabClick">
+          <el-tab-pane label="产品全景图" name="panorama">
+            <PanoramaTab
+              v-if="activeTab === 'panorama'"
+              :version-id="selectedVersion.id"
+              :selected-node="selectedNode"
+              @navigate-to-list="onNavigateToList"
+              @open-preview="onOpenPreview"
+            />
+          </el-tab-pane>
+          <el-tab-pane label="统计视图" name="stats">
+            <StatsTab v-if="activeTab === 'stats'" :version-id="selectedVersion.id" :refresh-trigger="statsRefreshTrigger" />
+          </el-tab-pane>
+          <el-tab-pane label="数据清单" name="list">
+            <div class="list-with-tree">
+              <div class="list-sidebar" :class="{ collapsed: sidebarCollapsed }">
+                <div class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed" :title="sidebarCollapsed ? '展开导航' : '收起导航'">
+                  <el-icon :size="16"><component :is="sidebarCollapsed ? 'DArrowRight' : 'DArrowLeft'" /></el-icon>
+                </div>
+                <div class="sidebar-content" v-show="!sidebarCollapsed">
+                  <TreePanel :version-id="selectedVersion.id" :highlight-node="treeHighlight" @select="onTreeSelect" />
+                </div>
+              </div>
+              <div class="list-content">
+                <DataListTab
+                  v-show="activeTab === 'list'"
+                  ref="dataListRef"
+                  :version-id="selectedVersion.id"
+                  :selected-node="selectedNode"
+                  :is-editing="selectedVersion.status === 'draft'"
+                  :user-role="currentUserRole"
+                  :refresh-trigger="listRefreshTrigger"
+                  @insert-to-list="onInsertToList"
+                  @open-preview="onOpenPreview"
+                  @preview-reload="onPreviewReload"
+                />
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane
+            v-for="tab in customTabs"
+            :key="'custom-' + tab.id"
+            :name="'custom-' + tab.id"
+            :closable="isAdmin || String(tab.userId) === String(currentUserId)"
+          >
+            <template #label>
+              <span @dblclick.stop="(isAdmin || String(tab.userId) === String(currentUserId)) && onRenameTab(tab)">{{ tab.name }}</span>
+            </template>
+            <div class="list-with-tree">
+              <div class="list-sidebar" :class="{ collapsed: sidebarCollapsed }">
+                <div class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed" :title="sidebarCollapsed ? '展开导航' : '收起导航'">
+                  <el-icon :size="16"><component :is="sidebarCollapsed ? 'DArrowRight' : 'DArrowLeft'" /></el-icon>
+                </div>
+                <div class="sidebar-content" v-show="!sidebarCollapsed">
+                  <TreePanel :version-id="selectedVersion.id" :highlight-node="treeHighlight" @select="onTreeSelect" />
+                </div>
+              </div>
+              <div class="list-content">
+                <DataListTab
+                  v-if="activeTab === 'custom-' + tab.id"
+                  :ref="el => { if (el) customTabRefs[tab.id] = el }"
+                  :version-id="selectedVersion.id"
+                  :selected-node="selectedNode"
+                  :is-editing="selectedVersion.status === 'draft'"
+                  :custom-tab-id="tab.id"
+                  :user-role="currentUserRole"
+                  :refresh-trigger="customTabRefresh"
+                  @insert-to-list="onInsertToList"
+                  @remove-from-list="(ids) => onRemoveFromList(tab.id, ids)"
+                  @generate-doc="(ids, tabId) => onGenerateDoc(ids, tabId)"
+                  @open-preview="onOpenPreview"
+                  @preview-reload="onPreviewReload"
+                />
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane name="__add_list" disabled>
+            <template #label>
+              <span class="add-list-tab-btn" @click.stop.prevent="onAddList">
+                <el-icon><Plus /></el-icon> 添加清单
+              </span>
+            </template>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </div>
+    <PreviewDialog ref="globalPreviewRef" v-model="globalPreviewVisible" :entry-id="globalPreviewEntryId" :batch-entry-ids="globalPreviewBatchIds" @preview-message="onGlobalPreviewMessage" />
+    <el-dialog v-model="previewLogVisible" :title="previewLogTitle" width="550px">
+      <el-timeline v-if="previewLogData.length > 0">
+        <el-timeline-item v-for="log in previewLogData" :key="log.id" :timestamp="log.createdAt?.substring(0, 16)" placement="top">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span>{{ log.operatorName || '未知' }}</span>
+            <span style="color:#303133;font-weight:500;">{{ actionLabel(log.action) }}</span>
+            <el-tag :type="logTagType(log.fromStatus)" size="small">{{ log.fromStatus }}</el-tag>
+            <span style="color:#909399;">→</span>
+            <el-tag :type="logTagType(log.toStatus)" size="small">{{ log.toStatus }}</el-tag>
+            <span v-if="log.action === 'reject' && log.comment" style="color: #F56C6C;margin-left:4px;">原因: {{ log.comment }}</span>
+          </div>
+        </el-timeline-item>
+      </el-timeline>
+      <div v-else style="color:#909399;text-align:center;padding:20px 0;">暂无审批记录</div>
+    </el-dialog>
   </div>
 
-  <el-dialog v-model="showDocDialog" title="生成文档" width="960px" top="2vh">
-    <el-form label-width="100px" size="small">
+  <el-dialog v-model="showDocDialog" title="生成文档" width="1100px" top="2vh">
+    <el-form v-if="isAdmin" label-width="100px" size="small">
+      <el-form-item label="文档名称">
+        <el-input v-model="docName" placeholder="请输入文档名称" style="max-width:400px;" />
+      </el-form-item>
       <el-form-item label="文档类型">
         <el-radio-group v-model="docType">
           <el-radio value="bid">招标参数</el-radio>
           <el-radio value="feature">功能说明</el-radio>
         </el-radio-group>
+        <el-checkbox v-if="docType === 'feature' && docFormat === 'word'" v-model="includeImages" style="margin-left:16px;">包含图片</el-checkbox>
+        <el-checkbox v-if="includeImages && docType === 'feature' && docFormat === 'word'" v-model="compressImages" style="margin-left:8px;">压缩图片（体积更小，清晰度略降）</el-checkbox>
       </el-form-item>
       <el-form-item label="输出格式">
         <el-radio-group v-model="docFormat">
@@ -139,12 +202,12 @@
         <el-radio-button value="30">近30天</el-radio-button>
         <el-radio-button value="">全部</el-radio-button>
       </el-radio-group>
-      <div style="margin-left:auto;">
+      <div style="margin-left:auto;" v-if="isAdmin">
         <el-button type="danger" size="small" :disabled="selectedRecIds.length === 0" @click="batchDeleteRecords">删除 ({{ selectedRecIds.length }})</el-button>
       </div>
     </div>
     <el-table :data="pagedRecords" size="small" max-height="380" v-loading="recordsLoading" @selection-change="onRecSelectionChange" ref="recTable" style="width:100%">
-      <el-table-column type="selection" width="40" />
+      <el-table-column type="selection" width="40" v-if="isAdmin" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'generating' || row.status === 'processing'" type="warning" size="small">
@@ -155,9 +218,19 @@
           <el-tag v-else type="info" size="small">{{ row.status || '未知' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="文档类型" min-width="160">
+      <el-table-column prop="docName" label="名称" min-width="160">
+        <template #default="{ row }">
+          {{ row.docName || (row.format === 'word' ? 'Word' : 'Excel') + '版' + (row.docType === 'bid' ? '招标参数' : '功能说明') }}
+        </template>
+      </el-table-column>
+      <el-table-column label="文档类型" min-width="130">
         <template #default="{ row }">
           {{ row.format === 'word' ? 'Word' : 'Excel' }}版{{ row.docType === 'bid' ? '招标参数' : '功能说明' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="版本" min-width="80">
+        <template #default="{ row }">
+          v{{ (versions.find(v => v.id === row.versionId) || {}).versionNo || '-' }}
         </template>
       </el-table-column>
       <el-table-column label="生成时间" min-width="170">
@@ -171,14 +244,14 @@
         </template>
       </el-table-column>
       <el-table-column prop="generatedByName" label="生成人" width="80" />
-      <el-table-column label="操作" width="150">
+      <el-table-column label="操作" width="100">
         <template #default="{ row }">
           <template v-if="row.status === 'completed' || row.status === 'success'">
-            <el-button type="primary" link size="small" @click="handlePreview(row)">预览</el-button>
             <el-button type="primary" link size="small" @click="handleDownload(row)">下载</el-button>
-            <el-button type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
+            <el-button v-if="isAdmin" type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
           </template>
-          <el-button v-else type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
+          <el-button v-else-if="row.status === 'generating' || row.status === 'processing'" type="warning" link size="small" @click="handleCancelGenerate(row)">取消</el-button>
+          <el-button v-else-if="isAdmin" type="danger" link size="small" @click="handleDeleteRecord(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -194,25 +267,30 @@
 
     <template #footer>
       <el-button @click="showDocDialog = false">取消</el-button>
-      <el-button type="primary" :loading="docLoading" @click="handleGenerate">生成</el-button>
+      <el-button v-if="isAdmin" type="primary" :loading="docLoading" :disabled="hasGenerating" @click="handleGenerate">生成</el-button>
+      <span v-if="hasGenerating" style="margin-left:8px;color:var(--el-color-warning);font-size:12px;">有文档正在生成中，请等待完成</span>
     </template>
   </el-dialog>
 
   <el-dialog v-model="showAddListDialog" title="添加清单" width="420px" :close-on-click-modal="false">
-    <el-form :model="addListForm" label-width="100px" size="small">
+    <el-form :model="addListForm" label-width="100px" size="small" @submit.native.prevent>
       <el-form-item label="清单名称" required>
-        <el-input v-model="addListForm.name" placeholder="请输入清单名称" />
+        <el-input v-model="addListForm.name" placeholder="请输入清单名称" @keyup.enter="handleAddList" />
       </el-form-item>
-      <el-form-item label="产品/系统">
-        <el-input v-model="addListForm.entryName" placeholder="按名称检索" clearable />
+    </el-form>
+    <el-divider style="margin: 12px 0 8px;" />
+    <div style="padding: 0 0 4px 16px; font-size: 13px; color: #909399;">可通过条件检索建立清单</div>
+    <el-form :model="addListForm" label-width="100px" size="small" style="margin-top: 4px;" @submit.native.prevent>
+      <el-form-item label="名称">
+        <el-input v-model="addListForm.entryName" placeholder="产品/系统名称" clearable @keyup.enter="handleAddList" />
       </el-form-item>
       <el-form-item label="状态">
-        <el-select v-model="addListForm.status" placeholder="全部" clearable style="width:100%">
+        <el-select v-model="addListForm.statusList" placeholder="全部" clearable multiple style="width:100%">
           <el-option v-for="s in addListStatusList" :key="s" :label="s" :value="s" />
         </el-select>
       </el-form-item>
       <el-form-item label="产品经理">
-        <el-input v-model="addListForm.productManager" placeholder="产品经理" clearable />
+        <el-input v-model="addListForm.productManager" placeholder="产品经理" clearable @keyup.enter="handleAddList" />
       </el-form-item>
       <el-form-item label="解决方案">
         <el-select v-model="addListForm.solution" placeholder="全部" clearable style="width:100%">
@@ -220,10 +298,8 @@
         </el-select>
       </el-form-item>
       <el-form-item label="版本划分">
-        <el-select v-model="addListForm.versionTag" placeholder="全部" clearable style="width:100%">
-          <el-option label="A-曜系列" value="A-曜系列" />
-          <el-option label="B-远系列" value="B-远系列" />
-          <el-option label="C-驰系列" value="C-驰系列" />
+        <el-select v-model="addListForm.versionTag" placeholder="全部" clearable multiple style="width:100%">
+          <el-option v-for="v in versionDivList" :key="v" :label="v" :value="v" />
         </el-select>
       </el-form-item>
     </el-form>
@@ -235,30 +311,44 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TreePanel from '../../components/TreePanel.vue'
 import StatsTab from '../../components/StatsTab.vue'
 import DataListTab from '../../components/DataListTab.vue'
-import { generateDocument, getDocRecords, downloadDocument, deleteDocRecord, getDocProgress } from '../../api/document'
+import PanoramaTab from '../../components/PanoramaTab.vue'
+import PreviewDialog from '../../components/PreviewDialog.vue'
+import { generateDocument, getDocRecords, deleteDocRecord, getDocProgress } from '../../api/document'
 import { getVersions } from '../../api/version'
-import { getCustomTabs, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
+import { getCustomTabs, createCustomTab, createCustomTabWithFilter, deleteCustomTab, renameCustomTab, addEntriesToTab, removeEntryFromTab } from '../../api/customTab'
 import { getOptions } from '../../api/option'
+import { deleteEntry } from '../../api/data'
+import { approveEntry, getApprovalLogs } from '../../api/approval'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
+import { DArrowLeft, DArrowRight } from '@element-plus/icons-vue'
 
 const versions = ref([])
 const currentUserRole = localStorage.getItem('roleCode') || 'USER'
+const isAdmin = currentUserRole === 'ADMIN'
+const currentUserId = localStorage.getItem('userId')
 const selectedVersion = ref(null)
+const sidebarCollapsed = ref(false)
 const showVersionDialog = ref(false)
 const selectedNode = ref(null)
-const activeTab = ref('stats')
+const treeHighlight = ref(null)
+const activeTab = ref('panorama')
 const showDocDialog = ref(false)
 const docType = ref('feature')
 const docFormat = ref('word')
 const dataScope = ref('all')
+const includeImages = ref(true)
+const compressImages = ref(false)
 const selectedEntryIds = ref([])
- const docCustomTabId = ref(null)
-  const docLoading = ref(false)
- const genRecords = ref([])
+const docCustomTabId = ref(null)
+const docLoading = ref(false)
+const docName = ref('')
+const genRecords = ref([])
+const hasGenerating = computed(() => genRecords.value.some(r => r.status === 'generating'))
 const recordsLoading = ref(false)
 const filterCreator = ref('')
 const filterTime = ref('')
@@ -277,19 +367,21 @@ const showAddListDialog = ref(false)
 const addListLoading = ref(false)
  const addListSolutions = ref([])
 const addListStatusList = ref([])
+const versionDivList = ['A-曜系列', 'B-远系列', 'C-驰系列', '非标配系统']
  const addListForm = reactive({
   name: '',
   entryName: '',
-  status: '',
+  statusList: [],
   productManager: '',
   solution: '',
-  versionTag: ''
+  versionTag: []
 })
 const progressTotal = ref(0)
 const progressProcessed = ref(0)
 const progressStatus = ref('')
 let pollTimer = null
 let progressTimer = null
+let progressFullTimestamp = null
 
 const showProgress = computed(() => activeGenRecordId.value !== null && progressTotal.value > 0)
 const progressPercent = computed(() => {
@@ -307,6 +399,10 @@ function getRecordPercent(row) {
   return 0
 }
 
+const progressStartTime = ref(null)
+
+const progressStuckWarned = ref(false)
+
 async function pollProgress() {
   if (!activeGenRecordId.value) return
   try {
@@ -319,17 +415,35 @@ async function pollProgress() {
       if (r.status === 'completed' || r.status === 'error') {
         stopProgressPoll()
         loadGenRecords()
+      } else if (progressTotal.value > 0 && progressProcessed.value >= progressTotal.value) {
+        if (!progressFullTimestamp) progressFullTimestamp = Date.now()
+        else if (Date.now() - progressFullTimestamp > 120000) {
+          console.warn('进度100%但120秒未完成，强制刷新')
+          stopProgressPoll()
+          loadGenRecords()
+        }
+      } else if (progressStartTime.value && Date.now() - progressStartTime.value > 300000) {
+        stopProgressPoll()
+        progressStatus.value = 'error'
+        loadGenRecords()
+        ElMessage.error('文档生成超时')
+      } else if (progressStartTime.value && progressProcessed.value === 0 && Date.now() - progressStartTime.value > 60000 && !progressStuckWarned.value) {
+        progressStuckWarned.value = true
+        ElMessage.warning('任务可能正在排队，请耐心等待')
       }
     }
   } catch (e) {
-    // ignore
+    console.error('轮询进度失败:', e)
   }
 }
 
 function startProgressPoll() {
   stopProgressPoll()
+  progressFullTimestamp = null
+  progressStuckWarned.value = false
+  progressStartTime.value = Date.now()
   pollProgress()
-  progressTimer = setInterval(pollProgress, 100)
+  progressTimer = setInterval(pollProgress, 2000)
 }
 
 function stopProgressPoll() {
@@ -369,10 +483,18 @@ watch(showDocDialog, (val) => {
   }
 })
 
+watch(docType, (val) => {
+  if (!showDocDialog.value) return
+  const typeLabel = val === 'bid' ? '招标参数' : '功能说明'
+  const tabId = docCustomTabId.value
+  const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
+  docName.value = tabName ? tabName + '-' + typeLabel : typeLabel
+})
+
 watch(selectedVersion, async (version) => {
   if (version) {
     await loadCustomTabs()
-    activeTab.value = 'stats'
+    activeTab.value = 'panorama'
   }
 })
 
@@ -387,8 +509,121 @@ function onVersionSelect(version) {
   selectedNode.value = null
 }
 
+function onSwitchVersion(version) {
+  if (!version) return
+  if (selectedVersion.value && selectedVersion.value.id === version.id) {
+    showVersionDialog.value = false
+    return
+  }
+  onVersionSelect(version)
+}
+
 function onTreeSelect(node) {
   selectedNode.value = node
+  treeHighlight.value = null
+}
+
+function onNavigateToList({ categoryLabel, domainLabel }) {
+  selectedNode.value = { id: 'custom', categoryLabel, domainLabel }
+  treeHighlight.value = { categoryLabel, domainLabel }
+  activeTab.value = 'list'
+  listRefreshTrigger.value = Date.now()
+}
+
+const globalPreviewVisible = ref(false)
+const globalPreviewEntryId = ref(null)
+const globalPreviewBatchIds = ref(null)
+const globalPreviewRef = ref(null)
+const dataListRef = ref(null)
+const customTabRefs = reactive({})
+const previewLogVisible = ref(false)
+const previewLogTitle = ref('')
+const previewLogData = ref([])
+
+const ACTION_LABELS = { submit: '提交', withdraw: '撤销', approve: '通过', reject: '驳回' }
+function actionLabel(action) { return ACTION_LABELS[action] || action }
+
+function logTagType(status) {
+  if (status === '待提交') return 'primary'
+  if (status === '待审核') return 'warning'
+  if (status === '审核通过') return 'success'
+  if (status === '驳回') return 'danger'
+  return 'info'
+}
+
+function onOpenPreview(entryId) {
+  globalPreviewEntryId.value = entryId
+  globalPreviewBatchIds.value = null
+  globalPreviewVisible.value = true
+}
+
+function onPreviewReload(highlightId) {
+  if (globalPreviewRef.value) globalPreviewRef.value.reload(highlightId)
+}
+
+async function onGlobalPreviewMessage(msg) {
+  if (!globalPreviewVisible.value) return
+  if (msg?.action === 'edit' || msg?.action === 'addChild') {
+    if (dataListRef.value) {
+      dataListRef.value.editRowById(msg.entryId, msg.action)
+    }
+  } else if (msg?.action === 'submit') {
+    try {
+      await approveEntry(msg.entryId, 'submit', '')
+      ElMessage.success('已提交')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { ElMessage.error(e?.response?.data?.message || '操作失败') }
+  } else if (msg?.action === 'approve') {
+    try {
+      await approveEntry(msg.entryId, 'approve', '')
+      ElMessage.success('已通过')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { ElMessage.error(e?.response?.data?.message || '操作失败') }
+  } else if (msg?.action === 'reject') {
+    try {
+      const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '驳回', {
+        confirmButtonText: '确定', cancelButtonText: '取消', inputPlaceholder: '请输入驳回原因，可不填', inputValidator: () => true
+      })
+      await approveEntry(msg.entryId, 'reject', value || '')
+      ElMessage.success('已驳回')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) {
+      if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.message || '驳回失败')
+    }
+  } else if (msg?.action === 'withdraw') {
+    try {
+      await approveEntry(msg.entryId, 'withdraw', '')
+      ElMessage.success('已撤销')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { ElMessage.error(e?.response?.data?.message || '操作失败') }
+  } else if (msg?.action === 'showLogs') {
+    try {
+      const res = await getApprovalLogs(msg.entryId)
+      previewLogData.value = res.data || []
+      previewLogTitle.value = '审批记录'
+      previewLogVisible.value = true
+    } catch (e) { ElMessage.error('获取审批记录失败') }
+  } else if (msg?.action === 'delete') {
+    try {
+      await ElMessageBox.confirm('确认删除该记录？', '提示', { type: 'warning' })
+      await deleteEntry(msg.entryId)
+      ElMessage.success('删除成功')
+      if (globalPreviewRef.value) globalPreviewRef.value.reload()
+      refreshCurrentTab()
+    } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
+  }
+}
+
+function refreshCurrentTab() {
+  if (activeTab.value === 'list') {
+    listRefreshTrigger.value = Date.now()
+  } else if (activeTab.value === 'panorama') {
+    listRefreshTrigger.value = Date.now()
+  }
 }
 
 async function loadCustomTabs() {
@@ -404,10 +639,10 @@ async function loadCustomTabs() {
 async function onAddList() {
   addListForm.name = ''
   addListForm.entryName = ''
-  addListForm.status = ''
+  addListForm.statusList = []
   addListForm.productManager = ''
   addListForm.solution = ''
-  addListForm.versionTag = ''
+  addListForm.versionTag = []
   if (selectedVersion.value) {
     try {
       const [solRes, stRes] = await Promise.all([
@@ -431,15 +666,29 @@ async function handleAddList() {
   }
   addListLoading.value = true
   try {
-    await createCustomTabWithFilter({
-      name: addListForm.name.trim(),
-      versionId: selectedVersion.value.id,
-      entryName: addListForm.entryName || undefined,
-      status: addListForm.status || undefined,
-      productManager: addListForm.productManager || undefined,
-      solution: addListForm.solution || undefined,
-      versionTag: addListForm.versionTag || undefined
-    })
+    const hasFilter = (addListForm.entryName && addListForm.entryName.trim()) ||
+      (addListForm.statusList && addListForm.statusList.length > 0) ||
+      (addListForm.productManager && addListForm.productManager.trim()) ||
+      (addListForm.solution && addListForm.solution.trim()) ||
+      (addListForm.versionTag && addListForm.versionTag.length > 0)
+    if (hasFilter) {
+      await createCustomTabWithFilter({
+        name: addListForm.name.trim(),
+        versionId: selectedVersion.value.id,
+        userId: currentUserId ? Number(currentUserId) : undefined,
+        entryName: addListForm.entryName || undefined,
+        statusList: addListForm.statusList.length > 0 ? addListForm.statusList : undefined,
+        productManager: addListForm.productManager || undefined,
+        solution: addListForm.solution || undefined,
+        versionTag: addListForm.versionTag.length > 0 ? addListForm.versionTag : undefined
+      })
+    } else {
+      await createCustomTab({
+        name: addListForm.name.trim(),
+        versionId: selectedVersion.value.id,
+        userId: currentUserId ? Number(currentUserId) : undefined
+      })
+    }
     ElMessage.success('清单创建成功')
     showAddListDialog.value = false
     await loadCustomTabs()
@@ -490,14 +739,26 @@ async function onRenameTab(tab) {
   }
 }
 
- function onTabClick(tab) {
-  if (tab.paneName === 'stats') {
+  function onTabClick(tab) {
+   if (tab.paneName === '__add_list') return
+   if (tab.paneName === 'stats') {
     statsRefreshTrigger.value = Date.now()
   } else if (tab.paneName === 'list') {
     listRefreshTrigger.value = Date.now()
+    syncTreeHighlight()
   } else if (tab.paneName?.startsWith('custom-')) {
     customTabRefresh.value++
+    syncTreeHighlight()
   }
+ }
+
+ function syncTreeHighlight() {
+   const node = selectedNode.value
+   if (node) {
+     treeHighlight.value = { ...node, _ts: Date.now() }
+   } else {
+     treeHighlight.value = { id: 'all', _ts: Date.now() }
+   }
  }
 
 function onInsertToList(entryIds) {
@@ -513,14 +774,21 @@ function onInsertToList(entryIds) {
   showInsertDialog.value = true
 }
 
+function onCancelInsert() {
+  showInsertDialog.value = false
+  if (dataListRef.value) dataListRef.value.setInserting(false)
+}
+
 function onSelectInsertTarget(tab) {
   if (tab) {
+    showInsertDialog.value = false
     addEntriesToTab(tab.id, insertEntryIds.value).then(() => {
       ElMessage.success('插入成功')
-      showInsertDialog.value = false
       customTabRefresh.value++
     }).catch(() => {
       ElMessage.error('插入失败')
+    }).finally(() => {
+      if (dataListRef.value) dataListRef.value.setInserting(false)
     })
   }
 }
@@ -534,6 +802,9 @@ async function onRemoveFromList(tabId, entryIds) {
       removed++
     } catch {} 
   }
+  const tabRef = customTabRefs[tabId]
+  if (tabRef) tabRef.setBatchLoading(false)
+  else if (dataListRef.value) dataListRef.value.setBatchLoading(false)
   if (removed > 0) {
     ElMessage.success(`已移除 ${removed} 条记录`)
     customTabRefresh.value++
@@ -543,6 +814,13 @@ async function onRemoveFromList(tabId, entryIds) {
 function onGenerateDoc(ids, tabId) {
   selectedEntryIds.value = ids
   docCustomTabId.value = tabId || null
+  docType.value = 'feature'
+  docFormat.value = 'excel'
+  dataScope.value = 'all'
+  includeImages.value = true
+  compressImages.value = false
+  const tabName = tabId ? customTabs.value.find(t => t.id === tabId)?.name || '' : ''
+  docName.value = tabName ? tabName + '-功能说明' : '功能说明'
   showDocDialog.value = true
 }
 
@@ -612,19 +890,30 @@ function stopPolling() {
 }
 
 async function handleGenerate() {
+  if (genRecords.value.some(r => r.status === 'generating')) {
+    ElMessage.warning('有文档正在生成中，请等待完成')
+    return
+  }
   if (dataScope.value === 'selected' && selectedEntryIds.value.length === 0) {
     ElMessage.warning('请先选择数据')
+    return
+  }
+  if (filteredRecords.value.length >= 10) {
+    ElMessage.warning('生成记录已达上限（10条），请先删除旧记录')
     return
   }
   docLoading.value = true
   try {
     const res = await generateDocument({
       versionId: selectedVersion.value.id,
+      docName: docName.value,
       docType: docType.value,
       format: docFormat.value,
       dataScope: dataScope.value,
       entryIds: dataScope.value === 'selected' ? selectedEntryIds.value : [],
-      customTabId: docCustomTabId.value
+      customTabId: docCustomTabId.value,
+      includeImages: includeImages.value,
+      compressImages: compressImages.value
     })
     if (res.code === 200) {
       const recordId = res.data?.id
@@ -643,41 +932,25 @@ async function handleGenerate() {
   }
 }
 
-async function handleDownload(row) {
-  try {
-    const res = await downloadDocument(row.id)
-    const ext = row.format === 'word' ? 'docx' : 'xlsx'
-    const label = row.docType === 'bid' ? '招标参数' : '功能说明'
-    const blob = new Blob([res], {
-      type: row.format === 'word'
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${label}.${ext}`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    ElMessage.error('下载失败')
-  }
+function handleDownload(row) {
+  const token = localStorage.getItem('token')
+  window.open(`/api/documents/records/${row.id}/download?access_token=${token}`, '_blank')
 }
 
-async function handlePreview(row) {
-  try {
-    const res = await downloadDocument(row.id)
-    const blob = new Blob([res], {
-      type: row.format === 'word'
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-    const url = URL.createObjectURL(blob)
-    window.open(url, '_blank')
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  } catch (e) {
-    ElMessage.error('预览失败')
+function handlePreview(row) {
+  const idsStr = row.entryIds
+  if (!idsStr || idsStr.trim() === '') {
+    ElMessage.warning('该记录无生成范围数据')
+    return
   }
+  const ids = idsStr.split(',').map(s => s.trim()).filter(Boolean).map(Number)
+  if (ids.length === 0) {
+    ElMessage.warning('该记录无生成范围数据')
+    return
+  }
+  globalPreviewEntryId.value = null
+  globalPreviewBatchIds.value = ids
+  globalPreviewVisible.value = true
 }
 
 async function handleDeleteRecord(row) {
@@ -688,6 +961,21 @@ async function handleDeleteRecord(row) {
     loadGenRecords()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+async function handleCancelGenerate(row) {
+  try {
+    await ElMessageBox.confirm('确定取消生成此文档吗？', '确认', { type: 'warning' })
+    await deleteDocRecord(row.id)
+    if (activeGenRecordId.value === row.id) {
+      stopProgressPoll()
+      activeGenRecordId.value = null
+    }
+    ElMessage.success('已取消')
+    loadGenRecords()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('取消失败')
   }
 }
 </script>
@@ -743,42 +1031,92 @@ async function handleDeleteRecord(row) {
 .tabs-wrapper {
   position: relative;
   height: 100%;
+  flex: 1;
+  min-width: 0;
 }
 .tabs-wrapper :deep(.el-tabs__header) {
-  padding-right: 120px;
   padding-left: 8px;
 }
-.add-list-btn {
-  position: absolute;
-  top: 8px;
-  right: 4px;
-  z-index: 1;
+.tabs-wrapper :deep(.el-tabs__item.is-disabled) {
+  cursor: pointer !important;
+  color: unset !important;
+  padding: 0 !important;
+}
+.add-list-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #2563EB, #1d4ed8);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+}
+.add-list-tab-btn:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+  transform: translateY(-1px);
 }
 .workbench-body {
   display: flex;
   flex: 1;
-  gap: 12px;
   overflow: hidden;
   min-height: 0;
+  padding: 0 16px;
 }
-.left-panel {
+.list-with-tree {
+  display: flex;
+  height: 100%;
+  gap: 12px;
+}
+.list-sidebar {
   width: 260px;
   background: var(--si-bg-card);
   border: 1px solid var(--si-border);
   border-radius: var(--si-radius-lg);
-  overflow-y: auto;
+  overflow: hidden;
   flex-shrink: 0;
   box-shadow: var(--si-shadow-sm);
-}
-.right-panel {
-  flex: 1;
-  background: var(--si-bg-card);
-  border: 1px solid var(--si-border);
-  border-radius: var(--si-radius-lg);
-  overflow: hidden;
+  transition: width 0.25s ease;
+  position: relative;
   display: flex;
   flex-direction: column;
-  box-shadow: var(--si-shadow-sm);
+}
+.list-sidebar.collapsed {
+  width: 36px;
+}
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+}
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  cursor: pointer;
+  color: var(--si-text-muted);
+  border-bottom: 1px solid var(--si-border);
+  transition: background var(--si-transition), color var(--si-transition);
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover {
+  background: var(--si-bg-hover);
+  color: var(--si-text-primary);
+}
+.list-sidebar.collapsed .sidebar-toggle {
+  border-bottom: none;
+  height: 36px;
+}
+.list-content {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
 }
 :deep(.el-tabs) { display: flex; flex-direction: column; height: 100%; }
 :deep(.el-tabs__header) { flex-shrink: 0; }

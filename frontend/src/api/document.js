@@ -14,7 +14,8 @@ export function getDocProgress(recordId) {
 
 export function downloadDocument(recordId) {
   return request.get(`/documents/records/${recordId}/download`, {
-    responseType: 'blob'
+    responseType: 'blob',
+    timeout: 600000
   })
 }
 

@@ -1,0 +1,45 @@
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <mirrors>
+    <!-- 优先使用阿里云镜像，确保在外部网络也能下载基础依赖 -->
+    <mirror>
+      <id>aliyun-public</id>
+      <mirrorOf>central</mirrorOf>
+      <name>Aliyun Public Mirror</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+    
+    <!-- 备选：内网 Nexus 镜像。如果是在内网环境且需要私有包，可以在这里保留，但 mirrorOf 不要设为 * -->
+    <mirror>
+      <id>nexus-internal</id>
+      <mirrorOf>nexus-only</mirrorOf> <!-- 仅匹配特定 ID，避免拦截所有请求 -->
+      <url>http://10.101.17.240:8081/repository/maven-public/</url>
+    </mirror>
+  </mirrors>
+
+  <profiles>
+    <profile>
+      <id>default-repositories</id>
+      <repositories>
+        <!-- 将内网 Nexus 作为补充仓库，而不是全局镜像 -->
+        <repository>
+          <id>nexus-public</id>
+          <url>http://10.101.17.240:8081/repository/maven-public/</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+      </repositories>
+      <pluginRepositories>
+        <pluginRepository>
+          <id>nexus-public</id>
+          <url>http://10.101.17.240:8081/repository/maven-public/</url>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
+  </profiles>
+
+  <activeProfiles>
+    <activeProfile>default-repositories</activeProfile>
+  </activeProfiles>
+</settings>

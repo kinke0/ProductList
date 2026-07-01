@@ -10,7 +10,7 @@
           <el-icon><Delete /></el-icon>批量删除 ({{ selectedIds.length }})
         </el-button>
       </div>
-      <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" @change="handleFileUpload" />
+        <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" @change="handleFileUpload" />
     </div>
     <div class="gallery-body">
       <div class="gallery-sidebar">
@@ -24,14 +24,18 @@
           @node-click="onNodeClick"
         />
       </div>
-      <div class="gallery-content">
+      <div class="gallery-content" v-loading="imagesLoading">
         <div v-if="currentImages.length > 0" class="gallery-toolbar">
-          <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll">全选</el-checkbox>
+          <el-checkbox v-if="viewMode === 'grid'" :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll">全选</el-checkbox>
           <el-input v-model="searchText" placeholder="搜索图片名称..." size="small" clearable style="width:200px;margin-left:12px;" />
+          <el-radio-group v-model="viewMode" size="small" style="margin-left:auto;">
+            <el-radio-button value="grid">网格</el-radio-button>
+            <el-radio-button value="list">列表</el-radio-button>
+          </el-radio-group>
         </div>
         <div v-if="filteredImages.length === 0" class="empty-tip">{{ currentImages.length > 0 ? '未找到匹配的图片' : '请选择左侧目录查看图片，或上传图片' }}</div>
-        <div v-else class="image-grid">
-          <el-tooltip v-for="img in filteredImages" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
+        <div v-else-if="viewMode === 'grid'" class="image-grid">
+          <el-tooltip v-for="img in displayList" :key="img.id" :content="img.filename" placement="top" :show-after="300" :hide-after="0">
             <div class="image-card" :class="{ selected: selectedIds.includes(img.id) }">
               <el-checkbox class="img-checkbox" :model-value="selectedIds.includes(img.id)" @change="toggleSelect(img)" @click.stop />
               <div class="image-thumb" @click="previewImage(img)">
@@ -49,13 +53,39 @@
               </div>
               <div class="image-actions" @click.stop>
                 <el-button size="small" type="primary" link @click="copyUrl(img)">复制URL</el-button>
-                <el-button size="small" link @click="showReferences(img)">引用</el-button>
+                <el-button size="small" link @click="showReferences(img)" :loading="refLoading">引用</el-button>
                 <el-button size="small" link @click="replaceImage(img)">替换</el-button>
                 <el-button size="small" type="danger" link @click="handleDelete(img)">删除</el-button>
               </div>
             </div>
           </el-tooltip>
         </div>
+        <el-table v-if="viewMode === 'list'" :data="displayList" size="small" @selection-change="onListSelectionChange" max-height="calc(100vh - 260px)">
+          <el-table-column type="selection" width="40" />
+          <el-table-column label="名称" min-width="200">
+            <template #default="{ row }">
+              <template v-if="editingImgId === row.id">
+                <el-button size="small" type="primary" link @click.stop="saveImgName(row)">保存</el-button>
+                <input class="image-name-edit" v-model="editingName" @keydown.enter="saveImgName(row)" @blur="saveImgName(row)" @click.stop style="width:120px;" />
+              </template>
+              <template v-else>
+                <el-button size="small" type="primary" link @click.stop="startEditName(row)">编辑</el-button>
+                <span style="font-size:13px;cursor:pointer;" @click="previewImage(row)">{{ row.filename }}</span>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="大小" width="90">
+            <template #default="{ row }">{{ formatSize(row.size) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="250">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" link @click="copyUrl(row)">复制URL</el-button>
+              <el-button size="small" link @click="showReferences(row)" :loading="refLoading">引用</el-button>
+              <el-button size="small" link @click="replaceImage(row)">替换</el-button>
+              <el-button size="small" type="danger" link @click="handleDelete(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </div>
     <el-dialog v-model="previewVisible" title="图片预览" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
@@ -69,6 +99,11 @@
         <el-table-column prop="colProductSystem" label="名称" />
         <el-table-column prop="colBizCategory" label="业务分类" width="120" />
         <el-table-column prop="colBizDomain" label="业务域" width="120" />
+        <el-table-column label="版本" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.versionNo === currentVersionNo ? 'primary' : 'info'">v{{ row.versionNo }}</el-tag>
+          </template>
+        </el-table-column>
       </el-table>
       <div v-if="refList.length === 0" style="text-align:center;padding:20px;color:#999;">暂无引用</div>
     </el-dialog>
@@ -78,7 +113,7 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, updateImage, batchDeleteImages } from '../../api/image'
+import { getImages, uploadImage, deleteImage as deleteImageApi, getImageTree, getImageReferences, getAllImageReferences, updateImage, batchDeleteImages, getBatchReferences } from '../../api/image'
 import { getVersions } from '../../api/version'
 import { Upload, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -86,27 +121,34 @@ import { computed } from 'vue'
 
 const treeData = ref([])
 const currentImages = ref([])
+const imagesLoading = ref(false)
 const selectedNode = ref(null)
 const selectedCategory = ref(null)
 const selectedDomain = ref(null)
 const selectedProduct = ref(null)
 const selectedIds = ref([])
+const displayCount = ref(0)
 const searchText = ref('')
 const versionId = ref(null)
+const currentVersionNo = ref('')
 const previewVisible = ref(false)
 const previewUrl = ref('')
 const refVisible = ref(false)
 const refList = ref([])
+const refLoading = ref(false)
 const fileInput = ref(null)
 const editingImgId = ref(null)
 const editingName = ref('')
 const replacingImg = ref(null)
 const replaceFileInput = ref(null)
+const viewMode = ref('grid')
 
 async function loadVersion() {
   const res = await getVersions()
   const draft = res.data.find(v => v.status === 'draft')
-  versionId.value = draft ? draft.id : (res.data[res.data.length - 1]?.id)
+  const ver = draft ? draft : (res.data[res.data.length - 1])
+  versionId.value = ver?.id
+  currentVersionNo.value = ver?.versionNo || ''
 }
 
 async function loadTree() {
@@ -119,30 +161,54 @@ function onNodeClick(data, node) {
   const path = []
   let n = node
   while (n && n.data && n.data.label) { path.unshift(n.data.label); n = n.parent }
-  if (path.length >= 3) {
-    selectedCategory.value = path[0]
-    selectedDomain.value = path[1]
-    selectedProduct.value = path[2]
-  } else if (path.length === 2) {
-    selectedCategory.value = path[0]
-    selectedDomain.value = path[1]
+  const cleanPath = path.map(p => p.replace(/\s*\(\d+\)$/, ''))
+  if (cleanPath.length >= 3) {
+    selectedCategory.value = cleanPath[0]
+    selectedDomain.value = cleanPath[1]
+    selectedProduct.value = cleanPath[2]
+  } else if (cleanPath.length === 2) {
+    selectedCategory.value = cleanPath[0]
+    selectedDomain.value = cleanPath[1]
     selectedProduct.value = null
   } else {
-    selectedCategory.value = path[0]
+    selectedCategory.value = cleanPath[0]
     selectedDomain.value = null
     selectedProduct.value = null
   }
   selectedNode.value = data
+  currentImages.value = []
+  selectedIds.value = []
+  displayCount.value = 0
   loadImages()
 }
 
 async function loadImages() {
-  const params = { versionId: versionId.value }
-  if (selectedProduct.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value; params.product = selectedProduct.value }
-  else if (selectedDomain.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value }
-  else if (selectedCategory.value) { params.category = selectedCategory.value }
-  const res = await getImages(params)
-  currentImages.value = res.data || []
+  imagesLoading.value = true
+  displayCount.value = 0
+  try {
+    const params = { versionId: versionId.value }
+    if (selectedProduct.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value; params.product = selectedProduct.value }
+    else if (selectedDomain.value) { params.category = selectedCategory.value; params.domain = selectedDomain.value }
+    else if (selectedCategory.value) { params.category = selectedCategory.value }
+    const res = await getImages(params)
+    currentImages.value = res.data || []
+    await nextTick()
+    animateDisplay()
+  } finally {
+    imagesLoading.value = false
+  }
+}
+
+function animateDisplay() {
+  const total = currentImages.value.length
+  const batchSize = 20
+  function step() {
+    if (displayCount.value < total) {
+      displayCount.value = Math.min(displayCount.value + batchSize, total)
+      requestAnimationFrame(step)
+    }
+  }
+  requestAnimationFrame(step)
 }
 
 function triggerUpload() {
@@ -150,24 +216,47 @@ function triggerUpload() {
 }
 
 async function handleFileUpload(e) {
-  const file = e.target.files[0]
-  if (!file) return
-  const defaultName = file.name.replace(/\.[^.]+$/, '')
-  try {
-    const { value } = await ElMessageBox.prompt('请输入图片名称', '上传图片', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputValue: defaultName,
-      inputPlaceholder: '请输入名称'
-    })
-    const displayName = value || defaultName
-    await uploadImage(file, selectedCategory.value, selectedDomain.value, selectedProduct.value, versionId.value, displayName)
-    ElMessage.success('上传成功')
-    loadImages()
-    loadTree()
-  } catch (err) {
-    if (err !== 'cancel' && err !== 'close') {
-      ElMessage.error(err?.response?.data?.message || '上传失败')
+  const files = Array.from(e.target.files || [])
+  if (files.length === 0) return
+  if (files.length === 1) {
+    const file = files[0]
+    const defaultName = file.name.replace(/\.[^.]+$/, '')
+    try {
+      const { value } = await ElMessageBox.prompt('请输入图片名称', '上传图片', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        inputValue: defaultName,
+        inputPlaceholder: '请输入名称'
+      })
+      const displayName = value || defaultName
+      await uploadImage(file, selectedCategory.value, selectedDomain.value, selectedProduct.value, versionId.value, displayName)
+      ElMessage.success('上传成功')
+      loadImages()
+      loadTree()
+    } catch (err) {
+      if (err !== 'cancel' && err !== 'close') {
+        ElMessage.error(err?.response?.data?.message || '上传失败')
+      }
+    }
+  } else {
+    try {
+      let success = 0
+      let failed = 0
+      for (const file of files) {
+        const displayName = file.name.replace(/\.[^.]+$/, '')
+        try {
+          await uploadImage(file, selectedCategory.value, selectedDomain.value, selectedProduct.value, versionId.value, displayName)
+          success++
+        } catch {
+          failed++
+        }
+      }
+      if (success > 0) ElMessage.success(`成功上传 ${success} 张图片${failed > 0 ? `，${failed} 张失败` : ''}`)
+      else ElMessage.error('全部上传失败')
+      loadImages()
+      loadTree()
+    } catch (err) {
+      ElMessage.error('批量上传失败')
     }
   }
   e.target.value = ''
@@ -184,12 +273,15 @@ function copyUrl(img) {
 }
 
 async function showReferences(img) {
+  refLoading.value = true
   try {
-    const res = await getImageReferences(img.id)
+    const res = await getAllImageReferences(img.id)
     refList.value = res.data || []
     refVisible.value = true
   } catch (e) {
     ElMessage.error('查询引用失败')
+  } finally {
+    refLoading.value = false
   }
 }
 
@@ -220,6 +312,10 @@ const filteredImages = computed(() => {
   const keyword = searchText.value.toLowerCase()
   return currentImages.value.filter(img => (img.filename || '').toLowerCase().includes(keyword))
 })
+const displayList = computed(() => filteredImages.value.slice(0, displayCount.value))
+const isAllSelected = computed(() => {
+  return filteredImages.value.length > 0 && filteredImages.value.every(img => selectedIds.value.includes(img.id))
+})
 const isIndeterminate = computed(() => {
   const count = filteredImages.value.filter(img => selectedIds.value.includes(img.id)).length
   return count > 0 && count < filteredImages.value.length
@@ -236,24 +332,30 @@ function toggleSelectAll(checked) {
   else selectedIds.value = []
 }
 
+function onListSelectionChange(rows) {
+  selectedIds.value = rows.map(r => r.id)
+}
+
 async function batchDelete() {
   if (selectedIds.value.length === 0) return
   try {
     await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 张图片？`, '批量删除', { type: 'warning' })
   } catch { return }
+  let refMap
+  try {
+    refMap = await getBatchReferences(selectedIds.value)
+    refMap = refMap.data || {}
+  } catch { refMap = {} }
   const blocked = []
   const toDelete = []
   for (const id of selectedIds.value) {
-    try {
-      const res = await getImageReferences(id)
-      const refs = res.data || []
-      if (refs.length > 0) {
-        const img = currentImages.value.find(i => i.id === id)
-        blocked.push({ id, name: img?.filename, count: refs.length })
-      } else {
-        toDelete.push(id)
-      }
-    } catch { toDelete.push(id) }
+    const refs = refMap[id] || []
+    if (refs.length > 0) {
+      const img = currentImages.value.find(i => i.id === id)
+      blocked.push({ id, name: img?.filename, count: refs.length })
+    } else {
+      toDelete.push(id)
+    }
   }
   if (toDelete.length === 0) {
     ElMessage.warning('所有选中图片均被引用，无法删除')

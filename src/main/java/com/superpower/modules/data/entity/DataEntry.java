@@ -4,6 +4,10 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
+import com.superpower.modules.category.entity.BaseProduct;
 
 @Data
 @Entity
@@ -51,6 +55,30 @@ public class DataEntry {
 
     @Column(name = "col_业务域", length = 200)
     private String colBizDomain;
+
+    @Column(name = "category_id")
+    private Long categoryId;
+
+    @Column(name = "domain_id")
+    private Long domainId;
+
+    @Column(name = "product_id")
+    private Long productId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id", insertable = false, updatable = false)
+    @JsonIgnore
+    private BaseCategory category;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "domain_id", insertable = false, updatable = false)
+    @JsonIgnore
+    private BaseDomain domain;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id", insertable = false, updatable = false)
+    @JsonIgnore
+    private BaseProduct product;
 
     @Column(name = "col_版本划分", length = 200)
     private String colVersionDivision;
@@ -191,6 +219,9 @@ public class DataEntry {
         copy.colStatus = this.colStatus;
         copy.colBizCategory = this.colBizCategory;
         copy.colBizDomain = this.colBizDomain;
+        copy.categoryId = this.categoryId;
+        copy.domainId = this.domainId;
+        copy.productId = this.productId;
         copy.colVersionDivision = this.colVersionDivision;
         copy.colYuan = this.colYuan;
         copy.colDeliveryWorkload = this.colDeliveryWorkload;

@@ -24,3 +24,38 @@ src/main/resources/templates/word/*.docx
 
 # Logs
 *.log
+
+# Vite cache
+.vite/
+
+# Database backups
+superpower.db.bak*
+superpower.db.corrupted
+
+# MCP packages
+volcengine-mcp-*.tgz
+
+# Backup files
+*.bak*
+frontend/src/components/*.bak*
+
+# Uploaded images and files
+uploads/
+
+# PostgreSQL migration tar
+postgres-*.tar
+
+# Runtime files
+nohup.out
+*.db-shm
+*.db-wal
+server_*.db-shm
+server_*.db-wal
+
+# E2E test results
+frontend/playwright-report/
+frontend/test-results/
+frontend/test-report/
+
+# Deploy tar
+1.0.11.tar

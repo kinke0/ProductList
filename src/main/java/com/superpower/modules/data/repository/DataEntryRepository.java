@@ -2,6 +2,7 @@ package com.superpower.modules.data.repository;
 
 import com.superpower.modules.data.entity.DataEntry;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -23,7 +24,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND (:name IS NULL OR e.colProductSystem LIKE %:name% " +
            "     OR e.colBizCategory LIKE %:name% " +
            "     OR e.colBizDomain LIKE %:name%) " +
-           "AND (:status IS NULL OR e.colStatus = :status) " +
            "AND (:pm IS NULL OR e.colProductManager LIKE %:pm%) " +
            "AND (:solution IS NULL OR e.colOtherSolutionTag = :solution) " +
            "AND (:versionTag IS NULL OR e.colVersionDivision LIKE %:versionTag%) " +
@@ -32,7 +32,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             @Param("versionId") Long versionId,
             @Param("level") Integer level,
             @Param("name") String name,
-            @Param("status") String status,
             @Param("pm") String productManager,
             @Param("solution") String solution,
             @Param("versionTag") String versionTag);
@@ -42,7 +41,6 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
            "AND (:name IS NULL OR e.colProductSystem LIKE %:name% " +
            "     OR e.colBizCategory LIKE %:name% " +
            "     OR e.colBizDomain LIKE %:name%) " +
-           "AND (:status IS NULL OR e.colStatus = :status) " +
            "AND (:pm IS NULL OR e.colProductManager LIKE %:pm%) " +
            "AND (:solution IS NULL OR e.colOtherSolutionTag = :solution) " +
            "AND (:versionTag IS NULL OR e.colVersionDivision LIKE %:versionTag%) " +
@@ -51,51 +49,60 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             @Param("versionId") Long versionId,
             @Param("parentId") Long parentId,
             @Param("name") String name,
-            @Param("status") String status,
             @Param("pm") String productManager,
             @Param("solution") String solution,
             @Param("versionTag") String versionTag);
 
-    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId " +
+    @Query("SELECT e FROM DataEntry e " +
+           "LEFT JOIN e.category cat " +
+           "LEFT JOIN e.domain dom " +
+           "WHERE e.versionId = :versionId " +
            "AND e.level >= 3 " +
            "AND (:customTabId IS NULL OR e.id IN (SELECT ce.entryId FROM CustomTabEntry ce WHERE ce.customTabId = :customTabId)) " +
            "AND (:name IS NULL OR e.colProductSystem LIKE %:name% " +
            "     OR e.colBizCategory LIKE %:name% " +
            "     OR e.colBizDomain LIKE %:name%) " +
-           "AND (:status IS NULL OR e.colStatus = :status) " +
            "AND (:pm IS NULL OR e.colProductManager LIKE %:pm%) " +
            "AND (:solution IS NULL OR e.colOtherSolutionTag = :solution) " +
            "AND (:versionDivision IS NULL OR e.colVersionDivision LIKE %:versionDivision%) " +
            "AND (:bizCategory IS NULL OR e.colBizCategory = :bizCategory) " +
            "AND (:bizDomain IS NULL OR e.colBizDomain = :bizDomain) " +
-            "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
+           "ORDER BY COALESCE(cat.sortOrder, 0), COALESCE(dom.sortOrder, 0), e.level, e.parentId, e.sortOrder")
     List<DataEntry> queryEntries(@Param("versionId") Long versionId,
                                  @Param("customTabId") Long customTabId,
                                  @Param("name") String name,
-                                 @Param("status") String status,
                                  @Param("pm") String productManager,
                                  @Param("solution") String solution,
                                  @Param("versionDivision") String versionDivision,
                                  @Param("bizCategory") String bizCategory,
                                  @Param("bizDomain") String bizDomain);
 
-    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId " +
+    @Query("SELECT e FROM DataEntry e " +
+           "LEFT JOIN e.category cat " +
+           "LEFT JOIN e.domain dom " +
+           "WHERE e.versionId = :versionId " +
            "AND e.level >= 3 " +
-            "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
+           "ORDER BY COALESCE(cat.sortOrder, 0), COALESCE(dom.sortOrder, 0), e.level, e.parentId, e.sortOrder")
     List<DataEntry> findAllEntries(@Param("versionId") Long versionId);
 
-    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId " +
+    @Query("SELECT e FROM DataEntry e " +
+           "LEFT JOIN e.category cat " +
+           "LEFT JOIN e.domain dom " +
+           "WHERE e.versionId = :versionId " +
            "AND e.level >= 3 " +
            "AND e.id IN (SELECT ce.entryId FROM CustomTabEntry ce WHERE ce.customTabId = :customTabId) " +
-           "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
+           "ORDER BY COALESCE(cat.sortOrder, 0), COALESCE(dom.sortOrder, 0), e.level, e.parentId, e.sortOrder")
     List<DataEntry> findEntriesByTab(@Param("versionId") Long versionId,
                                      @Param("customTabId") Long customTabId);
 
-    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId " +
+    @Query("SELECT e FROM DataEntry e " +
+           "LEFT JOIN e.category cat " +
+           "LEFT JOIN e.domain dom " +
+           "WHERE e.versionId = :versionId " +
            "AND e.level >= 3 " +
            "AND (:bizCategory IS NULL OR e.colBizCategory = :bizCategory) " +
            "AND (:bizDomain IS NULL OR e.colBizDomain = :bizDomain) " +
-            "ORDER BY e.colBizCategory, e.colBizDomain, e.level, e.parentId, e.sortOrder")
+           "ORDER BY COALESCE(cat.sortOrder, 0), COALESCE(dom.sortOrder, 0), e.level, e.parentId, e.sortOrder")
     List<DataEntry> findEntriesByDomain(@Param("versionId") Long versionId,
                                         @Param("bizCategory") String bizCategory,
                                         @Param("bizDomain") String bizDomain);
@@ -109,4 +116,50 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
             Long versionId, String colBizCategory, String colBizDomain);
 
     List<DataEntry> findByVersionIdAndColProductSystem(Long versionId, String colProductSystem);
+
+    List<DataEntry> findByVersionIdAndColBizCategory(Long versionId, String colBizCategory);
+
+    List<DataEntry> findByVersionIdAndColBizDomain(Long versionId, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizCategory(Long versionId, Integer level, String colBizCategory);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizDomain(Long versionId, Integer level, String colBizDomain);
+
+    List<DataEntry> findByVersionIdAndDomainIdAndLevel(Long versionId, Long domainId, Integer level);
+
+    List<DataEntry> findByVersionIdAndCategoryIdAndLevel(Long versionId, Long categoryId, Integer level);
+
+    List<DataEntry> findByVersionIdAndCategoryIdAndDomainIdAndLevel(Long versionId, Long categoryId, Long domainId, Integer level);
+
+    List<DataEntry> findByVersionIdAndCategoryId(Long versionId, Long categoryId);
+
+    List<DataEntry> findByVersionIdAndDomainId(Long versionId, Long domainId);
+
+    List<DataEntry> findByVersionIdAndColBizDomainAndLevel(Long versionId, String colBizDomain, Integer level);
+
+    List<DataEntry> findByVersionIdAndLevelAndColBizCategoryAndColBizDomain(Long versionId, Integer level, String colBizCategory, String colBizDomain);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.colFeatureDesc LIKE %:keyword%")
+    List<DataEntry> findByColFeatureDescContaining(@Param("keyword") String keyword);
+
+    long countByVersionId(Long versionId);
+
+    @Modifying
+    @Query("DELETE FROM DataEntry e WHERE e.versionId = :versionId")
+    void deleteByVersionId(@Param("versionId") Long versionId);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.parentId IS NULL ORDER BY e.sortOrder")
+    List<DataEntry> findRootEntries(@Param("versionId") Long versionId);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.parentId IS NULL AND e.colBizDomain = :domain ORDER BY e.sortOrder")
+    List<DataEntry> findRootEntriesByDomain(@Param("versionId") Long versionId, @Param("domain") String domain);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.level = 3 AND e.colBizDomain = :domain ORDER BY e.sortOrder")
+    List<DataEntry> findL3ByDomain(@Param("versionId") Long versionId, @Param("domain") String domain);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.level = 3 AND e.domainId = :domainId ORDER BY e.sortOrder")
+    List<DataEntry> findL3ByDomainId(@Param("versionId") Long versionId, @Param("domainId") Long domainId);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.parentId IS NULL AND e.domainId = :domainId ORDER BY e.sortOrder")
+    List<DataEntry> findRootEntriesByDomainId(@Param("versionId") Long versionId, @Param("domainId") Long domainId);
 }

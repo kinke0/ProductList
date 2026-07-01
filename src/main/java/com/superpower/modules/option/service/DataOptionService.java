@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class DataOptionService {
@@ -60,6 +61,19 @@ public class DataOptionService {
                 .orElseThrow(() -> new BusinessException("版本不存在"));
         if (!"draft".equals(version.getStatus())) {
             throw new BusinessException("已发版版本不允许修改清单");
+        }
+    }
+
+    @Transactional
+    public void updateSortOrders(List<Map<String, Object>> sortList) {
+        for (Map<String, Object> item : sortList) {
+            Long id = Long.valueOf(item.get("id").toString());
+            Integer sortOrder = Integer.valueOf(item.get("sortOrder").toString());
+            DataOption opt = repository.findById(id)
+                    .orElseThrow(() -> new BusinessException("选项不存在"));
+            ensureVersionEditable(opt.getVersionId());
+            opt.setSortOrder(sortOrder);
+            repository.save(opt);
         }
     }
 

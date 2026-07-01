@@ -6,6 +6,7 @@ import com.superpower.modules.system.entity.SysRole;
 import com.superpower.modules.system.entity.SysUser;
 import com.superpower.modules.system.repository.SysRoleRepository;
 import com.superpower.modules.system.repository.SysUserRepository;
+import com.superpower.security.OnlineTracker;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -17,13 +18,16 @@ public class SysUserService {
     private final SysUserRepository userRepository;
     private final SysRoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final OnlineTracker onlineTracker;
 
     public SysUserService(SysUserRepository userRepository,
                           SysRoleRepository roleRepository,
-                          PasswordEncoder passwordEncoder) {
+                          PasswordEncoder passwordEncoder,
+                          OnlineTracker onlineTracker) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.onlineTracker = onlineTracker;
     }
 
     public SysUser findByUsername(String username) {
@@ -31,8 +35,16 @@ public class SysUserService {
                 .orElseThrow(() -> new BusinessException("用户不存在"));
     }
 
+    public SysUser findById(Long id) {
+        return userRepository.findById(id).orElse(null);
+    }
+
     public List<SysUser> findAll() {
         return userRepository.findAll();
+    }
+
+    public SysUser save(SysUser user) {
+        return userRepository.save(user);
     }
 
     public UserDTO createUser(String username, String password, String nickname, Long roleId) {
@@ -70,7 +82,22 @@ public class SysUserService {
         userRepository.deleteById(id);
     }
 
-    private UserDTO toDTO(SysUser user) {
+    public void changePassword(String username, String oldPassword, String newPassword) {
+        SysUser user = findByUsername(username);
+        if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
+            throw new BusinessException("当前密码不正确");
+        }
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+    }
+
+    public void updateNickname(String username, String nickname) {
+        SysUser user = findByUsername(username);
+        user.setNickname(nickname);
+        userRepository.save(user);
+    }
+
+    public UserDTO toDTO(SysUser user) {
         UserDTO dto = new UserDTO();
         dto.setId(user.getId());
         dto.setUsername(user.getUsername());
@@ -79,6 +106,8 @@ public class SysUserService {
         dto.setRoleName(user.getRole().getName());
         dto.setRoleCode(user.getRole().getCode());
         dto.setStatus(user.getStatus());
+        dto.setLastLoginAt(user.getLastLoginAt());
+        dto.setOnline(onlineTracker.isOnline(user.getId()));
         return dto;
     }
 }

@@ -23,28 +23,28 @@ public class ApprovalService {
 
     private static final Map<String, Set<String>> TRANSITIONS = Map.of(
         ST_PENDING, Set.of(ST_REVIEW),
-        ST_REVIEW, Set.of(ST_APPROVED, ST_REJECTED),
+        ST_REVIEW, Set.of(ST_APPROVED, ST_REJECTED, ST_PENDING),
         ST_APPROVED, Set.of(ST_REJECTED),
         ST_REJECTED, Set.of(ST_REVIEW)
     );
 
     private static final Map<String, Set<String>> ACTION_ROLES = Map.of(
         "submit", Set.of("editor", "admin"),
-        "approve", Set.of("reviewer", "admin"),
-        "reject", Set.of("reviewer", "admin")
+        "approve", Set.of("admin"),
+        "reject", Set.of("admin"),
+        "withdraw", Set.of("editor", "admin")
     );
 
     private static final Map<String, String> ACTION_TARGET = Map.of(
         "submit", ST_REVIEW,
         "approve", ST_APPROVED,
-        "reject", ST_REJECTED
+        "reject", ST_REJECTED,
+        "withdraw", ST_PENDING
     );
 
     private static final Map<String, String> ROLE_CODE_MAP = Map.of(
         "ADMIN", "admin",
-        "USER", "editor",
-        "REVIEWER", "reviewer",
-        "ADVANCED", "editor"
+        "USER", "editor"
     );
 
     private final DataEntryRepository entryRepository;
@@ -65,6 +65,13 @@ public class ApprovalService {
 
         if (!ACTION_ROLES.getOrDefault(action, Set.of()).contains(role)) {
             throw new BusinessException("无权执行此操作");
+        }
+
+        if ("withdraw".equals(action) && !"admin".equals(role)) {
+            ApprovalLog lastSubmit = logRepository.findTopByEntryIdAndActionOrderByCreatedAtDesc(entryId, "submit").orElse(null);
+            if (lastSubmit == null || !userId.equals(lastSubmit.getOperatorId())) {
+                throw new BusinessException("仅提交人可撤销");
+            }
         }
 
         DataEntry entry = entryRepository.findById(entryId)

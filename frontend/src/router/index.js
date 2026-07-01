@@ -18,6 +18,22 @@ const routes = [
         meta: { title: '产品清单' }
       },
       {
+        path: 'requirements',
+        redirect: '/requirements/list'
+      },
+      {
+        path: 'requirements/list',
+        name: 'RequirementManage',
+        component: () => import('../views/requirement/RequirementManage.vue'),
+        meta: { title: '需求清单' }
+      },
+      {
+        path: 'requirements/images',
+        name: 'RequirementImages',
+        component: () => import('../views/requirement/RequirementImages.vue'),
+        meta: { title: '需求图片' }
+      },
+      {
         path: 'users',
         name: 'UserManage',
         component: () => import('../views/system/UserManage.vue'),
@@ -60,10 +76,28 @@ const routes = [
         meta: { title: '功能状态维护', type: 'status', roles: ['ADMIN'] }
       },
       {
+        path: 'base-data/product-category',
+        name: 'ProductCategoryManage',
+        component: () => import('../views/system/ProductCategoryManage.vue'),
+        meta: { title: '产品分类维护', roles: ['ADMIN'] }
+      },
+      {
+        path: 'base-data/system-type',
+        name: 'SystemTypeManage',
+        component: () => import('../views/system/OptionManage.vue'),
+        meta: { title: '系统类型维护', type: 'systemType', roles: ['ADMIN'] }
+      },
+      {
         path: 'image-gallery',
         name: 'ImageGallery',
         component: () => import('../views/system/ImageGallery.vue'),
-        meta: { title: '图床管理', roles: ['ADMIN'] }
+        meta: { title: '图床管理' }
+      },
+      {
+        path: 'special-ops',
+        name: 'SpecialOps',
+        component: () => import('../views/system/SpecialOps.vue'),
+        meta: { title: '非常规操作', roles: ['ADMIN'] }
       }
     ]
   }

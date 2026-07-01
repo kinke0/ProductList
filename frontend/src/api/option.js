@@ -15,3 +15,7 @@ export function updateOption(id, value) {
 export function deleteOption(id) {
   return request.delete(`/options/${id}`)
 }
+
+export function updateOptionSort(sortList) {
+  return request.put('/options/sort', sortList)
+}

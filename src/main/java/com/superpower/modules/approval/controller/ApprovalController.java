@@ -1,9 +1,13 @@
 package com.superpower.modules.approval.controller;
 
+import com.superpower.common.AuthUtils;
 import com.superpower.common.Result;
 import com.superpower.modules.approval.entity.ApprovalLog;
 import com.superpower.modules.approval.service.ApprovalService;
+import com.superpower.modules.data.entity.DataEntry;
+import com.superpower.modules.data.service.DataEntryService;
 import com.superpower.modules.system.entity.SysUser;
+import com.superpower.modules.system.service.OperationLogService;
 import com.superpower.modules.system.service.SysUserService;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -16,11 +20,16 @@ import java.util.Map;
 public class ApprovalController {
 
     private final ApprovalService approvalService;
+    private final DataEntryService dataEntryService;
     private final SysUserService sysUserService;
+    private final OperationLogService logService;
 
-    public ApprovalController(ApprovalService approvalService, SysUserService sysUserService) {
+    public ApprovalController(ApprovalService approvalService, DataEntryService dataEntryService,
+                              SysUserService sysUserService, OperationLogService logService) {
         this.approvalService = approvalService;
+        this.dataEntryService = dataEntryService;
         this.sysUserService = sysUserService;
+        this.logService = logService;
     }
 
     @PostMapping("/{entryId}")
@@ -32,6 +41,10 @@ public class ApprovalController {
         SysUser user = sysUserService.findByUsername(auth.getName());
         String roleCode = user.getRole() != null ? user.getRole().getCode() : "USER";
         approvalService.approve(entryId, action, roleCode, user.getId(), user.getNickname(), comment);
+        DataEntry entry = dataEntryService.getById(entryId);
+        String title = entry != null && entry.getColProductSystem() != null ? entry.getColProductSystem() : "#" + entryId;
+        logService.record(user.getId(), user.getUsername(), action.toUpperCase(), "审批管理",
+                "审批[" + action + "]: " + title, entryId, "DataEntry");
         return Result.success();
     }
 

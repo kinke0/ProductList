@@ -4,7 +4,21 @@ import router from '../router'
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 60000
+  timeout: 60000,
+  paramsSerializer: {
+    serialize: (params) => {
+      const parts = []
+      for (const [key, value] of Object.entries(params)) {
+        if (value == null || value === '') continue
+        if (Array.isArray(value)) {
+          value.forEach(v => parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(v)))
+        } else {
+          parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value))
+        }
+      }
+      return parts.join('&')
+    }
+  }
 })
 
 request.interceptors.request.use(config => {
@@ -18,6 +32,9 @@ request.interceptors.request.use(config => {
 request.interceptors.response.use(
   response => {
     if (response.config.responseType === 'blob') {
+      return response.data
+    }
+    if (response.config.responseType === 'text') {
       return response.data
     }
     const res = response.data
@@ -34,7 +51,7 @@ request.interceptors.response.use(
   error => {
     const msg = error.response?.data?.message || error.message || '网络错误'
     if (error.response?.status === 401 || error.response?.status === 403) {
-      ElMessage.error(msg)
+      ElMessage.error(error.response?.status === 401 ? msg : '登录已过期，请重新登录')
       localStorage.removeItem('token')
       router.push('/login')
     } else {

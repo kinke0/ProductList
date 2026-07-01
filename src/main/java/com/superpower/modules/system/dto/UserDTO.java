@@ -1,6 +1,7 @@
 package com.superpower.modules.system.dto;
 
 import lombok.Data;
+import java.time.LocalDateTime;
 
 @Data
 public class UserDTO {
@@ -11,4 +12,6 @@ public class UserDTO {
     private String roleName;
     private String roleCode;
     private Integer status;
+    private LocalDateTime lastLoginAt;
+    private Boolean online;
 }

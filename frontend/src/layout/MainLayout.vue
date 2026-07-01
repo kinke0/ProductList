@@ -21,6 +21,29 @@
           <el-icon><Monitor /></el-icon>
           <span>产品清单</span>
         </el-menu-item>
+        <el-sub-menu index="requirements">
+          <template #title>
+            <el-icon><List /></el-icon>
+            <span>需求管理</span>
+          </template>
+          <el-menu-item index="/requirements/list">
+            <el-icon><Document /></el-icon>
+            <span>需求清单</span>
+          </el-menu-item>
+          <el-menu-item index="/requirements/images">
+            <el-icon><Picture /></el-icon>
+            <span>需求图片</span>
+          </el-menu-item>
+        </el-sub-menu>
+        <el-menu-item index="/image-gallery">
+          <el-icon><Picture /></el-icon>
+          <span>图床管理</span>
+        </el-menu-item>
+        <el-menu-item v-if="authStore.isAdmin()" index="/versions">
+          <el-icon><Document /></el-icon>
+          <span>版本管理</span>
+        </el-menu-item>
+        <div class="menu-divider"></div>
         <el-sub-menu v-if="authStore.isAdmin()" index="admin">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -33,10 +56,6 @@
           <el-menu-item index="/roles">
             <el-icon><Ticket /></el-icon>
             <span>权限套餐管理</span>
-          </el-menu-item>
-          <el-menu-item index="/versions">
-            <el-icon><Document /></el-icon>
-            <span>版本管理</span>
           </el-menu-item>
           <el-sub-menu index="base-data">
             <template #title>
@@ -59,56 +78,195 @@
               <el-icon><Flag /></el-icon>
               <span>功能状态维护</span>
             </el-menu-item>
+            <el-menu-item index="/base-data/product-category">
+              <el-icon><Goods /></el-icon>
+              <span>产品分类维护</span>
+            </el-menu-item>
+            <el-menu-item index="/base-data/system-type">
+              <el-icon><Collection /></el-icon>
+              <span>系统类型维护</span>
+            </el-menu-item>
           </el-sub-menu>
+          <el-menu-item index="/special-ops">
+            <el-icon><Warning /></el-icon>
+            <span>非常规操作</span>
+          </el-menu-item>
         </el-sub-menu>
-        <el-menu-item v-if="authStore.isAdmin()" index="/image-gallery">
-          <el-icon><Picture /></el-icon>
-          <span>图床管理</span>
-        </el-menu-item>
       </el-menu>
     </div>
 
     <div class="si-main">
       <div class="si-header">
         <span class="header-title">{{ route.meta?.title || '工作台' }}</span>
-        <el-dropdown @command="handleCommand">
+        <div class="header-right">
+          <el-button size="small" type="primary" @click="showQuickReqForm = true">需求录入</el-button>
+          <el-dropdown @command="handleCommand">
           <span class="header-user">
             {{ nickname || '用户' }}
             <el-icon><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              <el-dropdown-item command="changeNickname">修改姓名</el-dropdown-item>
+              <el-dropdown-item command="changePassword">修改密码</el-dropdown-item>
+              <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        </div>
       </div>
 
       <div class="si-content">
         <router-view />
       </div>
     </div>
+
+    <RequirementFormDialog v-model="showQuickReqForm" :prefilled-module="currentModule" @saved="showQuickReqForm = false; reqRefreshKey++" />
+
+    <el-dialog v-model="pwdVisible" title="修改密码" width="400px" :close-on-click-modal="false">
+      <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="80px" size="large">
+        <el-form-item label="当前密码" prop="oldPassword">
+          <el-input v-model="pwdForm.oldPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input v-model="pwdForm.newPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="确认密码" prop="confirmPassword">
+          <el-input v-model="pwdForm.confirmPassword" type="password" show-password @keyup.enter="handleChangePassword" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdVisible = false">取消</el-button>
+        <el-button type="primary" :loading="pwdLoading" @click="handleChangePassword">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="nameVisible" title="修改姓名" width="400px" :close-on-click-modal="false">
+      <el-form ref="nameFormRef" :model="nameForm" :rules="nameRules" label-width="60px" size="large">
+        <el-form-item label="姓名" prop="nickname">
+          <el-input v-model="nameForm.nickname" @keyup.enter="handleChangeNickname" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="nameVisible = false">取消</el-button>
+        <el-button type="primary" :loading="nameLoading" @click="handleChangeNickname">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
-import { ref } from 'vue'
-import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture } from '@element-plus/icons-vue'
+import { ref, reactive, computed, provide } from 'vue'
+import { Monitor, Setting, User, Ticket, Document, Grid, List, Coin, UserFilled, Flag, ArrowDown, Fold, Expand, Picture, Goods, Collection, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { changePassword, changeNickname } from '../api/auth'
+import RequirementFormDialog from '../components/RequirementFormDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const nickname = ref(authStore.user?.nickname || localStorage.getItem('nickname') || '用户')
 const isCollapsed = ref(false)
+const showQuickReqForm = ref(false)
+const reqRefreshKey = ref(0)
+provide('reqRefreshKey', reqRefreshKey)
+
+const currentModule = computed(() => {
+  const map = {
+    '/dashboard': { category: '产品清单' },
+    '/requirements/list': { category: '需求管理', domain: '需求清单' },
+    '/requirements/images': { category: '需求管理', domain: '需求图片' },
+    '/versions': { category: '版本管理' },
+    '/users': { category: '系统管理', domain: '用户管理' },
+    '/roles': { category: '系统管理', domain: '权限套餐管理' },
+    '/base-data/category': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/solution': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/app-role': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/status': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/product-category': { category: '系统管理', domain: '基础数据维护' },
+    '/base-data/system-type': { category: '系统管理', domain: '基础数据维护' },
+    '/image-gallery': { category: '图床管理' },
+    '/special-ops': { category: '系统管理', domain: '非常规操作' }
+  }
+  return map[route.path] || null
+})
 
 function handleCommand(command) {
   if (command === 'logout') {
     authStore.logout()
     ElMessage.success('已退出登录')
     router.push('/login')
+  } else if (command === 'changePassword') {
+    Object.assign(pwdForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
+    pwdVisible.value = true
+  } else if (command === 'changeNickname') {
+    nameForm.nickname = nickname.value
+    nameVisible.value = true
+  }
+}
+
+const pwdVisible = ref(false)
+const pwdLoading = ref(false)
+const pwdFormRef = ref(null)
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+
+const pwdRules = {
+  oldPassword: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 6, message: '密码至少6个字符', trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认新密码', trigger: 'blur' },
+    {
+      validator: (_, value, callback) => {
+        if (value !== pwdForm.newPassword) callback(new Error('两次输入的密码不一致'))
+        else callback()
+      },
+      trigger: 'blur'
+    }
+  ]
+}
+
+async function handleChangePassword() {
+  const valid = await pwdFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  pwdLoading.value = true
+  try {
+    await changePassword(pwdForm.oldPassword, pwdForm.newPassword)
+    ElMessage.success('密码修改成功，请重新登录')
+    pwdVisible.value = false
+    authStore.logout()
+    router.push('/login')
+  } catch (e) {
+  } finally {
+    pwdLoading.value = false
+  }
+}
+
+const nameVisible = ref(false)
+const nameLoading = ref(false)
+const nameFormRef = ref(null)
+const nameForm = reactive({ nickname: '' })
+const nameRules = {
+  nickname: [{ required: true, message: '请输入姓名', trigger: 'blur' }]
+}
+
+async function handleChangeNickname() {
+  const valid = await nameFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  nameLoading.value = true
+  try {
+    await changeNickname(nameForm.nickname)
+    nickname.value = nameForm.nickname
+    localStorage.setItem('nickname', nameForm.nickname)
+    ElMessage.success('姓名修改成功')
+    nameVisible.value = false
+  } catch {
+  } finally {
+    nameLoading.value = false
   }
 }
 </script>
@@ -226,6 +384,18 @@ function handleCommand(command) {
   font-size: 14px;
   font-weight: 600;
   color: var(--si-text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 6px 12px;
 }
 
 .header-user {

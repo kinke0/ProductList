@@ -3,25 +3,28 @@
     <div class="query-bar">
       <el-form :model="queryForm" inline size="small">
         <el-form-item label="名称">
-          <el-input v-model="queryForm.name" placeholder="产品/系统名称" clearable style="width: 160px" />
+          <el-input v-model="queryForm.name" placeholder="产品/系统名称" clearable style="width: 140px" @keyup.enter="handleQuery" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="queryForm.status" placeholder="全部" clearable style="width: 110px">
+          <el-select v-model="queryForm.status" placeholder="全部" clearable multiple style="width: 150px">
             <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
         <el-form-item label="产品经理">
-          <el-input v-model="queryForm.productManager" placeholder="产品经理" clearable style="width: 120px" />
+          <el-input v-model="queryForm.productManager" placeholder="产品经理" clearable style="width: 100px" @keyup.enter="handleQuery" />
         </el-form-item>
         <el-form-item label="解决方案">
-          <el-select v-model="queryForm.solution" placeholder="全部" clearable style="width: 130px">
+          <el-select v-model="queryForm.solution" placeholder="全部" clearable style="width: 110px">
             <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
         <el-form-item label="版本">
-          <el-select v-model="queryForm.versionDiv" placeholder="全部" clearable style="width: 110px">
+          <el-select v-model="queryForm.versionDiv" placeholder="全部" clearable multiple style="width: 150px">
             <el-option v-for="v in versionDivList" :key="v" :label="v" :value="v" />
           </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="queryForm.intelligent" size="small">智能化</el-checkbox>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleQuery">查询</el-button>
@@ -42,20 +45,11 @@
           <el-button type="success" size="small" @click="emit('generateDoc', selectedIds, props.customTabId)">
             <el-icon><Document /></el-icon>生成文档
           </el-button>
-        </template>
-          <template v-else>
-            <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" :disabled="!props.isEditing" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
-            <el-button type="success" size="small" @click="onInsertClick">
-              <el-icon><Upload /></el-icon>插入待生成清单
-            </el-button>
-            <el-button type="info" size="small" :disabled="!props.isEditing" :loading="importing" @click="onImportExcelClick">
-              <el-icon><FolderOpened /></el-icon>导入本地Excel
-            </el-button>
-          </template>
-           <el-button v-if="props.isEditing" type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
-            <el-button v-if="props.isEditing" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
-            <el-button v-if="props.isEditing" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
-             <el-dropdown @command="onBatchCommand">
+          <template v-if="props.isEditing">
+            <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+            <el-dropdown @command="onBatchCommand">
               <el-button type="warning" size="small" plain>
                 <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
               </el-button>
@@ -64,33 +58,77 @@
                   <el-dropdown-item command="status">状态修改</el-dropdown-item>
                   <el-dropdown-item command="solution">解决方案</el-dropdown-item>
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>{{ props.customTabId ? '批量移除' : '批量删除' }}</el-dropdown-item>
+                  <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
+                  <el-dropdown-item command="version">版本划分</el-dropdown-item>
+                  <el-dropdown-item command="intelligent">智能化标注</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>批量移除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
             <el-button
-              v-if="approvalRole === 'admin'"
-              type="warning" size="small" plain
+              type="primary" size="small" plain
               :disabled="selectedIds.length === 0"
-              :loading="migrating"
-              @click="onMigrateImages">
-              <el-icon><Picture /></el-icon>迁移图片
+              @click="openRenumberDialog">
+              <el-icon><Sort /></el-icon>编码重排序
             </el-button>
+          </template>
+        </template>
+          <template v-else>
+            <template v-if="props.isEditing">
+            <el-button v-if="props.selectedNode?.level === 2" type="primary" size="small" @click="openNewDialog"><el-icon><Plus /></el-icon>新建</el-button>
+            <el-button type="success" size="small" :loading="inserting" @click="onInsertClick">
+              <el-icon><Upload /></el-icon>插入待生成清单
+            </el-button>
+            <el-button type="primary" size="small" plain @click="batchApprove('submit')"><el-icon><Upload /></el-icon>批量提交</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="success" size="small" plain @click="batchApprove('approve')"><el-icon><CircleCheck /></el-icon>批量通过</el-button>
+            <el-button v-if="approvalRole === 'admin'" type="danger" size="small" plain @click="batchReject"><el-icon><CircleClose /></el-icon>批量驳回</el-button>
+            <el-dropdown @command="onBatchCommand">
+              <el-button type="warning" size="small" plain>
+                <el-icon><Edit /></el-icon>其他批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="status">状态修改</el-dropdown-item>
+                  <el-dropdown-item command="solution">解决方案</el-dropdown-item>
+                  <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
+                  <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
+                  <el-dropdown-item command="version">版本划分</el-dropdown-item>
+                  <el-dropdown-item command="intelligent">智能化标注</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>批量删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button
+              type="primary" size="small" plain
+              :disabled="selectedIds.length === 0"
+              @click="openRenumberDialog">
+              <el-icon><Sort /></el-icon>编码重排序
+            </el-button>
+            </template>
+          </template>
       </div>
     </div>
 
-    <div class="table-body">
+    <div class="table-body" style="position:relative;">
+      <div v-if="batchLoading" class="batch-overlay">
+        <el-icon class="is-loading" style="font-size:36px;color:#409eff;"><Loading /></el-icon>
+        <span style="margin-top:8px;color:#666;font-size:14px;">正在批量处理...</span>
+      </div>
+      <div v-if="dataLoading" class="batch-overlay">
+        <el-icon class="is-loading" style="font-size:28px;color:#409eff;margin-bottom:8px;"><Loading /></el-icon>
+        <span style="color:#666;font-size:14px;">数据加载中...</span>
+      </div>
      <div class="vtable-header">
        <div class="vcol vcol-num" style="width:50px;">
          <div class="check-col-inner" :style="{ paddingLeft: props.isEditing ? '22px' : '0' }">
            <el-checkbox :model-value="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll" size="small" />
          </div>
        </div>
-       <div class="vcol" style="min-width:200px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ totalEntryCount }}条记录</span></div>
-       <div class="vcol" style="width:80px;">审批</div>
-       <div class="vcol" style="width:80px;">状态</div>
-       <div class="vcol" style="width:100px;">产品经理</div>
-       <div class="vcol" style="width:180px;">版本划分</div>
+         <div class="vcol" style="min-width:160px;flex:1;">名称<span class="record-count" style="margin-left:4px;">{{ productCount }}个产品 / {{ totalEntryCount }}条记录</span></div>
+        <div class="vcol" style="width:80px;">审批</div>
+        <div class="vcol" style="width:80px;">状态</div>
+        <div class="vcol" style="width:100px;">产品经理</div>
+        <div class="vcol" style="width:220px;">版本划分<span class="ver-cell ver-min-badge" style="margin-left:6px; font-size:12px; font-weight:normal;">最小集</span></div>
        <div class="vcol" style="width:240px;">操作</div>
     </div>
     <RecycleScroller
@@ -103,6 +141,7 @@
     >
       <div
         :class="['vrow', row._isSeparator ? 'sep-row' : (displayData.indexOf(row) % 2 === 0 ? 'vrow-even' : 'vrow-odd'), 'row-id-' + row.id, 'row-level-' + (row.level || 0), 'row-parent-' + (row.parentId || 0), { 'row-just-added': newlyCreatedIds.has(row.id) }]"
+        @contextmenu.prevent="showContextMenu($event, row)"
       >
         <div class="vcol vcol-num" style="width:50px;">
           <template v-if="row._isSeparator">
@@ -119,7 +158,7 @@
             </div>
           </template>
         </div>
-        <div class="vcol vcol-name" style="min-width:200px;flex:1;">
+        <div class="vcol vcol-name" style="min-width:160px;flex:1;">
           <span v-if="!row._isSeparator" class="product-cell" :style="{ paddingLeft: ((row.level || 3) - 3) * 20 + 4 + 'px' }">
             <span
               v-if="row.children && row.children.length > 0"
@@ -132,11 +171,34 @@
             <span v-else class="tree-toggle-placeholder"></span>
             <el-tag v-if="row.level && row.level >= 3" :type="levelTagType(row.level)" size="small" class="level-tag">{{ levelLabel(row.level) }}</el-tag>
             <span class="product-name">{{ row.colProductSystem || '(无名称)' }}</span>
+            <template v-if="!row._isSeparator && (row.colIntelligent === '1' || getIntelligentChildren(row).length > 0)">
+              <el-tooltip placement="top" :show-after="300" :hide-after="0">
+                <template #content>
+                  <div v-if="row.colIntelligent === '1'" style="margin-bottom:2px;max-width:360px;font-weight:bold;">
+                    自身: {{ row.colProductSystem }}
+                  </div>
+                  <div v-for="item in getIntelligentChildren(row)" :key="item.id" style="margin-bottom:2px;max-width:360px;">
+                    {{ item.name }}
+                  </div>
+                </template>
+                <span class="ai-badge">AI</span>
+              </el-tooltip>
+            </template>
+            <template v-if="!row._isSeparator && getRemarks(row).length > 0">
+              <el-tooltip placement="top" :show-after="300" :hide-after="0">
+                <template #content>
+                  <div v-for="r in getRemarks(row)" :key="r.name" style="margin-bottom:2px;max-width:360px;">
+                    <b>{{ r.name }}</b>: {{ r.remark }}
+                  </div>
+                </template>
+                <span class="remark-badge">!</span>
+              </el-tooltip>
+            </template>
             <span v-if="row.children && row.children.length > 0" class="record-count">{{ getDescendantCount(row) }}条记录</span>
           </span>
          </div>
          <div class="vcol" style="width:80px;">
-            <el-tag v-if="!row._isSeparator && row.approvalStatus && row.colStatus === '可交付'" :type="approvalTagType(row.approvalStatus)" size="small">{{ row.approvalStatus }}</el-tag>
+             <el-tag v-if="!row._isSeparator && row.approvalStatus && (row.colStatus || '').includes('可交付')" :type="approvalTagType(row.approvalStatus)" size="small" style="cursor:pointer" @click="showApprovalLogs(row)">{{ row.approvalStatus }}</el-tag>
          </div>
          <div class="vcol" style="width:80px;">
            <el-tag v-if="!row._isSeparator && row.colStatus" :type="statusTagType(row.colStatus)" size="small">{{ row.colStatus }}</el-tag>
@@ -144,28 +206,36 @@
         <div class="vcol vcol-ellipsis" style="width:100px;">
           <span v-if="!row._isSeparator">{{ row.colProductManager }}</span>
         </div>
-        <div class="vcol" style="width:180px;">
+        <div class="vcol" style="width:220px;">
           <div v-if="!row._isSeparator" class="version-inline">
-            <el-checkbox :model-value="hasVer(row, 'A-曜系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'A-曜系列')" size="small">曜</el-checkbox>
-            <el-checkbox :model-value="hasVer(row, 'B-远系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'B-远系列')" size="small">远</el-checkbox>
-            <el-checkbox :model-value="hasVer(row, 'C-驰系列')" :disabled="!props.isEditing" @change="toggleVer(row, 'C-驰系列')" size="small">驰</el-checkbox>
+            <span :class="['ver-cell', { 'ver-min-badge': row.colYao === '是' }]">
+              <el-checkbox :model-value="hasVer(row, 'A-曜系列')" :disabled="!props.isEditing || hasVer(row, '非标配系统')" @change="toggleVer(row, 'A-曜系列')" size="small">曜</el-checkbox>
+            </span>
+            <span :class="['ver-cell', { 'ver-min-badge': row.colYuan === '是' }]">
+              <el-checkbox :model-value="hasVer(row, 'B-远系列')" :disabled="!props.isEditing || hasVer(row, '非标配系统')" @change="toggleVer(row, 'B-远系列')" size="small">远</el-checkbox>
+            </span>
+            <span :class="['ver-cell', { 'ver-min-badge': row.colChi === '是' }]">
+              <el-checkbox :model-value="hasVer(row, 'C-驰系列')" :disabled="!props.isEditing || hasVer(row, '非标配系统')" @change="toggleVer(row, 'C-驰系列')" size="small">驰</el-checkbox>
+            </span>
+            <el-checkbox :model-value="hasVer(row, '非标配系统')" :disabled="!props.isEditing || hasVer(row, 'A-曜系列') || hasVer(row, 'B-远系列') || hasVer(row, 'C-驰系列')" @change="toggleVer(row, '非标配系统')" size="small">非标配</el-checkbox>
           </div>
         </div>
         <div class="vcol vcol-ops" style="width:240px;">
            <template v-if="!row._isSeparator">
-              <template v-if="row.colStatus === '可交付' && props.isEditing">
-                <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApprove(row, 'submit')">提交</span>
-                <span v-else class="op-btn op-add invisible">提交</span>
-                <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApprove(row, 'approve')">通过</span>
-                <span v-else class="op-btn op-add invisible">通过</span>
-                <span v-if="canReject(row)" class="op-btn op-del" @click="handleReject(row)">驳回</span>
-                <span v-else class="op-btn op-del invisible">驳回</span>
-              </template>
-             <template v-else>
-               <span class="op-btn op-add invisible">提交</span>
-               <span class="op-btn op-add invisible">通过</span>
-               <span class="op-btn op-del invisible">驳回</span>
-              </template>
+               <template v-if="(row.colStatus || '').includes('可交付') && props.isEditing">
+                  <span v-if="canSubmit(row)" class="op-btn op-add" @click="handleApproveWithDescendants(row, 'submit')">提交</span>
+                  <span v-else-if="canWithdraw(row)" class="op-btn op-edit" @click="handleApproveWithDescendants(row, 'withdraw')">撤销</span>
+                  <span v-else class="op-btn op-add invisible">提交</span>
+                  <span v-if="canApprove(row)" class="op-btn op-add" @click="handleApproveWithDescendants(row, 'approve')">通过</span>
+                  <span v-else class="op-btn op-add invisible">通过</span>
+                  <span v-if="canReject(row)" class="op-btn op-del" @click="handleRejectWithDescendants(row)">驳回</span>
+                  <span v-else class="op-btn op-del invisible">驳回</span>
+               </template>
+              <template v-else>
+                <span class="op-btn op-add invisible">提交</span>
+                <span class="op-btn op-add invisible">通过</span>
+                <span class="op-btn op-del invisible">驳回</span>
+               </template>
              <span style="display:inline-block;width:1px;height:14px;background:#d0d0d0;margin:0 4px;vertical-align:middle;"></span>
               <span v-if="!props.isEditing" class="op-btn op-edit" @click="viewRow(row)">查看</span>
               <span v-if="row.level === 3" class="op-btn op-add" @click="previewRow(row)">预览</span>
@@ -181,37 +251,48 @@
     </RecycleScroller>
     </div>
 
-    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh">
+    <el-dialog :model-value="showEditDialog" @update:model-value="onDialogChange" width="80%" top="5vh" append-to-body>
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-size:18px;font-weight:bold;">{{ editDialogTitle }}</span>
-          <div v-if="!isNew && editingRow && editForm.colStatus === '可交付'" style="display:flex;align-items:center;">
-            <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
+          <div v-if="!isNew && editingRow && (editForm.colStatus || '').includes('可交付')" style="display:flex;align-items:center;">
+             <el-tag :type="approvalTagType(editingRow.approvalStatus || '待提交')" size="large" style="font-size:14px;cursor:pointer" @click="showApprovalLogs(editingRow)">{{ editingRow.approvalStatus || '待提交' }}</el-tag>
             <span v-if="editingRow.approvalStatus === '驳回' && lastRejectReason" style="margin-left:12px;color:#f56c6c;font-size:14px;">原因：{{ lastRejectReason }}</span>
+            <span v-if="editingRow.approvalStatus === '驳回' && lastRejectOperator" style="margin-left:8px;color:#909399;font-size:13px;">（{{ lastRejectOperator }}）</span>
           </div>
         </div>
       </template>
-      <el-form :model="editForm" label-width="120px" size="small">
-        <el-row :gutter="16">
-          <el-col :span="12">
+      <el-form :model="editForm" label-width="100px" size="small" class="edit-form-compact">
+        <el-row :gutter="12">
+          <el-col :span="8">
             <el-form-item :label="productLabel">
               <el-input v-model="editForm.colProductSystem" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-            <el-form-item label="应用角色">
-              <el-select v-model="appRoleSelections" multiple size="small" style="width:100%;" :disabled="!props.isEditing">
-                <el-option v-for="r in appRoles" :key="r" :label="r" :value="r" />
-              </el-select>
+          <el-col :span="8">
+            <el-form-item label="系统类型">
+              <template v-if="props.isEditing">
+                <el-select v-model="editForm.colSystemType" style="width:100%;" placeholder="请选择" clearable filterable allow-create>
+                  <el-option v-for="s in systemTypeList" :key="s" :label="s" :value="s" />
+                </el-select>
+              </template>
+              <template v-else>
+                <el-input :model-value="editForm.colSystemType" disabled />
+              </template>
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="智能化" label-width="100px" class="intelligent-box">
+              <el-checkbox v-model="editForm.colIntelligent" true-value="1" false-value="" size="small" :disabled="!props.isEditing">是</el-checkbox>
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="16">
+        <el-row :gutter="12">
           <el-col :span="8">
             <el-form-item label="业务分类">
-              <template v-if="props.isEditing && editingRow?.level === 3">
-                <el-select v-model="editForm.colBizCategory" style="width:100%;" @change="onL1Change">
-                  <el-option v-for="cat in l1Options" :key="cat" :label="cat" :value="cat" />
+              <template v-if="props.isEditing">
+                <el-select v-model="editForm.categoryId" style="width:100%;" @change="onL1Change" placeholder="请选择">
+                  <el-option v-for="cat in l1Options" :key="cat.id" :label="cat.label" :value="cat.id" />
                 </el-select>
               </template>
               <template v-else>
@@ -221,9 +302,9 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="业务域">
-              <template v-if="props.isEditing && editingRow?.level === 3">
-                <el-select v-model="editForm.colBizDomain" style="width:100%;">
-                  <el-option v-for="d in l2Options" :key="d" :label="d" :value="d" />
+              <template v-if="props.isEditing">
+                <el-select v-model="editForm.domainId" style="width:100%;" placeholder="请选择" @change="onL2Change">
+                  <el-option v-for="d in l2Options" :key="d.id" :label="d.label" :value="d.id" />
                 </el-select>
               </template>
               <template v-else>
@@ -233,27 +314,27 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="状态">
-              <el-select v-model="editForm.colStatus" style="width: 100%" :disabled="!props.isEditing">
-                <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
-              </el-select>
+               <el-select v-model="editStatusSelections" multiple style="width: 100%" :disabled="!props.isEditing">
+                 <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
+               </el-select>
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="16">
-          <el-col :span="12">
+        <el-row :gutter="12">
+          <el-col :span="8">
             <el-form-item label="版本划分">
-              <div class="version-options">
-                <div class="version-row">
-                  <el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing">A-曜系列</el-checkbox>
-                  <el-checkbox v-if="verYao" v-model="minYao" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
+              <div class="version-layout">
+                <div class="version-series-row">
+                  <span class="version-slot"><el-checkbox v-model="verYao" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYao = false }">A-曜</el-checkbox></span>
+                  <span class="version-slot"><el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minYuan = false }">B-远</el-checkbox></span>
+                  <span class="version-slot"><el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing || verNonStd" @change="v => { if (!v) minChi = false }">C-驰</el-checkbox></span>
+                  <span class="version-slot"><el-checkbox v-model="verNonStd" size="small" :disabled="!props.isEditing || verYao || verYuan || verChi">非标配</el-checkbox></span>
                 </div>
-                <div class="version-row">
-                  <el-checkbox v-model="verYuan" size="small" :disabled="!props.isEditing">B-远系列</el-checkbox>
-                  <el-checkbox v-if="verYuan" v-model="minYuan" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
-                </div>
-                <div class="version-row">
-                  <el-checkbox v-model="verChi" size="small" :disabled="!props.isEditing">C-驰系列</el-checkbox>
-                  <el-checkbox v-if="verChi" v-model="minChi" size="small" style="margin-left:12px;" :disabled="!props.isEditing">最小集</el-checkbox>
+                <div class="version-min-row">
+                  <span class="version-slot" :class="{ 'version-slot-hidden': !verYao }"><el-checkbox v-model="minYao" size="small" :disabled="!props.isEditing">A-最小集</el-checkbox></span>
+                  <span class="version-slot" :class="{ 'version-slot-hidden': !verYuan }"><el-checkbox v-model="minYuan" size="small" :disabled="!props.isEditing">B-最小集</el-checkbox></span>
+                  <span class="version-slot" :class="{ 'version-slot-hidden': !verChi }"><el-checkbox v-model="minChi" size="small" :disabled="!props.isEditing">C-最小集</el-checkbox></span>
+                  <span class="version-slot version-slot-hidden"><!-- 占位对齐 --></span>
                 </div>
               </div>
             </el-form-item>
@@ -264,47 +345,75 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="解决方案">
-              <el-checkbox-group v-model="solutionSelections">
-                <el-checkbox v-for="s in solutions" :key="s" :value="s" size="small" :disabled="!props.isEditing">{{ s }}</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="招标参数">
-          <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" :disabled="!props.isEditing" />
-        </el-form-item>
-        <el-form-item label="功能说明">
-          <div class="feature-editor">
-            <div class="feature-editor-toolbar" v-if="props.isEditing">
-              <button type="button" class="fe-btn" title="插入图片" @click="saveSelectionAndShowPicker">
-                <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-              </button>
-            </div>
-            <div class="feature-editor-body" :contenteditable="props.isEditing ? 'true' : 'false'" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
-          </div>
-        </el-form-item>
-        <el-row :gutter="16">
-          <el-col :span="12">
             <el-form-item label="软著">
               <el-input v-model="editForm.colCopyright" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :span="8">
+            <el-form-item label="产品线">
+              <el-input v-model="editForm.colProductLine" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
             <el-form-item label="资产类型">
               <el-input v-model="editForm.colAssetType" :disabled="!props.isEditing" />
             </el-form-item>
           </el-col>
+          <el-col :span="8">
+            <el-form-item label="备注">
+              <el-input v-model="editForm.colRemark" :disabled="!props.isEditing" />
+            </el-form-item>
+          </el-col>
         </el-row>
-        <el-form-item label="备注">
-          <el-input v-model="editForm.colRemark" type="textarea" :rows="6" :disabled="!props.isEditing" />
-        </el-form-item>
+        <div class="solution-section">
+          <span class="solution-section-label">解决方案</span>
+          <el-checkbox-group v-model="solutionSelections" class="solution-checkbox-group">
+            <el-checkbox v-for="s in solutions" :key="s" :value="s" size="small" :disabled="!props.isEditing">{{ s }}</el-checkbox>
+          </el-checkbox-group>
+        </div>
+        <el-tabs v-model="activeEditorTab" type="border-card" style="margin-top:8px;">
+          <el-tab-pane label="功能明细" name="feature">
+            <el-form-item label="招标参数">
+              <el-input v-model="editForm.colBidParamDesc" type="textarea" :rows="10" :disabled="!props.isEditing" />
+            </el-form-item>
+            <el-form-item label="功能说明">
+              <div class="feature-editor">
+                <div class="feature-editor-toolbar" v-if="props.isEditing">
+                  <button type="button" class="fe-btn" title="插入图片" @click="saveSelectionAndShowPicker">
+                    <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2" y="2" width="14" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/><path d="M2 12l4-4 3 3 2-2 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+                <div class="feature-editor-body" :contenteditable="props.isEditing ? 'true' : 'false'" ref="editorRef" @input="onEditorInput" @paste="onEditorPaste" @click="onEditorClick" @mouseenter="onEditorMouseEnter" @mouseleave="onEditorMouseLeave" @mousemove="onEditorMouseMove"></div>
+              </div>
+            </el-form-item>
+          </el-tab-pane>
+          <template v-if="(editingRow?.level === 3) || (isNew && !parentRow)">
+            <el-tab-pane label="成本管理" name="cost">
+              <div class="coming-soon-placeholder">
+                <el-icon :size="48" color="#c0c4cc"><Warning /></el-icon>
+                <p class="coming-soon-title">功能开发中</p>
+                <p class="coming-soon-desc">成本管理模块正在紧锣密鼓地开发中，敬请期待！</p>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="两单一务" name="twoone">
+              <div class="coming-soon-placeholder">
+                <el-icon :size="48" color="#c0c4cc"><Warning /></el-icon>
+                <p class="coming-soon-title">功能开发中</p>
+                <p class="coming-soon-desc">两单一务模块正在紧锣密鼓地开发中，敬请期待！</p>
+              </div>
+            </el-tab-pane>
+          </template>
+        </el-tabs>
+
       </el-form>
       <template #footer>
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
           <div style="margin-left:120px;">
-            <template v-if="props.isEditing && !isNew && editForm.colStatus === '可交付'">
+            <template v-if="props.isEditing && !isNew && (editForm.colStatus || '').includes('可交付')">
               <el-button v-if="canSubmit(editingRow)" type="primary" @click="handleApprove(editingRow, 'submit')">提交审批</el-button>
+              <el-button v-if="canWithdraw(editingRow)" type="primary" plain @click="handleApprove(editingRow, 'withdraw')">撤销提交</el-button>
               <el-button v-if="canApprove(editingRow)" type="success" @click="handleApprove(editingRow, 'approve')">审核通过</el-button>
               <el-button v-if="canReject(editingRow)" type="danger" @click="handleReject(editingRow)">驳回</el-button>
             </template>
@@ -316,26 +425,11 @@
         </div>
       </template>
     </el-dialog>
-    <el-dialog v-model="previewVisible" title="预览" width="80%" top="5vh" :close-on-click-modal="true">
-      <template #header>
-        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
-          <span>预览</span>
-          <el-button type="primary" size="small" :loading="downloadLoading" @click="downloadPreview">下载Word</el-button>
-        </div>
-      </template>
-      <div style="position:relative;">
-        <iframe ref="previewFrame" :srcdoc="previewHtml" @load="onPreviewLoad" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:4px;" />
-        <div v-if="downloadLoading" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;">
-          <el-icon class="is-loading" style="font-size:48px;color:#409eff;"><Loading /></el-icon>
-          <span style="margin-top:12px;color:#666;font-size:14px;">正在生成文档...</span>
-        </div>
-      </div>
-    </el-dialog>
      <el-dialog v-model="showBatchStatusDialog" title="批量修改功能状态" width="400px">
        <el-form label-width="80px">
          <el-form-item label="功能状态">
-           <el-select v-model="batchStatusValue" placeholder="请选择" style="width:100%;">
-             <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
+            <el-select v-model="batchStatusValue" placeholder="请选择" multiple style="width:100%;">
+              <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
            </el-select>
          </el-form-item>
        </el-form>
@@ -344,55 +438,204 @@
          <el-button type="primary" @click="confirmBatchStatus">确定</el-button>
        </template>
      </el-dialog>
-     <el-dialog v-model="showBatchSolutionDialog" title="批量修改解决方案" width="400px">
-       <el-form label-width="80px">
-         <el-form-item label="解决方案">
-           <el-select v-model="batchSolutionValue" placeholder="请选择" style="width:100%;">
-             <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
-           </el-select>
-         </el-form-item>
-       </el-form>
-       <template #footer>
-         <el-button @click="showBatchSolutionDialog = false">取消</el-button>
-         <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
-       </template>
+      <el-dialog v-model="showBatchSolutionDialog" title="批量修改解决方案" width="400px">
+        <el-form label-width="80px">
+          <el-form-item label="修改方式">
+            <el-radio-group v-model="batchSolutionMode">
+              <el-radio-button value="append">追加</el-radio-button>
+              <el-radio-button value="replace">替换</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="解决方案">
+            <el-select v-model="batchSolutionValue" placeholder="请选择" style="width:100%;">
+              <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchSolutionDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchSolution">确定</el-button>
+        </template>
+       </el-dialog>
+      <el-dialog v-model="showBatchManagerDialog" title="批量指定产品经理" width="400px">
+        <el-form label-width="80px">
+          <el-form-item label="产品经理">
+            <el-input v-model="batchManagerValue" placeholder="请输入产品经理" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchManagerDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchManager">确定</el-button>
+        </template>
       </el-dialog>
-     <el-dialog v-model="showBatchManagerDialog" title="批量指定产品经理" width="400px">
-       <el-form label-width="80px">
-         <el-form-item label="产品经理">
-           <el-input v-model="batchManagerValue" placeholder="请输入产品经理" />
-         </el-form-item>
-       </el-form>
-       <template #footer>
-         <el-button @click="showBatchManagerDialog = false">取消</el-button>
-         <el-button type="primary" @click="confirmBatchManager">确定</el-button>
-       </template>
-</el-dialog>
-      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="insertImage" />
-       <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" @select="replaceImageCard" />
-<el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" :style="{ maxWidth: '90vw' }">
+      <el-dialog v-model="showBatchCategoryDialog" title="批量修改业务分类/业务域" width="580px">
+        <el-form label-width="80px">
+          <el-form-item label="业务分类">
+            <el-select v-model="batchCategoryId" placeholder="请选择业务分类" style="width:100%;" @change="onBatchL1Change">
+              <el-option v-for="cat in batchCatL1Options" :key="cat.id" :label="cat.label" :value="cat.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="业务域">
+            <el-select v-model="batchDomainId" placeholder="请先选择业务分类" style="width:100%;">
+              <el-option v-for="d in batchCatL2Options" :key="d.id" :label="d.label" :value="d.id" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchCategoryDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchCategory" :loading="batchLoading">确定</el-button>
+        </template>
+      </el-dialog>
+      <el-dialog v-model="showBatchVersionDialog" title="批量修改版本划分" width="460px">
+        <el-form label-width="100px">
+          <el-form-item label="版本划分">
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <el-checkbox v-model="batchVerYao" @change="onBatchVerChange('yao')">A-曜系列</el-checkbox>
+              <div v-if="batchVerYao" style="margin-left:24px;">
+                <el-switch v-model="batchMinYao" active-text="最小集-是" inactive-text="最小集-否" />
+              </div>
+              <el-checkbox v-model="batchVerYuan" @change="onBatchVerChange('yuan')">B-远系列</el-checkbox>
+              <div v-if="batchVerYuan" style="margin-left:24px;">
+                <el-switch v-model="batchMinYuan" active-text="最小集-是" inactive-text="最小集-否" />
+              </div>
+              <el-checkbox v-model="batchVerChi" @change="onBatchVerChange('chi')">C-驰系列</el-checkbox>
+              <div v-if="batchVerChi" style="margin-left:24px;">
+                <el-switch v-model="batchMinChi" active-text="最小集-是" inactive-text="最小集-否" />
+              </div>
+              <el-checkbox v-model="batchVerNonStd" @change="onBatchVerChange('nonStd')">非标配系统</el-checkbox>
+            </div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showBatchVersionDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchVersion">确定</el-button>
+        </template>
+      </el-dialog>
+      <el-dialog v-model="showBatchIntelligentDialog" title="批量智能化标注" width="420px">
+        <div style="display:flex;flex-direction:column;gap:14px;padding:10px 0;">
+          <el-radio-group v-model="batchIntelligentAction">
+            <el-radio value="mark">标记智能化</el-radio>
+            <el-radio value="unmark">取消智能化标记</el-radio>
+          </el-radio-group>
+          <el-radio-group v-model="batchIntelligentScope">
+            <el-radio value="self">仅手动勾选的条目（不含级联子节点）</el-radio>
+            <el-radio value="all">所有选中条目（含级联子节点）</el-radio>
+          </el-radio-group>
+        </div>
+        <template #footer>
+          <el-button @click="showBatchIntelligentDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchIntelligent">确定</el-button>
+        </template>
+      </el-dialog>
+      <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :default-product-id="imagePickerProductId" :version-id="props.versionId" @select="insertImage" />
+        <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :default-product-id="imagePickerProductId" :version-id="props.versionId" @select="replaceImageCard" />
+<el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" append-to-body :style="{ maxWidth: '90vw' }">
         <div style="display:flex;align-items:center;justify-content:center;">
           <img v-if="imgPreviewUrl" :src="imgPreviewUrl" style="max-width:85vw;max-height:78vh;object-fit:contain;" />
         </div>
 </el-dialog>
       <div v-if="editorTooltip" class="editor-tooltip" :style="{ left: editorTooltip.x + 'px', top: editorTooltip.y + 'px' }">{{ editorTooltip.text }}</div>
-      <input ref="fileInput" type="file" accept=".xlsx,.xls" style="display:none" @change="onFileSelected" />
+      <el-dialog v-model="approvalLogVisible" :title="approvalLogTitle" width="550px" append-to-body>
+        <el-timeline v-if="approvalLogData.length > 0">
+          <el-timeline-item v-for="log in approvalLogData" :key="log.id" :timestamp="log.createdAt?.substring(0, 16)" placement="top">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span>{{ log.operatorName || '未知' }}</span>
+              <span style="color:#303133;font-weight:500;">{{ actionLabel(log.action) }}</span>
+              <el-tag :type="approvalTagType(log.fromStatus)" size="small">{{ log.fromStatus }}</el-tag>
+              <span style="color:#909399;">→</span>
+              <el-tag :type="approvalTagType(log.toStatus)" size="small">{{ log.toStatus }}</el-tag>
+              <span v-if="log.action === 'reject' && log.comment" style="color: #F56C6C;margin-left:4px;">原因: {{ log.comment }}</span>
+            </div>
+          </el-timeline-item>
+        </el-timeline>
+        <div v-else style="color:#909399;text-align:center;padding:20px 0;">暂无审批记录</div>
+      </el-dialog>
+      <el-dialog v-model="renumberVisible" title="编码重排序" width="680px" :close-on-click-modal="false">
+        <el-alert v-if="renumberItems.length === 0" type="warning" :closable="false" show-icon>
+          <template #title>请先在清单中勾选产品级别(L3)的条目</template>
+        </el-alert>
+        <div v-else>
+          <el-table :data="renumberItems" size="small" border stripe max-height="400">
+            <el-table-column label="当前编码名称" min-width="180">
+              <template #default="{ row }">
+                <span style="font-size:12px;color:#909399;">{{ row.currentLabel }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="新编码" width="150">
+              <template #default="{ row }">
+                <el-input v-model="row.newPrefix" size="small" placeholder="如 1.2.1" />
+                <div v-if="row.prefixError" style="color:#f56c6c;font-size:11px;margin-top:2px;">{{ row.prefixError }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="新名称" min-width="150">
+              <template #default="{ row }">
+                <el-input v-model="row.newName" size="small" placeholder="名称" />
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <template #footer>
+          <el-button @click="renumberVisible = false">取消</el-button>
+          <el-button type="primary" :loading="renumberLoading" :disabled="renumberItems.length === 0 || renumberHasError" @click="doRenumber">确认重排序</el-button>
+        </template>
+      </el-dialog>
+
+      <Teleport to="body">
+        <div v-if="ctxMenu.visible" ref="ctxMenuRef" class="ctx-menu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop>
+          <div class="ctx-menu-item" @click="onCtxCopy">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span>复制</span>
+          </div>
+          <template v-if="props.isEditing">
+          <div class="ctx-menu-item" @click="onCtxCut">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+            <span>剪切</span>
+          </div>
+          <div class="ctx-menu-sep"></div>
+          <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': !clipboard.mode || clipboard.entryIds.length === 0 }" @click="onCtxPasteSibling">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <span>粘贴到同级</span>
+          </div>
+          <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': !clipboard.mode || clipboard.entryIds.length === 0 }" @click="onCtxPasteChild">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+            <span>粘贴到下级</span>
+          </div>
+          <div class="ctx-menu-sep"></div>
+          <div class="ctx-menu-item" :class="{ 'ctx-menu-disabled': ctxMenu.row && (ctxMenu.row.level || 3) <= 3 }" @click="onCtxLevelUp">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+            <span>升级</span>
+          </div>
+          <div class="ctx-menu-item" @click="onCtxLevelDown">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            <span>降级</span>
+          </div>
+          <div class="ctx-menu-sep"></div>
+          <div class="ctx-menu-item" @click="onCtxMoveUp">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            <span>上移</span>
+          </div>
+          <div class="ctx-menu-item" @click="onCtxMoveDown">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+            <span>下移</span>
+          </div>
+          </template>
+        </div>
+      </Teleport>
       </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, importExcel, batchDelete, getTree } from '../api/data'
-import { updateCustomTabSort } from '../api/customTab'
-import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading } from '@element-plus/icons-vue'
+import { queryEntries, createEntry, updateEntry, deleteEntry, updateSort, reorderAll, dedupEntries, dedupDeepEntries, batchDelete, batchUpdateCategory, getTree, getCategoryTree, getSubTree, moveToParent, moveToSibling, getEntry, renumberEntries, copyEntries, moveEntries, levelUp, levelDown, moveUp, moveDown } from '../api/data'
+import { ArrowDown, Plus, Upload, CircleCheck, CircleClose, Document, Delete, Expand, Fold, Edit, Picture, FolderOpened, Loading, Warning, Sort } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { getOptions } from '../api/option'
 import { useAuthStore } from '../store/auth'
 import { approveEntry, getApprovalLogs } from '../api/approval'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import ImagePicker from './ImagePicker.vue'
-import { updateImage, migrateImages } from '../api/image'
+import { updateImage } from '../api/image'
 
 const props = defineProps({
   versionId: [Number, String],
@@ -403,139 +646,87 @@ const props = defineProps({
   userRole: { type: String, default: 'USER' }
 })
 
-const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc'])
+const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc', 'openPreview', 'preview-reload'])
 
 const authStore = useAuthStore()
 const tableData = ref([])
+const dataLoading = ref(false)
+let queryVersion = 0
 const totalEntryCount = ref(0)
+const productCount = ref(0)
 const showEditDialog = ref(false)
 const isNew = ref(false)
 const editingId = ref(null)
 const editingRow = ref(null)
 const lastRejectReason = ref('')
+const lastRejectOperator = ref('')
 const showBatchStatusDialog = ref(false)
-const batchStatusValue = ref('')
+const batchStatusValue = ref([])
 const showBatchSolutionDialog = ref(false)
 const batchSolutionValue = ref('')
+const batchSolutionMode = ref('append')
 const showBatchManagerDialog = ref(false)
 const batchManagerValue = ref('')
+const showBatchCategoryDialog = ref(false)
+const batchCategoryId = ref(null)
+const batchDomainId = ref(null)
+const batchCatL1Options = ref([])
+const batchCatL2Options = ref([])
+const showBatchVersionDialog = ref(false)
+const batchVerYao = ref(false)
+const batchVerYuan = ref(false)
+const batchVerChi = ref(false)
+const batchVerNonStd = ref(false)
+const batchMinYao = ref(false)
+const batchMinYuan = ref(false)
+const batchMinChi = ref(false)
+const showBatchIntelligentDialog = ref(false)
+const batchIntelligentAction = ref('mark')
+const batchIntelligentScope = ref('self')
 const selectedIds = ref([])
-const migrating = ref(false)
-const importing = ref(false)
-const fileInput = ref(null)
+const inserting = ref(false)
+const clipboard = reactive({ mode: null, entryIds: [] })
+const ctxMenu = reactive({ visible: false, x: 0, y: 0, row: null })
+const ctxMenuRef = ref(null)
+const batchLoading = ref(false)
+const activeEditorTab = ref('feature')
 const newlyCreatedIds = reactive(new Map())
 const l1Options = ref([])
 const l2Options = ref([])
 const showImagePicker = ref(false)
 const imgPreviewVisible = ref(false)
+const renumberVisible = ref(false)
+const renumberLoading = ref(false)
+const renumberItems = ref([])
 const imgPreviewUrl = ref('')
-const previewVisible = ref(false)
-const previewHtml = ref('')
-const previewEntryId = ref(null)
-const downloadLoading = ref(false)
-const previewFrame = ref(null)
-let pendingScrollTop = 0
-let pendingHighlightId = null
 const editorRef = ref(null)
 
 onMounted(() => {
-  window.addEventListener('message', onPreviewMessage)
 })
 
-async function onPreviewMessage(e) {
-  if (!previewVisible.value) return
-  const msg = e.data
-  if (msg?.action === 'edit') {
-    const row = findEntryById(msg.entryId)
-    if (row) editRow(row)
-  } else if (msg?.action === 'addChild') {
-    const row = findEntryById(msg.entryId)
-    if (row) addChildRow(row)
-  } else if (msg?.action === 'submit') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await handleApprove(row, 'submit'); reloadPreviewAfterApproval() }
-  } else if (msg?.action === 'approve') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await handleApprove(row, 'approve'); reloadPreviewAfterApproval() }
-  } else if (msg?.action === 'reject') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await handleReject(row); reloadPreviewAfterApproval() }
-  } else if (msg?.action === 'delete') {
-    const row = findEntryById(msg.entryId)
-    if (row) { await deleteRow(row); if (previewVisible.value) reloadPreviewAfterApproval() }
-  }
-}
-
-async function reloadPreviewAfterApproval(highlightEntryId) {
-  if (!previewEntryId.value) return
-  const frame = previewFrame.value
-  try { pendingScrollTop = frame?.contentWindow?.document?.querySelector?.('.content')?.scrollTop || 0 } catch {}
-  pendingHighlightId = highlightEntryId || null
-  const token = localStorage.getItem('token')
-  const resp = await fetch(`/api/data/${previewEntryId.value}/preview?_t=${Date.now()}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (resp.ok) {
-    previewHtml.value = await resp.text()
-  }
-}
-
-function onPreviewLoad() {
-  if (pendingScrollTop > 0) {
-    const frame = previewFrame.value
-    try { frame?.contentWindow?.document?.querySelector?.('.content')?.scrollTo(0, pendingScrollTop) } catch {}
-    pendingScrollTop = 0
-  }
-  if (pendingHighlightId) {
-    const frame = previewFrame.value
-    frame?.contentWindow?.postMessage({ action: 'highlightEntry', entryId: pendingHighlightId }, '*')
-    pendingHighlightId = null
-  }
-}
-
-function notifyPreviewUpdate(row) {
-  const frame = previewFrame.value
-  if (!frame?.contentWindow) return
-  const role = approvalRole.value
-  frame.contentWindow.postMessage({
-    action: 'updateEntry',
-    entryId: row.id,
-    approvalStatus: row.approvalStatus || '',
-    colStatus: row.colStatus || '',
-    isEditing: props.isEditing,
-    role: role
-  }, '*')
-}
-
-function findEntryById(id) {
-  function search(nodes) {
-    for (const n of nodes) {
-      if (n.id === id) return n
-      if (n.children) { const r = search(n.children); if (r) return r }
-    }
-    return null
-  }
-  return search(tableData.value)
-}
-const manuallySelectedIds = ref(new Set())
+  const manualSelectedIds = ref(new Set())
+  const manuallySelectedIds = computed(() => new Set(selectedIds.value))
 const pendingImageUpdates = ref([])
 const parentRow = ref(null)
 const appRoles = ref([])
 const solutions = ref([])
 const statusList = ref([])
+const systemTypeList = ref([])
 const appRoleSelections = ref([])
+const editStatusSelections = ref([])
  const solutionSelections = ref([])
- const versionDivList = ref(['A-曜系列', 'B-远系列', 'C-驰系列'])
+ const versionDivList = ref(['A-曜系列', 'B-远系列', 'C-驰系列', '非标配系统'])
  const collapsedDomains = ref(new Set())
  const displayData = ref([])
  const expandedNodeIds = ref(new Set())
   const scrollerRef = ref(null)
-  const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, ghostEl: null })
- let dragMoveHandler = null
-let dragUpHandler = null
+const dragState = reactive({ active: false, sourceIndex: -1, targetIndex: -1, mode: 'sort', nestTargetId: null, siblingTargetId: null, sortEnd: false, ghostEl: null })
+  let dragMoveHandler = null
+ let dragUpHandler = null
 
 const imagePickerProduct = computed(() => {
   if (editForm.level === 3) return editForm.colProductSystem
+  if (editForm.level != null && editForm.level < 3) return ''
   let node = nodeMap.value.get(editingId.value)
   while (node) {
     if (node.level === 3) return node.colProductSystem
@@ -553,7 +744,39 @@ const imagePickerProduct = computed(() => {
       p = p.parentId ? nodeMap.value.get(p.parentId) : null
     }
   }
-  return editForm.colProductSystem
+  const cat = editForm.colBizCategory || ''
+  const dom = editForm.colBizDomain || ''
+  if (cat && dom) {
+    for (const [, n] of nodeMap.value) {
+      if (n.level === 3 && n.colBizCategory === cat && n.colBizDomain === dom && n.colProductSystem) {
+        return n.colProductSystem
+      }
+    }
+  }
+  return ''
+})
+
+const imagePickerProductId = computed(() => {
+  if (editForm.level === 3) return editingId.value
+  if (editForm.level != null && editForm.level < 3) return null
+  let node = nodeMap.value.get(editingId.value)
+  while (node) {
+    if (node.level === 3) return node.id
+    if (node.parentId) {
+      node = nodeMap.value.get(node.parentId)
+    } else {
+      break
+    }
+  }
+  if (parentRow.value && parentRow.value.level === 3) return parentRow.value.id
+  if (parentRow.value) {
+    let p = nodeMap.value.get(parentRow.value.id)
+    while (p) {
+      if (p.level === 3) return p.id
+      p = p.parentId ? nodeMap.value.get(p.parentId) : null
+    }
+  }
+  return null
 })
 
 watch(showEditDialog, (val) => {
@@ -578,12 +801,14 @@ watch(showEditDialog, (val) => {
 
    for (const [domain, roots] of domainGroups) {
      const category = roots[0]?.colBizCategory || ''
-     result.push({
-       _isSeparator: true,
-       colBizDomain: domain,
-       colBizCategory: category,
-       id: 'sep-' + domain
-     })
+      result.push({
+        _isSeparator: true,
+        colBizDomain: domain,
+        colBizCategory: category,
+        domainId: roots[0]?.domainId || null,
+        categoryId: roots[0]?.categoryId || null,
+        id: 'sep-' + domain
+      })
      if (!collapsedDomains.value.has(domain)) {
        function addTree(node) {
          result.push(node)
@@ -609,6 +834,12 @@ watch(showEditDialog, (val) => {
     dragState.active = true
     dragState.sourceIndex = rowIndex
     dragState.targetIndex = rowIndex
+    dragState.mode = 'sort'
+    dragState.nestTargetId = null
+    dragState.siblingTargetId = null
+    dragState.sortEnd = false
+
+    const sourceDomain = row.colBizDomain || ''
 
     const el = e.target.closest('.vrow')
     if (!el) return
@@ -631,35 +862,96 @@ watch(showEditDialog, (val) => {
     el.classList.add('drag-source-hidden')
 
      dragMoveHandler = (ev) => {
-       if (!dragState.active) return
-       ghost.style.top = (ev.clientY - offsetY) + 'px'
-       const scrollerEl = scrollerRef.value?.$el
-       if (!scrollerEl) return
-       const wrapper = scrollerEl.querySelector('.vue-recycle-scroller__item-wrapper')
-       if (!wrapper) return
-       const rows = wrapper.querySelectorAll('.vrow:not(.drag-source-hidden)')
-       let targetIdx = -1
-       for (const r of rows) {
-         const rRect = r.getBoundingClientRect()
-         const mid = rRect.top + rRect.height / 2
-         const cls = r.className
-         const m = cls.match(/row-id-(\S+)/)
-         if (!m) continue
-         const idStr = m[1]
-         const idx = displayData.value.findIndex(d => String(d.id) === idStr)
-         if (idx === -1) continue
-         if (displayData.value[idx]._isSeparator) continue
-         if (ev.clientY < mid) { targetIdx = idx; break }
-         let nextIdx = idx + 1
-         while (nextIdx < displayData.value.length && displayData.value[nextIdx]._isSeparator) {
-           nextIdx++
-         }
-         targetIdx = nextIdx
-       }
-       if (targetIdx === -1) targetIdx = dragState.sourceIndex
-       dragState.targetIndex = targetIdx
-       updateDragIndicator(wrapper)
-     }
+        if (!dragState.active) return
+        ghost.style.top = (ev.clientY - offsetY) + 'px'
+        const scrollerEl = scrollerRef.value?.$el
+        if (!scrollerEl) return
+        const scrollerRect = scrollerEl.getBoundingClientRect()
+        const itemSize = 36
+        const rawIdx = Math.floor((ev.clientY - scrollerRect.top + scrollerEl.scrollTop) / itemSize)
+        const clampedIdx = Math.max(0, Math.min(rawIdx, displayData.value.length - 1))
+
+        let targetIdx = -1
+        let detectedMode = 'sort'
+        let detectedNestId = null
+        let detectedSiblingId = null
+        let detectedSortEnd = false
+
+        const srcRow = displayData.value[dragState.sourceIndex]
+        const srcLevel = srcRow?.level || 3
+        const srcIndent = 54 + (srcLevel - 3) * 20
+        const srcX = scrollerRect.left + srcIndent
+        const mouseRelX = ev.clientX - srcX
+
+        const entry = displayData.value[clampedIdx]
+         if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx !== dragState.sourceIndex) {
+           targetIdx = clampedIdx
+           if (mouseRelX < -40) {
+             detectedMode = 'sibling'
+             detectedSiblingId = entry.id
+           } else if (mouseRelX > 40) {
+             detectedMode = 'nest'
+             detectedNestId = entry.id
+           } else {
+             detectedMode = 'sort'
+             if (rawIdx >= displayData.value.length) {
+               detectedSortEnd = true
+             }
+           }
+        } else if (entry && !entry._isSeparator && (entry.colBizDomain || '') === sourceDomain && clampedIdx === dragState.sourceIndex) {
+          // 鼠标在源行上，不改变target
+        } else {
+          let found = false
+          let searchDown = clampedIdx
+          while (searchDown < displayData.value.length) {
+            const s = displayData.value[searchDown]
+            if (s._isSeparator && (s.colBizDomain || '') !== sourceDomain) break
+            if (!s._isSeparator && (s.colBizDomain || '') === sourceDomain && searchDown !== dragState.sourceIndex) {
+              targetIdx = searchDown
+              if (mouseRelX < -40) { detectedMode = 'sibling'; detectedSiblingId = s.id }
+              else if (mouseRelX > 40) { detectedMode = 'nest'; detectedNestId = s.id }
+              else { detectedMode = 'sort' }
+              detectedSortEnd = false
+              found = true
+              break
+            }
+            searchDown++
+          }
+          if (!found) {
+            let searchUp = clampedIdx
+            while (searchUp >= 0) {
+              const s = displayData.value[searchUp]
+              if (!s._isSeparator && (s.colBizDomain || '') === sourceDomain && searchUp !== dragState.sourceIndex) {
+                targetIdx = searchUp
+                if (mouseRelX < -40) { detectedMode = 'sibling'; detectedSiblingId = s.id }
+                else if (mouseRelX > 40) { detectedMode = 'nest'; detectedNestId = s.id }
+                else { detectedMode = 'sort' }
+                detectedSortEnd = true
+                break
+              }
+              searchUp--
+            }
+          }
+        }
+
+        if (targetIdx === -1) { targetIdx = dragState.sourceIndex; detectedMode = 'sort'; detectedSortEnd = false }
+        const sourceRow = displayData.value[dragState.sourceIndex]
+        const targetRow = displayData.value[targetIdx]
+        if (detectedMode === 'nest' && sourceRow && targetRow && !isNestAllowed(sourceRow, targetRow)) {
+          detectedMode = 'sort'
+          detectedNestId = null
+        }
+        if (detectedMode === 'sibling' && sourceRow && targetRow && !isSiblingAllowed(sourceRow, targetRow)) {
+          detectedMode = 'sort'
+          detectedSiblingId = null
+        }
+        dragState.targetIndex = targetIdx
+        dragState.mode = detectedMode
+        dragState.nestTargetId = detectedNestId
+        dragState.siblingTargetId = detectedSiblingId
+        dragState.sortEnd = detectedSortEnd
+        updateDragIndicator(scrollerEl)
+      }
 
     dragUpHandler = () => {
       if (!dragState.active) return
@@ -672,66 +964,149 @@ watch(showEditDialog, (val) => {
       document.removeEventListener('mouseup', dragUpHandler)
       dragMoveHandler = null
       dragUpHandler = null
-      if (dragState.sourceIndex !== dragState.targetIndex && dragState.targetIndex >= 0) {
-        applyDragDrop(dragState.sourceIndex, dragState.targetIndex)
+      if (dragState.mode === 'nest' && dragState.nestTargetId) {
+        applyNestMove(dragState.sourceIndex, dragState.nestTargetId)
+      } else if (dragState.mode === 'sibling' && dragState.siblingTargetId) {
+        applySiblingMove(dragState.sourceIndex, dragState.siblingTargetId)
+      } else if (dragState.sourceIndex !== dragState.targetIndex && dragState.targetIndex >= 0) {
+        applyDragDrop(dragState.sourceIndex, dragState.targetIndex, dragState.sortEnd)
       }
       dragState.sourceIndex = -1
       dragState.targetIndex = -1
+      dragState.mode = 'sort'
+      dragState.nestTargetId = null
+      dragState.siblingTargetId = null
+      dragState.sortEnd = false
     }
 
     document.addEventListener('mousemove', dragMoveHandler)
     document.addEventListener('mouseup', dragUpHandler)
   }
 
-  function updateDragIndicator(wrapper) {
-    removeDragIndicator(wrapper)
+  function isNestAllowed(sourceRow, targetRow) {
+    if (!sourceRow || !targetRow) return false
+    if (sourceRow.id === targetRow.id) return false
+    if (targetRow._isSeparator) return false
+    if ((targetRow.level || 3) < 3) return false
+    let node = nodeMap.value.get(targetRow.id)
+    while (node) {
+      if (node.id === sourceRow.id) return false
+      node = node.parentId ? nodeMap.value.get(node.parentId) : null
+    }
+    return true
+  }
+
+   async function applyNestMove(sourceIdx, targetId) {
+    const sourceRow = displayData.value[sourceIdx]
+    if (!sourceRow) return
+    try {
+       await moveToParent(sourceRow.id, targetId)
+      ElMessage.success('层级变更成功')
+      handleQuery(true)
+    } catch (e) {
+      console.error('层级变更失败:', e)
+      ElMessage.error(e.message || '层级变更失败')
+      rebuildDisplayData()
+    }
+  }
+
+  function isSiblingAllowed(sourceRow, targetRow) {
+    if (!sourceRow || !targetRow) return false
+    if (sourceRow.id === targetRow.id) return false
+    if (targetRow._isSeparator) return false
+    if ((targetRow.level || 3) < 3) return false
+    if (!targetRow.parentId && (targetRow.level || 3) > 3) return false
+    let node = nodeMap.value.get(targetRow.id)
+    while (node) {
+      if (node.id === sourceRow.id) return false
+      node = node.parentId ? nodeMap.value.get(node.parentId) : null
+    }
+    return true
+  }
+
+  async function applySiblingMove(sourceIdx, targetId) {
+    const sourceRow = displayData.value[sourceIdx]
+    if (!sourceRow) return
+    try {
+      await moveToSibling(sourceRow.id, targetId)
+      ElMessage.success('层级变更成功')
+      handleQuery(true)
+    } catch (e) {
+      console.error('层级变更失败:', e)
+      ElMessage.error(e.message || '层级变更失败')
+      rebuildDisplayData()
+    }
+  }
+
+  function updateDragIndicator(scrollerEl) {
+    removeDragIndicator()
     const ti = dragState.targetIndex
-    if (ti < 0 || ti > displayData.value.length) return
-    let actualTi = ti
-    while (actualTi < displayData.value.length && displayData.value[actualTi]?._isSeparator) {
-      actualTi++
-    }
-    if (actualTi >= displayData.value.length && ti > dragState.sourceIndex) {
-      actualTi = ti - 1
-      while (actualTi >= 0 && displayData.value[actualTi]?._isSeparator) {
-        actualTi--
-      }
-    }
-    const targetRow = wrapper.querySelector(`.row-id-${CSS.escape(String(displayData.value[Math.min(actualTi, displayData.value.length - 1)]?.id || ''))}`)
-    if (!targetRow) return
+    if (ti < 0 || ti >= displayData.value.length) return
+    const targetData = displayData.value[ti]
+    if (!targetData || targetData._isSeparator) return
+
+    const scrollerRect = scrollerEl.getBoundingClientRect()
+    const itemSize = 36
+    const rowTop = scrollerRect.top + ti * itemSize - scrollerEl.scrollTop
+    const srcRow = displayData.value[dragState.sourceIndex]
+    const srcLevel = srcRow?.level || 3
+    const srcIndent = 54 + (srcLevel - 3) * 20
+
     const indicator = document.createElement('div')
     indicator.className = 'drag-indicator'
-    const tRect = targetRow.getBoundingClientRect()
     indicator.style.position = 'fixed'
-    indicator.style.left = tRect.left + 'px'
-    indicator.style.width = tRect.width + 'px'
     indicator.style.height = '2px'
     indicator.style.background = 'var(--si-primary, #2563EB)'
     indicator.style.zIndex = '10000'
     indicator.style.pointerEvents = 'none'
-    indicator.style.top = tRect.top + 'px'
+
+    if (dragState.mode === 'nest') {
+      const indent = srcIndent + 20
+      indicator.style.left = (scrollerRect.left + indent) + 'px'
+      indicator.style.width = (scrollerRect.width - indent) + 'px'
+      indicator.style.top = (rowTop - 1) + 'px'
+      indicator.style.background = '#E6A23C'
+    } else if (dragState.mode === 'sibling') {
+      const indent = Math.max(0, srcIndent - 20)
+      indicator.style.left = (scrollerRect.left + indent) + 'px'
+      indicator.style.width = (scrollerRect.width - indent) + 'px'
+      indicator.style.top = (rowTop - 1) + 'px'
+      indicator.style.background = '#67C23A'
+    } else {
+      indicator.style.left = (scrollerRect.left + srcIndent) + 'px'
+      indicator.style.width = (scrollerRect.width - srcIndent) + 'px'
+      indicator.style.top = dragState.sortEnd ? (rowTop + itemSize - 1) + 'px' : (rowTop - 1) + 'px'
+    }
+
     document.body.appendChild(indicator)
   }
 
-  function removeDragIndicator(wrapper) {
+  function removeDragIndicator() {
     document.querySelectorAll('.drag-indicator').forEach(el => el.remove())
   }
 
-  async function applyDragDrop(fromIdx, toIdx) {
+  async function applyDragDrop(fromIdx, toIdx, sortEnd = false) {
     const arr = [...displayData.value]
     const item = arr.splice(fromIdx, 1)[0]
     if (!item) return
-    const insertIdx = toIdx > fromIdx ? toIdx - 1 : toIdx
+    let insertIdx
+    if (sortEnd) {
+      insertIdx = toIdx > fromIdx ? toIdx : toIdx + 1
+    } else {
+      insertIdx = toIdx > fromIdx ? toIdx - 1 : toIdx
+    }
     arr.splice(insertIdx, 0, item)
-    const nonSep = arr.filter(d => !d._isSeparator)
+    const sourceDomain = item.colBizDomain || ''
+    const sourceParentId = item.parentId || null
+    const isL3 = item.level === 3
+    const sameGroup = arr.filter(d =>
+      !d._isSeparator
+      && (d.colBizDomain || '') === sourceDomain
+      && (isL3 ? d.level === 3 : (d.parentId || null) === sourceParentId)
+    )
     try {
-      if (props.customTabId) {
-        const payload = nonSep.map((d, i) => ({ entryId: d.id, sortOrder: i }))
-        await updateCustomTabSort(props.customTabId, payload)
-      } else {
-        const payload = nonSep.map((d, i) => ({ id: d.id, sortOrder: i }))
-        await updateSort(payload)
-      }
+      const payload = sameGroup.map((d, i) => ({ id: d.id, sortOrder: i }))
+      await updateSort(payload)
       ElMessage.success('排序已保存')
       handleQuery(true)
     } catch (e) {
@@ -751,15 +1126,43 @@ watch(showEditDialog, (val) => {
    rebuildDisplayData()
  }
 
-function addProductFromSeparator(row) {
+async function addProductFromSeparator(row) {
   isNew.value = true
   editingId.value = null
   parentRow.value = null
-  initEditForm()
+  Object.assign(editForm, initialFormState())
   editForm.colBizCategory = row.colBizCategory || ''
   editForm.colBizDomain = row.colBizDomain || ''
+  await resolveCategoryIds()
+  await loadCategoryTree()
   syncVersionFromForm()
+  activeEditorTab.value = 'feature'
   showEditDialog.value = true
+}
+
+async function resolveCategoryIds() {
+  if (!props.versionId) return
+  try {
+    const res = await getCategoryTree(props.versionId)
+    const data = res.data || []
+    if (!editForm.categoryId && editForm.colBizCategory) {
+      const l1 = data.find(d => d.label === editForm.colBizCategory)
+      if (l1) {
+        editForm.categoryId = l1.id
+        const l2List = (l1.children || [])
+        l2Options.value = l2List.map(c => ({ id: c.id, label: c.label }))
+        if (!editForm.domainId && editForm.colBizDomain) {
+          const l2 = l2List.find(c => c.label === editForm.colBizDomain)
+          if (l2) editForm.domainId = l2.id
+        }
+      }
+    }
+    l1Options.value = data.map(d => ({ id: d.id, label: d.label }))
+    if (editForm.categoryId) {
+      const matched = data.find(d => d.id == editForm.categoryId)
+      l2Options.value = (matched?.children || []).map(c => ({ id: c.id, label: c.label }))
+    }
+  } catch {}
 }
 
  function expandAll() {
@@ -853,20 +1256,44 @@ function hasVer(row, ver) {
   return (row.colVersionDivision || '').includes(ver)
 }
 
+function getVerMinCol(ver) {
+  if (ver === 'A-曜系列') return 'colYao'
+  if (ver === 'B-远系列') return 'colYuan'
+  if (ver === 'C-驰系列') return 'colChi'
+  return null
+}
+
+function getVerStage(row, ver) {
+  if (!hasVer(row, ver)) return 0
+  const col = getVerMinCol(ver)
+  return (col && row[col] === '是') ? 2 : 1
+}
+
 async function toggleVer(row, ver) {
+  const stage = getVerStage(row, ver)
   const parts = (row.colVersionDivision || '').split(' ').filter(Boolean)
-  const idx = parts.indexOf(ver)
-  if (idx >= 0) parts.splice(idx, 1)
-  else parts.push(ver)
+  const col = getVerMinCol(ver)
+
+  if (stage === 0) {
+    parts.push(ver)
+    if (col) row[col] = '否'
+  } else if (stage === 1) {
+    if (col) row[col] = '是'
+  } else {
+    const idx = parts.indexOf(ver)
+    if (idx >= 0) parts.splice(idx, 1)
+    if (col) row[col] = '否'
+  }
+
   row.colVersionDivision = parts.join(' ')
-   await updateEntry(row.id, { colVersionDivision: row.colVersionDivision })
-   handleQuery(true)
+  const update = { colVersionDivision: row.colVersionDivision }
+  if (col) update[col] = row[col]
+  await updateEntry(row.id, update)
 }
 
 const approvalRole = computed(() => {
   const code = props.userRole || localStorage.getItem('roleCode') || 'USER'
   if (code === 'ADMIN') return 'admin'
-  if (code === 'REVIEWER') return 'reviewer'
   return 'editor'
 })
 
@@ -886,20 +1313,115 @@ function canSubmit(row) {
 }
 
 function canApprove(row) {
-  return ['reviewer', 'admin'].includes(approvalRole.value) && row.approvalStatus === '待审核'
+  return approvalRole.value === 'admin' && row.approvalStatus === '待审核'
 }
 
 function canReject(row) {
-  return ['reviewer', 'admin'].includes(approvalRole.value) && (row.approvalStatus === '待审核' || row.approvalStatus === '审核通过')
+  return approvalRole.value === 'admin' && (row.approvalStatus === '待审核' || row.approvalStatus === '审核通过')
+}
+
+function canWithdraw(row) {
+  return ['editor', 'admin'].includes(approvalRole.value) && row.approvalStatus === '待审核'
 }
 
 async function handleApprove(row, action) {
   try {
     await approveEntry(row.id, action, '')
-    ElMessage.success(action === 'submit' ? '已提交' : '已通过')
+    const msgMap = { submit: '已提交', approve: '已通过', withdraw: '已撤销' }
+    ElMessage.success(msgMap[action] || '操作成功')
     handleQuery(true)
   } catch (e) {
     ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+async function handleApproveWithDescendants(row, action) {
+  try {
+    const allIds = [row.id, ...collectDescendantIds(row)]
+    const validStatus = action === 'submit' ? ['待提交', '驳回']
+      : action === 'withdraw' ? ['待审核']
+      : action === 'approve' ? ['待审核'] : []
+    const validIds = []
+    for (const id of allIds) {
+      const r = findRowById(id, tableData.value)
+      const s = r?.approvalStatus || '待提交'
+      if (validStatus.includes(s)) validIds.push(id)
+    }
+    if (validIds.length === 0) {
+      ElMessage.warning('没有可操作的条目')
+      return
+    }
+    let successCount = 0
+    for (const id of validIds) {
+      try {
+        await approveEntry(id, action, '')
+        successCount++
+      } catch (e) {
+        console.error(`操作失败 id=${id}:`, e)
+      }
+    }
+    const msgMap = { submit: '提交', approve: '通过', withdraw: '撤销' }
+    ElMessage.success(`成功${msgMap[action]} ${successCount} 条`)
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+async function handleRejectWithDescendants(row) {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '驳回', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPlaceholder: '请输入驳回原因，可不填',
+      inputValidator: () => true
+    })
+    const allIds = [row.id, ...collectDescendantIds(row)]
+    const validIds = []
+    for (const id of allIds) {
+      const r = findRowById(id, tableData.value)
+      const s = r?.approvalStatus || '待提交'
+      if (s === '待审核' || s === '审核通过') validIds.push(id)
+    }
+    if (validIds.length === 0) {
+      ElMessage.warning('没有可操作的条目')
+      return
+    }
+    let successCount = 0
+    for (const id of validIds) {
+      try {
+        await approveEntry(id, 'reject', value || '')
+        successCount++
+      } catch (e) {
+        console.error(`驳回失败 id=${id}:`, e)
+      }
+    }
+    ElMessage.success(`成功驳回 ${successCount} 条`)
+    handleQuery(true)
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e?.response?.data?.message || '驳回失败')
+    }
+  }
+}
+
+const approvalLogVisible = ref(false)
+const approvalLogTitle = ref('')
+const approvalLogData = ref([])
+
+const ACTION_LABELS = { submit: '提交', withdraw: '撤销', approve: '通过', reject: '驳回' }
+function actionLabel(action) { return ACTION_LABELS[action] || action }
+
+async function showApprovalLogs(row) {
+  try {
+    const res = await getApprovalLogs(row.id)
+    approvalLogData.value = res.data || []
+    const name = row.colProductSystem || ''
+    const status = row.approvalStatus || '待提交'
+    approvalLogTitle.value = '审批记录' + (name ? ' - ' + name : '') + '（' + status + '）'
+    approvalLogVisible.value = true
+  } catch (e) {
+    ElMessage.error('获取审批记录失败')
   }
 }
 
@@ -958,11 +1480,21 @@ function onEditorClick(e) {
             nameEl.textContent = newName
             actionBtn.textContent = '编辑'
             actionBtn.setAttribute('data-action', 'edit-name')
-            editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
             if (imgId) {
-              updateImage(Number(imgId), { filename: newName }).then(() => {
+              updateImage(Number(imgId), { filename: newName }).then((res) => {
+                const data = res?.data
+                if (data?.url) {
+                  card.setAttribute('data-url', data.url)
+                  const thumb = card.querySelector('.image-thumb img')
+                  if (thumb) thumb.setAttribute('src', data.url)
+                }
+                editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
                 ElMessage.success('名称已更新')
-              }).catch(() => {})
+              }).catch(() => {
+                editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
+              })
+            } else {
+              editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
             }
           }
           let blurTimeout = null
@@ -1045,6 +1577,7 @@ function replaceImageCard(img) {
   replacingCard.value = null
   editForm.colFeatureDesc = editorRef.value?.innerHTML || ''
   collectPendingImageUpdate(img)
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
 function saveSelectionAndShowPicker() {
@@ -1088,6 +1621,7 @@ function insertImage(img) {
   }
   editForm.colFeatureDesc = editorRef.value.innerHTML
   collectPendingImageUpdate(img)
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
 function formatSize(bytes) {
@@ -1147,84 +1681,82 @@ function findRowById(id, nodes) {
 }
 
 async function batchApprove(action) {
-  const actionLabel = action === 'submit' ? '提交' : '通过'
-  const validStatus = action === 'submit' ? ['待提交', '驳回'] : ['待审核']
-  const validIds = []
-  const invalidRows = []
-  for (const id of selectedIds.value) {
-    const row = findRowById(id, tableData.value)
-    const s = row?.approvalStatus || '待提交'
-    if (validStatus.includes(s)) {
-      validIds.push(id)
-    } else {
-      invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+  batchLoading.value = true
+  try {
+    const actionLabel = action === 'submit' ? '提交' : '通过'
+    const validStatus = action === 'submit' ? ['待提交', '驳回'] : ['待审核']
+    const validIds = []
+    const invalidRows = []
+    for (const id of selectedIds.value) {
+      const row = findRowById(id, tableData.value)
+      const s = row?.approvalStatus || '待提交'
+      if (validStatus.includes(s)) {
+        validIds.push(id)
+      } else {
+        invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+      }
     }
-  }
-  if (invalidRows.length > 0) {
-    const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('、')
-    ElMessage.warning(`以下条目不满足${actionLabel}条件，已跳过：${names}`)
-  }
-  if (validIds.length === 0) {
-    ElMessage.warning('没有可操作的条目')
-    return
-  }
-  let successCount = 0
-  for (const id of validIds) {
-    try {
-      await approveEntry(id, action, '')
-      successCount++
-    } catch (e) {
-      console.error(`批量${actionLabel}失败 id=${id}:`, e)
+    if (invalidRows.length > 0) {
+      const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('<br>')
+      ElMessageBox.alert(
+        `以下条目不满足${actionLabel}条件，已跳过：<br>${names}`,
+        '提示',
+        { dangerouslyUseHTMLString: true, type: 'warning' }
+      )
     }
-  }
-  ElMessage.success(`成功${actionLabel} ${successCount} 条`)
-  handleQuery(true)
+    if (validIds.length === 0) {
+      ElMessage.warning('没有可操作的条目')
+      return
+    }
+    let successCount = 0
+    for (const id of validIds) {
+      try {
+        await approveEntry(id, action, '')
+        successCount++
+      } catch (e) {
+        console.error(`批量${actionLabel}失败 id=${id}:`, e)
+      }
+    }
+    ElMessage.success(`成功${actionLabel} ${successCount} 条`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
 }
 
 async function batchReject() {
-  const validIds = []
-  const invalidRows = []
-  for (const id of selectedIds.value) {
-    const row = findRowById(id, tableData.value)
-    const s = row?.approvalStatus || '待提交'
-    if (s === '待审核') {
-      validIds.push(id)
-    } else {
-      invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s })
+    const validIds = []
+    const invalidRows = []
+    for (const id of selectedIds.value) {
+      const row = findRowById(id, tableData.value)
+      const s = row?.approvalStatus || '待提交'
+      const validRejectStatus = ['待审核', '待提交']
+      if (validRejectStatus.includes(s)) { validIds.push(id) }
+      else { invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s }) }
     }
-  }
-  if (invalidRows.length > 0) {
-    const names = invalidRows.map(r => `${r.name}（${r.status}）`).join('、')
-    ElMessage.warning(`以下条目不满足驳回条件，已跳过：${names}`)
-  }
-  if (validIds.length === 0) {
-    ElMessage.warning('没有可操作的条目')
-    return
-  }
-  let reason = ''
-  try {
-    const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '批量驳回', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPlaceholder: '请输入驳回原因，可不填',
-      inputValidator: () => true
-    })
-    reason = value || ''
-  } catch (e) {
-    return
-  }
-  let successCount = 0
-  for (const id of validIds) {
+    if (invalidRows.length > 0) {
+      ElMessageBox.alert(
+        `以下条目不满足驳回条件，已跳过：<br>${invalidRows.map(r => `${r.name}（${r.status}）`).join('<br>')}`,
+        '提示',
+        { dangerouslyUseHTMLString: true, type: 'warning' }
+      )
+    }
+    if (validIds.length === 0) { ElMessage.warning('没有可操作的条目'); return }
+    let reason = ''
     try {
-      await approveEntry(id, 'reject', reason)
-      successCount++
-    } catch (e) {
-      console.error(`批量驳回失败 id=${id}:`, e)
-    }
-  }
-  ElMessage.success(`成功驳回 ${successCount} 条`)
-  handleQuery(true)
- }
+      const { value } = await ElMessageBox.prompt('请输入驳回原因（非必填）', '批量驳回', {
+        confirmButtonText: '确定', cancelButtonText: '取消', inputPlaceholder: '请输入驳回原因，可不填', inputValidator: () => true
+      })
+      reason = value || ''
+    } catch (e) { return }
+    batchLoading.value = true
+    try {
+      let successCount = 0
+      for (const id of validIds) {
+        try { await approveEntry(id, 'reject', reason); successCount++ } catch (e) {}
+      }
+      ElMessage.success(`成功驳回 ${successCount} 条`)
+      handleQuery(true)
+    } finally { batchLoading.value = false }
+}
 
  function onBatchCommand(cmd) {
   if (selectedIds.value.length === 0) {
@@ -1232,14 +1764,28 @@ async function batchReject() {
     return
   }
   if (cmd === 'status') {
-    batchStatusValue.value = ''
+  batchStatusValue.value = []
     showBatchStatusDialog.value = true
   } else if (cmd === 'solution') {
     batchSolutionValue.value = ''
+    batchSolutionMode.value = 'append'
     showBatchSolutionDialog.value = true
   } else if (cmd === 'manager') {
     batchManagerValue.value = ''
     showBatchManagerDialog.value = true
+  } else if (cmd === 'category') {
+    batchCategoryId.value = null
+    batchDomainId.value = null
+    loadBatchCategoryTree()
+    showBatchCategoryDialog.value = true
+  } else if (cmd === 'version') {
+    batchVerYao.value = false; batchVerYuan.value = false; batchVerChi.value = false; batchVerNonStd.value = false
+    batchMinYao.value = false; batchMinYuan.value = false; batchMinChi.value = false
+    showBatchVersionDialog.value = true
+  } else if (cmd === 'intelligent') {
+    batchIntelligentAction.value = 'mark'
+    batchIntelligentScope.value = 'self'
+    showBatchIntelligentDialog.value = true
   } else if (cmd === 'delete') {
     if (props.customTabId) {
       onRemoveClick()
@@ -1257,6 +1803,7 @@ async function onBatchDelete() {
       { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
+  batchLoading.value = true
   try {
     const res = await batchDelete(props.versionId, [...selectedIds.value])
     if (res.code === 200) {
@@ -1264,7 +1811,8 @@ async function onBatchDelete() {
       selectedIds.value = []
       handleQuery()
     }
-  } catch {}
+  } catch(e) {}
+  batchLoading.value = false
 }
 
 function batchChangeStatus() {
@@ -1272,74 +1820,191 @@ function batchChangeStatus() {
     ElMessage.warning('请先选择要操作的条目')
     return
   }
-  batchStatusValue.value = ''
+  batchStatusValue.value = []
   showBatchStatusDialog.value = true
 }
 
 async function confirmBatchStatus() {
-  if (!batchStatusValue.value) {
-    ElMessage.warning('请选择功能状态')
-    return
-  }
-  let successCount = 0
-  for (const id of selectedIds.value) {
-    try {
-      const row = findRowById(id, tableData.value)
-      if (row) {
-        await updateEntry(id, { ...row, colStatus: batchStatusValue.value })
-        successCount++
-      }
-    } catch (e) {
-      console.error(`修改状态失败 id=${id}:`, e)
-    }
-  }
+  if (!batchStatusValue.value || batchStatusValue.value.length === 0) { ElMessage.warning('请选择功能状态'); return }
+  const newStatus = batchStatusValue.value.join(' ')
   showBatchStatusDialog.value = false
-  ElMessage.success(`成功修改 ${successCount} 条功能状态`)
-  handleQuery(true)
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) { await updateEntry(id, { ...row, colStatus: newStatus }); successCount++ }
+      } catch (e) { console.error(`修改状态失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功修改 ${successCount} 条功能状态`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
  }
 
 async function confirmBatchSolution() {
-  if (!batchSolutionValue.value) {
-    ElMessage.warning('请选择解决方案')
-    return
-  }
-  let successCount = 0
-  for (const id of selectedIds.value) {
-    try {
-      const row = findRowById(id, tableData.value)
-      if (row) {
-        await updateEntry(id, { ...row, colOtherSolutionTag: batchSolutionValue.value })
-        successCount++
-      }
-    } catch (e) {
-      console.error(`修改解决方案失败 id=${id}:`, e)
-    }
-  }
+  if (!batchSolutionValue.value) { ElMessage.warning('请选择解决方案'); return }
   showBatchSolutionDialog.value = false
-  ElMessage.success(`成功修改 ${successCount} 条解决方案`)
-  handleQuery(true)
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) {
+          let newValue = batchSolutionValue.value
+          if (batchSolutionMode.value === 'append') {
+            const existing = (row.colOtherSolutionTag || '').split(',').filter(Boolean)
+            if (!existing.includes(batchSolutionValue.value)) {
+              existing.push(batchSolutionValue.value)
+            }
+            newValue = existing.join(',')
+          }
+          await updateEntry(id, { ...row, colOtherSolutionTag: newValue })
+          successCount++
+        }
+      } catch (e) { console.error(`修改解决方案失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功修改 ${successCount} 条解决方案`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
  }
 
 async function confirmBatchManager() {
-  if (!batchManagerValue.value) {
-    ElMessage.warning('请输入产品经理')
-    return
-  }
-  let successCount = 0
-  for (const id of selectedIds.value) {
-    try {
-      const row = findRowById(id, tableData.value)
-      if (row) {
-        await updateEntry(id, { ...row, colProductManager: batchManagerValue.value })
-        successCount++
-      }
-    } catch (e) {
-      console.error(`指定产品经理失败 id=${id}:`, e)
-    }
-  }
+  if (!batchManagerValue.value) { ElMessage.warning('请输入产品经理'); return }
   showBatchManagerDialog.value = false
-  ElMessage.success(`成功指定 ${successCount} 条产品经理`)
-  handleQuery(true)
+  batchLoading.value = true
+  let successCount = 0
+  try {
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) { await updateEntry(id, { ...row, colProductManager: batchManagerValue.value }); successCount++ }
+      } catch (e) { console.error(`指定产品经理失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功指定 ${successCount} 条产品经理`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
+}
+
+function onBatchVerChange(which) {
+  if (which === 'nonStd' && batchVerNonStd.value) {
+    batchVerYao.value = false; batchVerYuan.value = false; batchVerChi.value = false
+    batchMinYao.value = false; batchMinYuan.value = false; batchMinChi.value = false
+  } else if (which !== 'nonStd') {
+    batchVerNonStd.value = false
+    if (which === 'yao' && !batchVerYao.value) batchMinYao.value = false
+    if (which === 'yuan' && !batchVerYuan.value) batchMinYuan.value = false
+    if (which === 'chi' && !batchVerChi.value) batchMinChi.value = false
+  }
+}
+
+async function confirmBatchVersion() {
+  if (!batchVerYao.value && !batchVerYuan.value && !batchVerChi.value && !batchVerNonStd.value) {
+    ElMessage.warning('请至少选择一个版本划分'); return
+  }
+  let colVersionDivision
+  if (batchVerNonStd.value) {
+    colVersionDivision = '非标配系统'
+  } else {
+    const parts = []
+    if (batchVerYao.value) parts.push('A-曜系列')
+    if (batchVerYuan.value) parts.push('B-远系列')
+    if (batchVerChi.value) parts.push('C-驰系列')
+    colVersionDivision = parts.join(' ')
+  }
+  const colYao = batchVerYao.value ? (batchMinYao.value ? '是' : '否') : '否'
+  const colYuan = batchVerYuan.value ? (batchMinYuan.value ? '是' : '否') : '否'
+  const colChi = batchVerChi.value ? (batchMinChi.value ? '是' : '否') : '否'
+  showBatchVersionDialog.value = false
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of selectedIds.value) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) {
+          await updateEntry(id, { ...row, colVersionDivision, colYao, colYuan, colChi })
+          successCount++
+        }
+      } catch (e) { console.error(`修改版本划分失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功修改 ${successCount} 条版本划分`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
+}
+
+async function confirmBatchIntelligent() {
+  const intelligentValue = batchIntelligentAction.value === 'mark' ? '1' : ''
+  const actionLabel = batchIntelligentAction.value === 'mark' ? '标记智能化' : '取消智能化标记'
+  const targetIds = batchIntelligentScope.value === 'self' ? [...manualSelectedIds.value] : [...selectedIds.value]
+  if (targetIds.length === 0) {
+    ElMessage.warning('操作范围内没有条目'); return
+  }
+  showBatchIntelligentDialog.value = false
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of targetIds) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) {
+          await updateEntry(id, { ...row, colIntelligent: intelligentValue })
+          successCount++
+        }
+      } catch (e) { console.error(`${actionLabel}失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功${actionLabel} ${successCount} 条`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
+}
+
+async function loadBatchCategoryTree() {
+  if (!props.versionId) return
+  try {
+    const res = await getCategoryTree(props.versionId)
+    const data = res.data || []
+    batchCatL1Options.value = data.map(d => ({ id: d.id, label: d.label }))
+    batchCatL2Options.value = []
+  } catch { batchCatL1Options.value = []; batchCatL2Options.value = [] }
+}
+
+function onBatchL1Change(val) {
+  batchDomainId.value = null
+  if (!val) { batchCatL2Options.value = []; return }
+  const cat = batchCatL1Options.value.find(c => c.id == val)
+  if (!cat) { batchCatL2Options.value = []; return }
+  loadBatchCategoryTree().then(() => {
+    const allData = batchCatL1Options.value
+    const found = allData.find(c => c.id == val)
+    if (found) {
+      getCategoryTree(props.versionId).then(r => {
+        const tree = r.data || []
+        const node = tree.find(d => d.id == val)
+        batchCatL2Options.value = (node?.children || []).map(c => ({ id: c.id, label: c.label }))
+      })
+    }
+  })
+}
+
+async function confirmBatchCategory() {
+  if (!batchCategoryId.value) { ElMessage.warning('请选择业务分类'); return }
+  if (!batchDomainId.value) { ElMessage.warning('请选择业务域'); return }
+
+  const ids = [...selectedIds.value]
+
+  showBatchCategoryDialog.value = false
+  batchLoading.value = true
+  try {
+    const res = await batchUpdateCategory(props.versionId, ids, batchCategoryId.value, batchDomainId.value, null)
+    if (res.code === 200) {
+      ElMessage.success(`成功修改 ${res.data} 条记录的业务分类/业务域`)
+      selectedIds.value = []
+      handleQuery(true)
+    }
+  } catch (e) {
+    console.error('批量修改分类失败:', e)
+  } finally { batchLoading.value = false }
 }
 
 function statusTagType(status) {
@@ -1373,29 +2038,36 @@ function levelTagType(level) {
   return 'info'
  }
 
- const verYao = ref(false)
- const verYuan = ref(false)
- const verChi = ref(false)
- const minYao = ref(false)
+  const verYao = ref(false)
+  const verYuan = ref(false)
+  const verChi = ref(false)
+  const verNonStd = ref(false)
+  const minYao = ref(false)
  const minYuan = ref(false)
  const minChi = ref(false)
 const versionSelections = ref([])
 
 function syncVersionToForm() {
-  const parts = []
-  if (verYao.value) parts.push('A-曜系列')
-  if (verYuan.value) parts.push('B-远系列')
-  if (verChi.value) parts.push('C-驰系列')
-  editForm.colVersionDivision = parts.join(' ')
+  if (verNonStd.value) {
+    editForm.colVersionDivision = '非标配系统'
+  } else {
+    const parts = []
+    if (verYao.value) parts.push('A-曜系列')
+    if (verYuan.value) parts.push('B-远系列')
+    if (verChi.value) parts.push('C-驰系列')
+    editForm.colVersionDivision = parts.join(' ')
+  }
   editForm.colYao = minYao.value ? '是' : '否'
   editForm.colYuan = minYuan.value ? '是' : '否'
   editForm.colChi = minChi.value ? '是' : '否'
   editForm.colAppRole = appRoleSelections.value.join(' ')
   editForm.colOtherSolutionTag = solutionSelections.value.join(',')
+  editForm.colStatus = editStatusSelections.value.join(' ')
 }
 
 function syncVersionFromForm() {
   const div = editForm.colVersionDivision || ''
+  verNonStd.value = div === '非标配系统'
   verYao.value = div.includes('A-曜系列')
   verYuan.value = div.includes('B-远系列')
   verChi.value = div.includes('C-驰系列')
@@ -1405,28 +2077,32 @@ function syncVersionFromForm() {
   versionSelections.value = div.split(' ').filter(Boolean)
   appRoleSelections.value = (editForm.colAppRole || '').split(' ').filter(Boolean)
   solutionSelections.value = (editForm.colOtherSolutionTag || '').split(',').filter(Boolean)
+  editStatusSelections.value = (editForm.colStatus || '').split(/\s+/).filter(Boolean).filter(s => statusList.value.includes(s))
 }
 
 async function loadOptions() {
   if (!props.versionId) return
   try {
-    const [ar, sol, st] = await Promise.all([
+    const [ar, sol, st, sysType] = await Promise.all([
       getOptions(props.versionId, 'appRole'),
       getOptions(props.versionId, 'solution'),
-      getOptions(props.versionId, 'status')
+      getOptions(props.versionId, 'status'),
+      getOptions(props.versionId, 'systemType')
     ])
     appRoles.value = (ar.data || []).map(o => o.value)
     solutions.value = (sol.data || []).map(o => o.value)
     statusList.value = (st.data || []).map(o => o.value)
+    systemTypeList.value = (sysType.data || []).map(o => o.value)
   } catch (e) { /* ignore */ }
 }
 
 const queryForm = reactive({
   name: '',
-  status: '',
+  status: [],
   productManager: '',
   solution: '',
-  versionDiv: ''
+  versionDiv: [],
+  intelligent: false
 })
 
 const editForm = reactive({
@@ -1437,6 +2113,8 @@ const editForm = reactive({
   colStatus: '',
   colBizCategory: '',
   colBizDomain: '',
+  categoryId: null,
+  domainId: null,
   colVersionDivision: '',
   colProductManager: '',
   colOtherSolutionTag: '',
@@ -1445,7 +2123,10 @@ const editForm = reactive({
   colRemark: '',
   colYao: '',
   colYuan: '',
-  colChi: ''
+  colChi: '',
+  colSystemType: '',
+  colIntelligent: '',
+  colProductLine: ''
 })
 
 const editDialogTitle = computed(() => {
@@ -1466,10 +2147,18 @@ const productLabel = computed(() => {
 
 const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
-  colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
-  colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colAssetType: '', colRemark: '',
-  colYao: '', colYuan: '', colChi: ''
+  colStatus: '', colBizCategory: '', colBizDomain: '', categoryId: null, domainId: null, colVersionDivision: '',
+  colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colProductLine: '', colAssetType: '', colRemark: '',
+  colYao: '', colYuan: '', colChi: '', colSystemType: '', colIntelligent: ''
 })
+
+const formFieldKeys = Object.keys(initialFormState())
+
+function assignFormData(source) {
+  formFieldKeys.forEach(key => {
+    if (source[key] !== undefined) editForm[key] = source[key]
+  })
+}
 
 function fillCategoryAndDomain() {
   if (props.selectedNode) {
@@ -1481,19 +2170,18 @@ function fillCategoryAndDomain() {
 function initEditForm() {
   Object.assign(editForm, initialFormState())
   fillCategoryAndDomain()
-  loadCategoryTree()
 }
 
 async function loadCategoryTree() {
   if (!props.versionId) return
   try {
-    const res = await getTree(props.versionId)
+    const res = await getCategoryTree(props.versionId)
     const data = res.data || []
-    l1Options.value = data.map(d => d.label).filter(Boolean)
-    const currentL1 = editForm.colBizCategory
-    if (currentL1) {
-      const matched = data.find(d => d.label === currentL1)
-      l2Options.value = matched?.children?.map(c => c.label).filter(Boolean) || []
+    l1Options.value = data.map(d => ({ id: d.id, label: d.label }))
+    const currentL1Id = editForm.categoryId
+    if (currentL1Id) {
+      const matched = data.find(d => d.id == currentL1Id)
+      l2Options.value = (matched?.children || []).map(c => ({ id: c.id, label: c.label }))
     } else {
       l2Options.value = []
     }
@@ -1501,11 +2189,21 @@ async function loadCategoryTree() {
 }
 
 function onL1Change(val) {
+  if (!val) { l2Options.value = []; editForm.domainId = null; editForm.colBizDomain = ''; return }
+  const cat = l1Options.value.find(c => c.id == val)
+  if (cat) editForm.colBizCategory = cat.label
   loadCategoryTree().then(() => {
-    if (!l2Options.value.includes(editForm.colBizDomain)) {
-      editForm.colBizDomain = l2Options.value[0] || ''
+    if (!l2Options.value.find(d => d.id == editForm.domainId)) {
+      editForm.domainId = l2Options.value[0]?.id || null
+      editForm.colBizDomain = l2Options.value[0]?.label || ''
     }
   })
+}
+
+function onL2Change(val) {
+  if (!val) return
+  const dom = l2Options.value.find(d => d.id == val)
+  if (dom) editForm.colBizDomain = dom.label
 }
 
   function collectDescendantIds(row) {
@@ -1534,17 +2232,18 @@ function onL1Change(val) {
   function toggleSelect(row) {
     const isSelected = selectedIds.value.includes(row.id)
     const newSet = new Set(selectedIds.value)
+    const manualSet = new Set(manualSelectedIds.value)
     if (isSelected) {
       newSet.delete(row.id)
       for (const id of collectDescendantIds(row)) newSet.delete(id)
-      manuallySelectedIds.value.delete(row.id)
+      manualSet.delete(row.id)
     } else {
       newSet.add(row.id)
       for (const id of collectDescendantIds(row)) newSet.add(id)
-      for (const id of collectAncestorIds(row)) newSet.add(id)
-      manuallySelectedIds.value.add(row.id)
+      manualSet.add(row.id)
     }
     selectedIds.value = [...newSet]
+    manualSelectedIds.value = manualSet
   }
 
   const nodeMap = computed(() => {
@@ -1572,11 +2271,12 @@ function onL1Change(val) {
 
   function toggleSelectAll(checked) {
     const visibleIds = new Set(nonSepRows.value.map(r => r.id))
+    const manualSet = new Set(manualSelectedIds.value)
     if (checked) {
       const allIds = new Set(selectedIds.value)
       for (const r of nonSepRows.value) {
         allIds.add(r.id)
-        manuallySelectedIds.value.add(r.id)
+        manualSet.add(r.id)
         for (const id of collectDescendantIds(r)) allIds.add(id)
       }
       selectedIds.value = [...allIds]
@@ -1584,12 +2284,13 @@ function onL1Change(val) {
       const toRemove = new Set()
       for (const id of visibleIds) {
         toRemove.add(id)
+        manualSet.delete(id)
         const row = nodeMap.value.get(id)
         if (row) for (const did of collectDescendantIds(row)) toRemove.add(did)
       }
       selectedIds.value = selectedIds.value.filter(id => !toRemove.has(id))
-      for (const id of visibleIds) manuallySelectedIds.value.delete(id)
     }
+    manualSelectedIds.value = manualSet
   }
 
 function getDescendantCount(node) {
@@ -1604,12 +2305,47 @@ function getDescendantCount(node) {
   return count
 }
 
+function collectRemarks(row, deep = false) {
+  const result = []
+  if (row.colRemark && row.colRemark.trim()) {
+    result.push({ name: row.colProductSystem || '', remark: row.colRemark.trim() })
+  }
+  const shouldRecurse = deep || (row.children && row.children.length > 0 && !expandedNodeIds.value.has(row.id))
+  if (shouldRecurse && row.children) {
+    for (const child of row.children) {
+      result.push(...collectRemarks(child, true))
+    }
+  }
+  return result
+}
+
+function getRemarks(row) {
+  return collectRemarks(row)
+}
+
+function getIntelligentChildren(row, checkExpanded = true) {
+  const result = []
+  // 仅对顶层节点检查展开状态，子节点始终递归收集
+  const shouldCollect = !checkExpanded || !expandedNodeIds.value.has(row.id)
+  if (shouldCollect && row.children && row.children.length > 0) {
+    for (const child of row.children) {
+      if (child.colIntelligent === '1') {
+        result.push({ id: child.id, name: child.colProductSystem || '' })
+      }
+      result.push(...getIntelligentChildren(child, false))
+    }
+  }
+  return result
+}
+
 function onInsertClick() {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先勾选条目')
     return
   }
-  emit('insertToList', [...selectedIds.value])
+  if (inserting.value) return
+  inserting.value = true
+  emit('insertToList', collectFullBranch())
 }
 
 function onRemoveClick() {
@@ -1619,91 +2355,255 @@ function onRemoveClick() {
   }
   const ids = collectSelectedWithDescendants()
   selectedIds.value = []
-  manuallySelectedIds.value = new Set()
+  batchLoading.value = true
   emit('removeFromList', ids)
 }
 
-async function onMigrateImages() {
-  if (selectedIds.value.length === 0) {
+function showContextMenu(e, row) {
+  if (row._isSeparator) return
+  e.preventDefault()
+  e.stopPropagation()
+  closeContextMenu()
+  ctxMenu.x = e.clientX
+  ctxMenu.y = e.clientY
+  ctxMenu.row = row
+  ctxMenu.visible = true
+}
+
+function closeContextMenu() {
+  ctxMenu.visible = false
+}
+
+function onCtxCopy() {
+  if (ctxMenu.row) {
+    // 多选时复制所有选中行，单选时只复制右键行
+    clipboard.entryIds = selectedIds.value.includes(ctxMenu.row.id)
+      ? [...selectedIds.value]
+      : [ctxMenu.row.id]
+  } else {
     ElMessage.warning('请先勾选条目')
+    closeContextMenu()
     return
+  }
+  clipboard.mode = 'copy'
+  closeContextMenu()
+  ElMessage.success(`已复制 ${clipboard.entryIds.length} 个节点`)
+}
+
+function onCtxCut() {
+  if (ctxMenu.row) {
+    clipboard.entryIds = selectedIds.value.includes(ctxMenu.row.id)
+      ? [...selectedIds.value]
+      : [ctxMenu.row.id]
+  } else {
+    ElMessage.warning('请先勾选条目')
+    closeContextMenu()
+    return
+  }
+  clipboard.mode = 'cut'
+  closeContextMenu()
+  ElMessage.success(`已剪切 ${clipboard.entryIds.length} 个节点`)
+}
+
+async function onCtxPasteSibling() {
+  if (!props.isEditing) return
+  if (!clipboard.mode || clipboard.entryIds.length === 0) {
+    ElMessage.warning('剪贴板为空，请先复制或剪切')
+    closeContextMenu()
+    return
+  }
+  const targetRow = ctxMenu.row
+  if (!targetRow) { closeContextMenu(); return }
+  const loading = ElLoading.service({ lock: true, text: '正在粘贴，请稍候...' })
+  try {
+    const api = clipboard.mode === 'copy' ? copyEntries : moveEntries
+    await api(clipboard.entryIds, targetRow.id, 'sibling', props.customTabId)
+    ElMessage.success('粘贴成功')
+    if (clipboard.mode === 'cut') {
+      clipboard.mode = null
+      clipboard.entryIds = []
+    }
+    selectedIds.value = []
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  } finally {
+    loading.close()
+    closeContextMenu()
+  }
+}
+
+async function onCtxPasteChild() {
+  if (!props.isEditing) return
+  if (!clipboard.mode || clipboard.entryIds.length === 0) {
+    ElMessage.warning('剪贴板为空，请先复制或剪切')
+    closeContextMenu()
+    return
+  }
+  const targetRow = ctxMenu.row
+  if (!targetRow) { closeContextMenu(); return }
+  const loading = ElLoading.service({ lock: true, text: '正在粘贴，请稍候...' })
+  try {
+    const api = clipboard.mode === 'copy' ? copyEntries : moveEntries
+    await api(clipboard.entryIds, targetRow.id, 'child', props.customTabId)
+    ElMessage.success('粘贴成功')
+    if (clipboard.mode === 'cut') {
+      clipboard.mode = null
+      clipboard.entryIds = []
+    }
+    selectedIds.value = []
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '粘贴失败')
+  } finally {
+    loading.close()
+    closeContextMenu()
+  }
+}
+
+async function onCtxLevelUp() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await levelUp(row.id)
+    ElMessage.success('升级成功')
+    selectedIds.value = []
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '升级失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxLevelDown() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await levelDown(row.id)
+    ElMessage.success('降级成功')
+    selectedIds.value = []
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '降级失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxMoveUp() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await moveUp(row.id)
+    ElMessage.success('上移成功')
+    selectedIds.value = []
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '上移失败')
+  }
+  closeContextMenu()
+}
+
+async function onCtxMoveDown() {
+  const row = ctxMenu.row
+  if (!row) { closeContextMenu(); return }
+  try {
+    await moveDown(row.id)
+    ElMessage.success('下移成功')
+    selectedIds.value = []
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '下移失败')
+  }
+  closeContextMenu()
+}
+
+function extractNumberPrefix(name) {
+  if (!name) return ''
+  const m = name.match(/^[\d.]+/)
+  return m ? m[0].replace(/\.$/, '') : ''
+}
+
+function stripNumberPrefix(name) {
+  if (!name) return ''
+  return name.replace(/^[\d.]+\s*/, '').trim()
+}
+
+function extractL2Prefix(row) {
+  const domain = row.colBizDomain || ''
+  const prefix = extractNumberPrefix(domain)
+  const segs = prefix.split('.')
+  return segs.length >= 2 ? segs[0] + '.' + segs[1] : prefix
+}
+
+const renumberHasError = computed(() => renumberItems.value.some(r => !!r.prefixError))
+
+function openRenumberDialog() {
+  const l3Rows = displayData.value.filter(r => !r._isSeparator && selectedIds.value.includes(r.id) && r.level === 3)
+  if (l3Rows.length === 0) {
+    ElMessage.warning('请先勾选产品级别(L3)的条目')
+    return
+  }
+  renumberItems.value = l3Rows.map(row => {
+    const prefix = extractNumberPrefix(row.colProductSystem || '')
+    const name = stripNumberPrefix(row.colProductSystem || '')
+    return reactive({
+      entryId: row.id,
+      currentLabel: row.colProductSystem || '',
+      newPrefix: prefix,
+      newName: name,
+      l2Prefix: extractL2Prefix(row),
+      prefixError: ''
+    })
+  })
+  renumberVisible.value = true
+}
+
+watch(() => renumberItems, () => {
+  for (const item of renumberItems.value) {
+    if (item.newPrefix && !item.newPrefix.startsWith(item.l2Prefix)) {
+      item.prefixError = `前两段必须为 ${item.l2Prefix}`
+    } else {
+      item.prefixError = ''
+    }
+  }
+}, { deep: true })
+
+async function doRenumber() {
+  for (const item of renumberItems.value) {
+    if (!item.newPrefix.trim()) {
+      ElMessage.warning('编码不能为空')
+      return
+    }
+    if (item.prefixError) {
+      ElMessage.warning(item.prefixError)
+      return
+    }
   }
   try {
     await ElMessageBox.confirm(
-      `确认将选中的 ${selectedIds.value.length} 条记录中的外部图片下载并替换为本地图片？`,
-      '迁移图片',
-      { confirmButtonText: '确认迁移', cancelButtonText: '取消', type: 'warning' }
+      '确认执行编码重排序？将修改选中条目及其所有子节点的编码，此操作不可撤销。',
+      '确认重排序',
+      { confirmButtonText: '确认执行', cancelButtonText: '取消', type: 'warning' }
     )
-  } catch {
-    return
-  }
-  migrating.value = true
+  } catch { return }
+  renumberLoading.value = true
   try {
-    const res = await migrateImages([...selectedIds.value])
-    if (res.code === 200) {
-      const data = res.data
-      let html = `<div style="line-height:2;"><b>迁移完成</b></div>`
-      html += `<div style="margin:8px 0;color:#67c23a;">成功：${data.successImages} 张图片</div>`
-      html += `<div style="margin:8px 0;color:#f56c6c;">失败：${data.failedImages} 张图片</div>`
-      if (data.failures && data.failures.length > 0) {
-        html += `<div style="margin-top:12px;font-weight:bold;">失败明细：</div>`
-        html += `<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;">`
-        html += `<tr style="background:#f5f7fa;text-align:left;"><th style="padding:6px 8px;">章节</th><th style="padding:6px 8px;text-align:center;">失败/总数</th></tr>`
-        data.failures.forEach(f => {
-          html += `<tr><td style="padding:6px 8px;">${f.productName || '(ID:' + f.entryId + ')'}</td><td style="padding:6px 8px;text-align:center;color:#f56c6c;">${f.failedImageCount}/${f.totalImageCount}</td></tr>`
-        })
-        html += `</table>`
-      }
-      ElMessageBox.alert(html, '迁移结果', {
-        dangerouslyUseHTMLString: true,
-        confirmButtonText: '确定',
-        customClass: 'migration-result-dialog'
-      })
-      handleQuery()
-    }
-  } catch {
+    const items = renumberItems.value.map(r => ({
+      entryId: r.entryId,
+      newPrefix: r.newPrefix.trim(),
+      newName: r.newName.trim()
+    }))
+    await renumberEntries(items)
+    ElMessage.success('编码重排序完成')
+    renumberVisible.value = false
+    handleQuery(true)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '编码重排序失败')
   } finally {
-    migrating.value = false
+    renumberLoading.value = false
   }
 }
 
-function onImportExcelClick() {
-  fileInput.value?.click()
-}
-
-async function onFileSelected(e) {
-  const file = e.target?.files?.[0]
-  if (!file) return
-  importing.value = true
-  const formData = new FormData()
-  formData.append('file', file)
-  try {
-    const res = await importExcel(file, props.versionId)
-    if (res.code === 200) {
-      const data = res.data
-      let html = `<div style="line-height:2;"><b>导入完成</b></div>`
-      html += `<div style="margin:4px 0;">总行数：${data.totalRows}</div>`
-      html += `<div style="margin:4px 0;color:#67c23a;">成功：${data.successRows} 行（其中更新 ${data.updateRows} 行）</div>`
-      html += `<div style="margin:4px 0;color:#f56c6c;">失败：${data.failRows} 行</div>`
-      if (data.errors && data.errors.length > 0) {
-        html += `<div style="margin-top:8px;font-weight:bold;color:#f56c6c;">错误详情：</div>`
-        data.errors.slice(0, 20).forEach(err => {
-          html += `<div style="font-size:12px;color:#909399;">${err}</div>`
-        })
-        if (data.errors.length > 20) html += `<div style="font-size:12px;color:#909399;">...还有 ${data.errors.length - 20} 条错误</div>`
-      }
-      ElMessageBox.alert(html, '导入结果', {
-        dangerouslyUseHTMLString: true,
-        confirmButtonText: '确定'
-      })
-      handleQuery()
-    }
-  } catch {
-  } finally {
-    importing.value = false
-    if (fileInput.value) fileInput.value.value = ''
-  }
-}
 
 function collectFullBranch() {
   const result = new Set()
@@ -1781,20 +2681,28 @@ function onChildSelectionChange(rows) {
 }
 
 async function handleQuery(preserveExpand = false) {
+   if (!preserveExpand) {
+     selectedIds.value = []
+   }
+   const currentVersion = ++queryVersion
+   dataLoading.value = true
    try {
      const res = await queryEntries(props.versionId, {
        customTabId: props.customTabId || undefined,
        name: queryForm.name || undefined,
-       status: queryForm.status || undefined,
+        status: queryForm.status.length > 0 ? queryForm.status : undefined,
        productManager: queryForm.productManager || undefined,
        solution: queryForm.solution || undefined,
-       versionTag: queryForm.versionDiv || undefined,
+       versionTag: queryForm.versionDiv.length > 0 ? queryForm.versionDiv : undefined,
+       intelligent: queryForm.intelligent ? '1' : undefined,
        bizCategory: props.selectedNode?.id !== 'all' ? (props.selectedNode?.categoryLabel || undefined) : undefined,
        bizDomain: props.selectedNode?.id !== 'all' ? (props.selectedNode?.domainLabel || undefined) : undefined
      })
-     const entries = res.data || []
-       totalEntryCount.value = entries.length
-       tableData.value = buildTree(entries)
+     if (currentVersion !== queryVersion) return
+        const entries = res.data || []
+          totalEntryCount.value = entries.length
+          productCount.value = entries.filter(e => e.level === 3).length
+        tableData.value = buildTree(entries)
       if (!preserveExpand) {
         collapsedDomains.value = new Set()
         const defaultExpanded = new Set()
@@ -1811,19 +2719,25 @@ async function handleQuery(preserveExpand = false) {
       }
       rebuildDisplayData()
   } catch (e) {
+    if (currentVersion !== queryVersion) return
     console.error('查询数据失败:', e)
     tableData.value = []
     displayData.value = []
     totalEntryCount.value = 0
+    productCount.value = 0
+   } finally {
+     if (currentVersion === queryVersion) {
+       dataLoading.value = false
+     }
    }
 }
 
 function resetQuery() {
   queryForm.name = ''
-  queryForm.status = ''
+  queryForm.status = []
   queryForm.productManager = ''
   queryForm.solution = ''
-  queryForm.versionDiv = ''
+  queryForm.versionDiv = []
   handleQuery()
 }
 
@@ -1838,15 +2752,15 @@ function buildTree(entries) {
       roots.push(map[e.id])
     }
   })
-  if (!props.customTabId) {
-    function sortChildren(nodes) {
-      nodes.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
-      for (const n of nodes) {
-        if (n.children && n.children.length > 0) sortChildren(n.children)
+  function sortChildren(nodes) {
+    for (const n of nodes) {
+      if (n.children && n.children.length > 0) {
+        n.children.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        sortChildren(n.children)
       }
     }
-    sortChildren(roots)
   }
+  sortChildren(roots)
   return roots
 }
 
@@ -1855,94 +2769,74 @@ function buildTree(entries) {
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
-    Object.assign(editForm, row)
+    Object.assign(editForm, initialFormState())
+    assignFormData(row)
+    try {
+      const res = await getEntry(row.id)
+      if (res?.data) {
+        assignFormData(res.data)
+      }
+    } catch (e) { /* fallback to row data */ }
+    await resolveCategoryIds()
+    await loadCategoryTree()
     syncVersionFromForm()
     lastRejectReason.value = ''
-    if (row.approvalStatus === '驳回') {
-      try {
-        const res = await getApprovalLogs(row.id)
-        const logs = res.data || res || []
-        const rejectLog = logs.find(l => l.action === 'reject')
-        if (rejectLog) lastRejectReason.value = rejectLog.comment || ''
-      } catch (e) { /* ignore */ }
-    }
-    showEditDialog.value = true
+    lastRejectOperator.value = ''
+    activeEditorTab.value = 'feature'
+  showEditDialog.value = true
   }
 
-  function viewRow(row) {
+  async function viewRow(row) {
     isNew.value = false
     editingId.value = row.id
     editingRow.value = row
     parentRow.value = null
-    Object.assign(editForm, row)
+    Object.assign(editForm, initialFormState())
+    assignFormData(row)
+    try {
+      const res = await getEntry(row.id)
+      if (res?.data) {
+        assignFormData(res.data)
+      }
+    } catch (e) { /* fallback to row data */ }
+    await resolveCategoryIds()
+    await loadCategoryTree()
     syncVersionFromForm()
     lastRejectReason.value = ''
-    showEditDialog.value = true
+    activeEditorTab.value = 'feature'
+  showEditDialog.value = true
   }
 
-  async function previewRow(row) {
-    try {
-      previewHtml.value = ''
-      previewEntryId.value = row.id
-      previewVisible.value = true
-      const token = localStorage.getItem('token')
-      const resp = await fetch(`/api/data/${row.id}/preview`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      if (resp.ok) {
-        previewHtml.value = await resp.text()
-      } else {
-        previewHtml.value = '<p>加载预览失败</p>'
-      }
-    } catch {
-      previewHtml.value = '<p>加载预览失败</p>'
-    }
+  function previewRow(row) {
+    emit('openPreview', row.id)
   }
 
-  async function downloadPreview() {
-    if (!previewEntryId.value || downloadLoading.value) return
-    downloadLoading.value = true
-    try {
-      const token = localStorage.getItem('token')
-      const resp = await fetch(`/api/data/${previewEntryId.value}/preview-download`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      if (!resp.ok) {
-        ElMessage.error('生成失败')
-        downloadLoading.value = false
-        return
-      }
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = '预览文档.docx'; a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      ElMessage.error('下载失败')
-    } finally {
-      downloadLoading.value = false
-    }
-  }
-
-function addChildRow(row) {
+async function addChildRow(row) {
   isNew.value = true
   editingId.value = null
   parentRow.value = row
   initEditForm()
   editForm.colBizCategory = row.colBizCategory || editForm.colBizCategory
   editForm.colBizDomain = row.colBizDomain || editForm.colBizDomain
+  editForm.categoryId = row.categoryId || editForm.categoryId
+  editForm.domainId = row.domainId || editForm.domainId
   editForm.colProductManager = row.colProductManager || ''
   editForm.colVersionDivision = row.colVersionDivision || ''
+  await resolveCategoryIds()
+  await loadCategoryTree()
   syncVersionFromForm()
+  activeEditorTab.value = 'feature'
   showEditDialog.value = true
 }
 
-function openNewDialog() {
+async function openNewDialog() {
   isNew.value = true
   editingId.value = null
   parentRow.value = null
   initEditForm()
+  await loadCategoryTree()
   syncVersionFromForm()
+  activeEditorTab.value = 'feature'
   showEditDialog.value = true
 }
 
@@ -1965,6 +2859,7 @@ async function deleteRow(row) {
 }
 
 async function saveEdit() {
+  try {
   syncVersionToForm()
   let savedId = null
   if (isNew.value) {
@@ -1992,8 +2887,11 @@ async function saveEdit() {
   flushPendingImageUpdates()
   showEditDialog.value = false
   handleQuery(true)
-  if (previewVisible.value && savedId) {
-    reloadPreviewAfterApproval(savedId)
+  if (savedId) {
+    emit('preview-reload', savedId)
+  }
+  } catch (e) {
+    ElMessage.error('保存失败')
   }
 }
 
@@ -2006,14 +2904,78 @@ watch(() => props.versionId, () => {
     handleQuery(true)
   })
 
+  function handleEscClose(e) {
+    if (e.key === 'Escape') closeContextMenu()
+  }
+  function handleGlobalClick(e) {
+    if (ctxMenu.visible && ctxMenuRef.value && !ctxMenuRef.value.contains(e.target)) closeContextMenu()
+  }
+  function handleGlobalContextMenu(e) {
+    if (ctxMenu.visible) closeContextMenu()
+  }
+  onMounted(() => {
+    document.addEventListener('keydown', handleEscClose)
+    document.addEventListener('click', handleGlobalClick)
+    document.addEventListener('contextmenu', handleGlobalContextMenu)
+  })
   onUnmounted(() => {
     if (dragMoveHandler) document.removeEventListener('mousemove', dragMoveHandler)
     if (dragUpHandler) document.removeEventListener('mouseup', dragUpHandler)
     if (dragState.ghostEl) dragState.ghostEl.remove()
+    document.removeEventListener('keydown', handleEscClose)
+    document.removeEventListener('click', handleGlobalClick)
+    document.removeEventListener('contextmenu', handleGlobalContextMenu)
+  })
+
+  defineExpose({
+    editRowById(id, action) {
+      const row = findRowById(id, tableData.value)
+      if (row) {
+        if (action === 'addChild') addChildRow(row)
+        else editRow(row)
+      }
+    },
+    setInserting(val) { inserting.value = val },
+    setBatchLoading(val) { batchLoading.value = val }
   })
  </script>
 
- <style scoped>
+  <style scoped>
+.batch-tree-container {
+  width: 100%;
+}
+.batch-tree-selected {
+  font-size: 13px;
+  color: #2563EB;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.batch-tree-hint {
+  font-size: 12px;
+  color: #94A3B8;
+  margin-bottom: 8px;
+}
+.coming-soon-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  min-height: 200px;
+}
+.coming-soon-title {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--si-text-secondary);
+}
+.coming-soon-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--si-text-muted);
+}
 .toolbar-right .el-button .el-icon + span,
 .toolbar-right .el-button .el-icon { margin-right: 4px; }
 .toolbar-right .el-button { --el-button-icon-space: 4px; }
@@ -2080,6 +3042,11 @@ watch(() => props.versionId, () => {
   30% { background-color: #d4edda; }
   100% { background-color: inherit; }
 }
+.batch-overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255,255,255,0.85); z-index: 100;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
 .vrow.sep-row {
   background: rgba(37, 99, 235, 0.08) !important;
   border-bottom: 2px solid rgba(37, 99, 235, 0.15);
@@ -2130,7 +3097,9 @@ watch(() => props.versionId, () => {
 .op-btn:hover { text-decoration: underline; }
 .product-cell { display: inline-flex; align-items: center; gap: 4px; width: 100%; }
 .product-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.version-inline { display: flex; gap: 2px; white-space: nowrap; }
+.version-inline { display: flex; gap: 2px; white-space: nowrap; align-items: center; }
+.ver-cell { display: inline-flex; padding: 1px 6px; border: 1.5px solid transparent; border-radius: 6px; align-items: center; }
+.ver-min-badge { border-color: #67C23A; background: rgba(103, 194, 58, 0.08); }
 .record-count { color: #8f959e; font-size: 12px; margin-left: auto; white-space: nowrap; flex-shrink: 0; padding-right: 4px; }
 .level-tag { margin: 0 6px; vertical-align: middle; }
 .feature-editor { width: 100%; }
@@ -2210,4 +3179,115 @@ watch(() => props.versionId, () => {
   font-size: 12px; padding: 4px 8px; border-radius: 4px; white-space: nowrap;
   line-height: 1.4; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
+.intelligent-box :deep(.el-form-item__content) {
+  background: var(--si-bg-card);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.edit-info-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  background: var(--si-bg-card);
+  border: 1px solid var(--si-border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.edit-info-panel .info-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--si-text-secondary);
+}
+.edit-info-panel .info-item .info-label {
+  color: var(--si-text-muted);
+  min-width: 50px;
+}
+.edit-info-panel .info-item .info-value {
+  color: var(--si-text-primary);
+}
+.edit-form-compact :deep(.el-tabs) {
+  margin-top: 0;
+}
+.edit-form-compact :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+.edit-form-compact :deep(.el-row) {
+  margin-bottom: 0;
+}
+.version-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.version-series-row,
+.version-min-row {
+  display: grid;
+  grid-template-columns: 70px 70px 70px 70px;
+}
+.version-slot {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+}
+.version-slot-hidden {
+  visibility: hidden;
+}
+.solution-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--si-border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-top: 2px;
+  background: var(--si-bg-card);
+}
+.solution-section-label {
+  font-size: 13px;
+  color: var(--si-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.solution-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.ctx-menu {
+  position: fixed; z-index: 10001;
+  background: #fff; border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.06);
+  padding: 4px 0; min-width: 160px;
+  font-size: 13px; color: #303133;
+}
+.ctx-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px; cursor: pointer; transition: background 0.15s;
+}
+.ctx-menu-item:hover { background: #ecf5ff; color: var(--si-primary, #409eff); }
+.ctx-menu-item.ctx-menu-disabled {
+  color: #c0c4cc; cursor: not-allowed; pointer-events: none;
+}
+.ctx-menu-item.ctx-menu-disabled:hover { background: transparent; color: #c0c4cc; }
+.ctx-menu-sep {
+  height: 1px; background: #e4e7ed; margin: 4px 8px;
+}
+.remark-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #E6A23C; color: #fff; font-size: 11px; font-weight: bold;
+  margin-left: 4px; flex-shrink: 0; cursor: pointer;
+  line-height: 1;
+}
+.remark-badge:hover { background: #CF9236; }
+.ai-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 5px; height: 18px; border-radius: 9px;
+  background: linear-gradient(135deg, #7B68EE, #9370DB); color: #fff; font-size: 10px; font-weight: bold;
+  margin-left: 4px; flex-shrink: 0; cursor: pointer; line-height: 1;
+}
+.ai-badge:hover { background: linear-gradient(135deg, #6A5ACD, #8B7FD4); }
 </style>

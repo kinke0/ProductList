@@ -3,28 +3,43 @@ package com.superpower.modules.data.service;
 import com.superpower.common.BusinessException;
 import com.superpower.modules.approval.entity.ApprovalLog;
 import com.superpower.modules.approval.repository.ApprovalLogRepository;
+import com.superpower.modules.category.entity.BaseCategory;
+import com.superpower.modules.category.entity.BaseDomain;
+import com.superpower.modules.category.entity.BaseProduct;
+import com.superpower.modules.category.repository.BaseCategoryRepository;
+import com.superpower.modules.category.repository.BaseDomainRepository;
+import com.superpower.modules.category.repository.BaseProductRepository;
 import com.superpower.modules.data.dto.DataEntryDTO;
 import com.superpower.modules.data.dto.ExcelImportResult;
+import com.superpower.modules.data.dto.RenumberItem;
 import com.superpower.modules.data.dto.TreeNodeDTO;
 import com.superpower.modules.data.entity.DataEntry;
 import com.superpower.modules.data.repository.DataEntryRepository;
 import com.superpower.modules.customtab.repository.CustomTabEntryRepository;
 import com.superpower.modules.customtab.entity.CustomTabEntry;
+import com.superpower.modules.image.entity.ImageResource;
+import com.superpower.modules.image.repository.ImageResourceRepository;
 import com.superpower.modules.system.entity.SysUser;
 import com.superpower.modules.system.repository.SysUserRepository;
 import com.superpower.modules.version.entity.DataVersion;
 import com.superpower.modules.version.repository.DataVersionRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.nio.file.*;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class DataEntryService {
@@ -34,38 +49,101 @@ public class DataEntryService {
     private final CustomTabEntryRepository customTabEntryRepository;
     private final ApprovalLogRepository approvalLogRepository;
     private final SysUserRepository sysUserRepository;
+    private final BaseCategoryRepository baseCategoryRepository;
+    private final BaseDomainRepository baseDomainRepository;
+    private final BaseProductRepository baseProductRepository;
+    private final ImageResourceRepository imageResourceRepository;
 
     public DataEntryService(DataEntryRepository entryRepository, DataVersionRepository dataVersionRepository,
                             CustomTabEntryRepository customTabEntryRepository,
                             ApprovalLogRepository approvalLogRepository,
-                            SysUserRepository sysUserRepository) {
+                            SysUserRepository sysUserRepository,
+                            BaseCategoryRepository baseCategoryRepository,
+                            BaseDomainRepository baseDomainRepository,
+                            BaseProductRepository baseProductRepository,
+                            ImageResourceRepository imageResourceRepository) {
         this.entryRepository = entryRepository;
         this.dataVersionRepository = dataVersionRepository;
         this.customTabEntryRepository = customTabEntryRepository;
         this.approvalLogRepository = approvalLogRepository;
         this.sysUserRepository = sysUserRepository;
+        this.baseCategoryRepository = baseCategoryRepository;
+        this.baseDomainRepository = baseDomainRepository;
+        this.baseProductRepository = baseProductRepository;
+        this.imageResourceRepository = imageResourceRepository;
     }
 
-    public List<TreeNodeDTO> getTree(Long versionId, String name, String status, String productManager,
-                                     String solution, String versionTag) {
-        List<DataEntry> entries = entryRepository.findByVersionIdAndLevelWithFilter(
-                versionId, 1, name, status, productManager, solution, versionTag);
-        return entries.stream().map(e -> buildTree(e, versionId)).toList();
+    private boolean matchesStatus(String colStatus, List<String> statusList) {
+        if (statusList == null || statusList.isEmpty()) return true;
+        if (colStatus == null || colStatus.isEmpty()) return false;
+        for (String s : statusList) {
+            if (colStatus.contains(s)) return true;
+        }
+        return false;
     }
 
-    private TreeNodeDTO buildTree(DataEntry entry, Long versionId) {
+    private boolean matchesVersionDivision(String colVersionDivision, List<String> versionTags) {
+        if (versionTags == null || versionTags.isEmpty()) return true;
+        if (colVersionDivision == null || colVersionDivision.isEmpty()) return false;
+        for (String tag : versionTags) {
+            if (colVersionDivision.contains(tag)) return true;
+        }
+        return false;
+    }
+
+    public List<TreeNodeDTO> getTree(Long versionId, String name, List<String> statusList, String productManager,
+                                     String solution, List<String> versionTags) {
+        String singleVersionTag = (versionTags != null && versionTags.size() == 1) ? versionTags.get(0) : null;
+        List<DataEntry> entries = new ArrayList<>(entryRepository.findByVersionIdAndLevelWithFilter(
+                versionId, 1, name, productManager, solution, singleVersionTag));
+        if (versionTags != null && versionTags.size() > 1) {
+            entries = entries.stream().filter(e -> matchesVersionDivision(e.getColVersionDivision(), versionTags)).toList();
+            entries = new ArrayList<>(entries);
+        }
+
+        Map<Long, BaseCategory> catMap = new HashMap<>();
+        Map<Long, BaseDomain> domMap = new HashMap<>();
+        baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId)
+            .forEach(c -> catMap.put(c.getId(), c));
+        baseDomainRepository.findByVersionId(versionId)
+            .forEach(d -> domMap.put(d.getId(), d));
+
+        entries.sort(Comparator.comparingInt(e ->
+                e.getCategoryId() != null && catMap.containsKey(e.getCategoryId())
+                        ? catMap.get(e.getCategoryId()).getSortOrder()
+                        : Integer.MAX_VALUE));
+
+        return entries.stream()
+                .filter(e -> matchesStatus(e.getColStatus(), statusList))
+                .map(e -> buildTree(e, versionId, catMap, domMap)).toList();
+    }
+
+    private TreeNodeDTO buildTree(DataEntry entry, Long versionId, Map<Long, BaseCategory> catMap, Map<Long, BaseDomain> domMap) {
         TreeNodeDTO node = new TreeNodeDTO();
         node.setId(entry.getId());
         node.setParentId(entry.getParentId());
         node.setLevel(entry.getLevel());
-        node.setLabel(entry.getColProductSystem() != null ? entry.getColProductSystem() : entry.getColBizCategory());
+
+        String label;
+        if (entry.getLevel() == 1 && entry.getCategoryId() != null && catMap.containsKey(entry.getCategoryId())) {
+            label = catMap.get(entry.getCategoryId()).getName();
+        } else if (entry.getLevel() == 2 && entry.getDomainId() != null && domMap.containsKey(entry.getDomainId())) {
+            label = domMap.get(entry.getDomainId()).getName();
+        } else {
+            label = entry.getColProductSystem() != null ? entry.getColProductSystem() : entry.getColBizCategory();
+        }
+        node.setLabel(label);
         node.setSortOrder(entry.getSortOrder());
 
         if (entry.getLevel() < 2) {
             node.setIsLeaf(false);
-            List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId());
+            List<DataEntry> children = new ArrayList<>(entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId()));
+            children.sort(Comparator.comparingInt(c ->
+                    c.getDomainId() != null && domMap.containsKey(c.getDomainId())
+                            ? domMap.get(c.getDomainId()).getSortOrder()
+                            : Integer.MAX_VALUE));
             if (!children.isEmpty()) {
-                node.setChildren(children.stream().map(c -> buildTree(c, versionId)).toList());
+                node.setChildren(children.stream().map(c -> buildTree(c, versionId, catMap, domMap)).toList());
             }
         } else {
             node.setIsLeaf(true);
@@ -73,46 +151,151 @@ public class DataEntryService {
         return node;
     }
 
-    public List<DataEntry> getChildren(Long versionId, Long parentId, String name, String status,
-                                      String productManager, String solution, String versionTag) {
+    public List<DataEntry> getChildren(Long versionId, Long parentId, String name, List<String> statusList,
+                                      String productManager, String solution, List<String> versionTags) {
+        String singleVersionTag = (versionTags != null && versionTags.size() == 1) ? versionTags.get(0) : null;
         return entryRepository.findByVersionIdAndParentIdWithFilter(
-                versionId, parentId, name, status, productManager, solution, versionTag);
+                versionId, parentId, name, productManager, solution, singleVersionTag).stream()
+                .filter(e -> matchesStatus(e.getColStatus(), statusList))
+                .filter(e -> versionTags == null || versionTags.isEmpty() || matchesVersionDivision(e.getColVersionDivision(), versionTags))
+                .toList();
+    }
+
+    public List<TreeNodeDTO> getDomainTree(Long versionId, Long domainId, Long categoryId) {
+        List<DataEntry> level2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
+
+        if (level2Entries.isEmpty()) {
+            return List.of();
+        }
+
+        DataEntry level2Entry = level2Entries.get(0);
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, level2Entry.getId());
+        return children.stream().map(child -> buildTreeNode(child, versionId)).toList();
+    }
+
+    private TreeNodeDTO buildTreeNode(DataEntry entry, Long versionId) {
+        TreeNodeDTO node = new TreeNodeDTO();
+        node.setId(entry.getId());
+        node.setParentId(entry.getParentId());
+        node.setLevel(entry.getLevel());
+        node.setLabel(entry.getColProductSystem() != null ? entry.getColProductSystem() : "");
+        node.setSortOrder(entry.getSortOrder());
+        List<DataEntry> childEntries = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, entry.getId());
+        node.setIsLeaf(childEntries.isEmpty());
+        if (!childEntries.isEmpty()) {
+            node.setChildren(childEntries.stream().map(c -> buildTreeNode(c, versionId)).toList());
+        }
+        return node;
+    }
+
+    public List<TreeNodeDTO> getSubTree(Long versionId, Long parentId) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        return children.stream().map(child -> {
+            TreeNodeDTO node = new TreeNodeDTO();
+            node.setId(child.getId());
+            node.setParentId(child.getParentId());
+            node.setLevel(child.getLevel());
+            node.setLabel(child.getColProductSystem() != null ? child.getColProductSystem() : "");
+            node.setSortOrder(child.getSortOrder());
+            List<DataEntry> grandChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, child.getId());
+            node.setIsLeaf(grandChildren.isEmpty());
+            return node;
+        }).toList();
     }
 
     public DataEntry getById(Long id) {
-        return entryRepository.findById(id)
+        DataEntry entry = entryRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("数据条目不存在"));
+        syncImageCardFilenames(entry);
+        return entry;
     }
 
     @Transactional
-    public List<DataEntry> query(Long versionId, Long customTabId, String name, String status, String productManager,
-                                 String solution, String versionDivision, String bizCategory, String bizDomain) {
-        boolean hasFilter = (name != null && !name.isEmpty()) || (status != null && !status.isEmpty())
+    public List<DataEntry> query(Long versionId, Long customTabId, String name, List<String> statusList, String productManager,
+                                 String solution, List<String> versionDivisions, String bizCategory, String bizDomain, Integer level, String intelligent) {
+        String singleVersionDiv = (versionDivisions != null && versionDivisions.size() == 1) ? versionDivisions.get(0) : null;
+        boolean hasFilter = (name != null && !name.isEmpty()) || (statusList != null && !statusList.isEmpty())
                 || (productManager != null && !productManager.isEmpty()) || (solution != null && !solution.isEmpty())
-                || (versionDivision != null && !versionDivision.isEmpty())
+                || (versionDivisions != null && !versionDivisions.isEmpty())
                 || (bizCategory != null && !bizCategory.isEmpty()) || (bizDomain != null && !bizDomain.isEmpty());
 
+        List<DataEntry> result;
+        if (level != null) {
+            result = entryRepository.findByVersionIdAndLevel(versionId, level);
+            result = sortByCategoryOrder(result, versionId);
+            return result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList();
+        }
         if (customTabId != null) {
-            List<DataEntry> entries;
             if (hasFilter) {
-                entries = entryRepository.queryEntries(versionId, customTabId, name, status, productManager,
-                        solution, versionDivision, bizCategory, bizDomain);
+                result = entryRepository.queryEntries(versionId, customTabId, name, productManager,
+                        solution, singleVersionDiv, bizCategory, bizDomain);
             } else {
-                entries = entryRepository.findEntriesByTab(versionId, customTabId);
+                result = entryRepository.findEntriesByTab(versionId, customTabId);
             }
-            return reorderByCustomTabSort(customTabId, entries);
+        } else if (hasFilter) {
+            result = entryRepository.queryEntries(versionId, null, name, productManager,
+                    solution, singleVersionDiv, bizCategory, bizDomain);
+        } else if (bizCategory != null || bizDomain != null) {
+            result = entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
+        } else {
+            result = entryRepository.findAllEntries(versionId);
         }
-
-        if (hasFilter) {
-            return entryRepository.queryEntries(versionId, null, name, status, productManager,
-                    solution, versionDivision, bizCategory, bizDomain);
+        result = new ArrayList<>(result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList());
+        if (versionDivisions != null && versionDivisions.size() > 1) {
+            result = result.stream().filter(e -> matchesVersionDivision(e.getColVersionDivision(), versionDivisions)).toList();
+            result = new ArrayList<>(result);
         }
-
-        if (bizCategory != null || bizDomain != null) {
-            return entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
+        result = sortByCategoryOrder(result, versionId);
+        // 智能化过滤：intelligent="1" 时，保留自身 colIntelligent="1" 的条目或其子树包含智能化条目的父条目
+        if (intelligent != null && "1".equals(intelligent)) {
+            result = filterByIntelligent(result, versionId);
         }
+        return result;
+    }
 
-        return entryRepository.findAllEntries(versionId);
+    private List<DataEntry> filterByIntelligent(List<DataEntry> entries, Long versionId) {
+        // 收集所有 colIntelligent="1" 的条目 ID
+        Set<Long> intelligentIds = new HashSet<>();
+        for (DataEntry e : entries) {
+            if ("1".equals(e.getColIntelligent())) {
+                intelligentIds.add(e.getId());
+            }
+        }
+        // 如果没有智能化条目，返回空列表
+        if (intelligentIds.isEmpty()) return new ArrayList<>();
+        // 收集智能化条目的所有祖先 ID
+        Map<Long, DataEntry> entryById = new HashMap<>();
+        for (DataEntry e : entries) entryById.put(e.getId(), e);
+        Set<Long> resultIds = new HashSet<>(intelligentIds);
+        for (Long id : intelligentIds) {
+            DataEntry e = entryById.get(id);
+            while (e != null && e.getParentId() != null) {
+                DataEntry parent = entryById.get(e.getParentId());
+                if (parent != null) {
+                    resultIds.add(parent.getId());
+                    e = parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        return entries.stream().filter(e -> resultIds.contains(e.getId())).toList();
+    }
+
+    private List<DataEntry> sortByCategoryOrder(List<DataEntry> entries, Long versionId) {
+        List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+        Map<String, Integer> catOrder = new LinkedHashMap<>();
+        for (int i = 0; i < cats.size(); i++) catOrder.put(cats.get(i).getName(), i);
+        Map<String, Integer> l2Order = new LinkedHashMap<>();
+        List<BaseDomain> domains = baseDomainRepository.findByVersionId(versionId);
+        domains.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+        for (int i = 0; i < domains.size(); i++) l2Order.put(domains.get(i).getName(), i);
+        entries.sort(Comparator.comparingInt((DataEntry e) -> catOrder.getOrDefault(e.getColBizCategory(), Integer.MAX_VALUE))
+                .thenComparingInt(e -> l2Order.getOrDefault(e.getColBizDomain(), Integer.MAX_VALUE))
+                .thenComparingInt(e -> e.getLevel() != null ? e.getLevel() : 3)
+                .thenComparing(e -> e.getParentId(), Comparator.nullsLast(Long::compareTo))
+                .thenComparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+        return entries;
     }
 
     @Transactional
@@ -141,6 +324,8 @@ public class DataEntryService {
             }
         }
 
+        fillCategoryAndDomainIds(entry);
+
         return entryRepository.save(entry);
     }
 
@@ -151,12 +336,101 @@ public class DataEntryService {
         String oldBizCategory = entry.getColBizCategory();
         String oldBizDomain = entry.getColBizDomain();
         copyFields(entry, dto);
+        syncImageCardFilenames(entry);
 
         if (entry.getLevel() != null && entry.getLevel() >= 1 && entry.getLevel() <= 3) {
             cascadeLabelUpdate(entry, oldBizCategory, oldBizDomain);
         }
 
+        fillCategoryAndDomainIds(entry);
+
         return entryRepository.save(entry);
+    }
+
+    public void syncImageCardFilenames(DataEntry entry) {
+        String desc = entry.getColFeatureDesc();
+        if (desc == null || !desc.contains("image-card") && !desc.contains("img-card")) return;
+        Set<Long> ids = new LinkedHashSet<>();
+        java.util.regex.Matcher idMatcher = java.util.regex.Pattern.compile("data-id=\"(\\d+)\"").matcher(desc);
+        while (idMatcher.find()) {
+            try { ids.add(Long.parseLong(idMatcher.group(1))); } catch (NumberFormatException ignored) {}
+        }
+        if (ids.isEmpty()) return;
+        List<ImageResource> images = imageResourceRepository.findAllById(ids);
+        if (images.isEmpty()) return;
+        Map<Long, ImageResource> imgMap = new HashMap<>();
+        for (ImageResource img : images) imgMap.put(img.getId(), img);
+        String original = desc;
+        java.util.regex.Pattern cardPattern = java.util.regex.Pattern.compile(
+                "<(span|div)\\s+class=\"(image-card|img-card)\"([^>]*data-id=\"(\\d+)\"[^>]*)>"
+        );
+        java.util.regex.Matcher m = cardPattern.matcher(desc);
+        StringBuilder result = new StringBuilder();
+        int lastEnd = 0;
+        while (m.find()) {
+            result.append(desc, lastEnd, m.start());
+            long imgId = Long.parseLong(m.group(4));
+            ImageResource img = imgMap.get(imgId);
+            if (img == null) {
+                result.append(m.group());
+                lastEnd = m.end();
+                continue;
+            }
+            String attrs = m.group(3);
+            String newUrl = img.getUrl();
+            String newName = img.getFilename();
+            if (newName == null) newName = img.getStoredName();
+            if (newName == null) { result.append(m.group()); lastEnd = m.end(); continue; }
+            String nameSafe = newName.replace("\"", "&quot;").replace("'", "&#39;");
+            if (newUrl != null) {
+                attrs = attrs.replaceAll("data-url=\"[^\"]*\"", "data-url=\"" + newUrl + "\"");
+            }
+            attrs = attrs.replaceAll("data-filename=\"[^\"]*\"", "data-filename=\"" + nameSafe + "\"");
+            attrs = attrs.replaceAll("title=\"[^\"]*\"", "title=\"" + nameSafe + "\"");
+            result.append('<').append(m.group(1)).append(" class=\"").append(m.group(2)).append('"').append(attrs).append('>');
+            String cardContent = desc.substring(m.end());
+            int closeIdx = findCardEnd(cardContent, m.group(1));
+            String cardBody = closeIdx > 0 ? cardContent.substring(0, closeIdx) : "";
+            if (!cardBody.isEmpty()) {
+                if (newUrl != null) {
+                    cardBody = cardBody.replaceFirst("src=\"[^\"]*\"", "src=\"" + java.util.regex.Matcher.quoteReplacement(newUrl) + "\"");
+                    cardBody = cardBody.replaceFirst("alt=\"[^\"]*\"", "alt=\"" + java.util.regex.Matcher.quoteReplacement(nameSafe) + "\"");
+                }
+                cardBody = cardBody.replaceFirst(
+                        "(<span\\s+class=\"image-name\"[^>]*>)([^<]*)(</span>)",
+                        "$1" + java.util.regex.Matcher.quoteReplacement(nameSafe) + "$3");
+                result.append(cardBody);
+            }
+            lastEnd = closeIdx > 0 ? m.end() + closeIdx : m.end();
+        }
+        result.append(desc, lastEnd, desc.length());
+        if (!result.toString().equals(original)) {
+            entry.setColFeatureDesc(result.toString());
+        }
+    }
+
+    private int findCardEnd(String afterOpenTag, String tagName) {
+        String openTag = "<" + tagName;
+        String closeTag = "</" + tagName + ">";
+        int depth = 1;
+        int i = 0;
+        while (i < afterOpenTag.length() && depth > 0) {
+            if (afterOpenTag.startsWith(openTag, i)) {
+                int tagEnd = afterOpenTag.indexOf('>', i);
+                if (tagEnd < 0) break;
+                if (!afterOpenTag.substring(i, tagEnd + 1).contains("data-id")) {
+                    depth++;
+                }
+                i = tagEnd + 1;
+            } else if (afterOpenTag.startsWith(closeTag, i)) {
+                depth--;
+                if (depth == 0) return i + closeTag.length();
+                i += closeTag.length();
+            } else {
+                i++;
+            }
+        }
+        return -1;
     }
 
     private void cascadeLabelUpdate(DataEntry entry, String oldBizCategory, String oldBizDomain) {
@@ -166,26 +440,49 @@ public class DataEntryService {
         boolean domChanged = newDomain != null && !newDomain.equals(oldBizDomain);
 
         if (entry.getLevel() == 1 && catChanged) {
-            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
-            for (DataEntry d : descendants) {
-                d.setColBizCategory(newCategory);
-                entryRepository.save(d);
+            List<DataEntry> all = entryRepository.findByVersionId(entry.getVersionId());
+            for (DataEntry d : all) {
+                if (oldBizCategory.equals(d.getColBizCategory())) {
+                    d.setColBizCategory(newCategory);
+                    entryRepository.save(d);
+                }
+            }
+            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(entry.getVersionId());
+            for (BaseCategory c : cats) {
+                if (oldBizCategory.equals(c.getName())) {
+                    c.setName(newCategory);
+                    baseCategoryRepository.save(c);
+                    break;
+                }
             }
         }
 
         if (entry.getLevel() == 2 && domChanged) {
-            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
-            for (DataEntry d : descendants) {
-                d.setColBizDomain(newDomain);
-                entryRepository.save(d);
+            List<DataEntry> all = entryRepository.findByVersionId(entry.getVersionId());
+            for (DataEntry d : all) {
+                if (oldBizDomain.equals(d.getColBizDomain())) {
+                    d.setColBizDomain(newDomain);
+                    entryRepository.save(d);
+                }
+            }
+            List<BaseDomain> doms = baseDomainRepository.findByVersionId(entry.getVersionId());
+            for (BaseDomain d : doms) {
+                if (oldBizDomain.equals(d.getName())) {
+                    d.setName(newDomain);
+                    baseDomainRepository.save(d);
+                    break;
+                }
             }
         }
 
         if (entry.getLevel() == 3 && (catChanged || domChanged)) {
+            List<DataEntry> all = entryRepository.findByVersionId(entry.getVersionId());
             List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            descendants.add(entry);
             for (DataEntry d : descendants) {
                 if (catChanged) d.setColBizCategory(newCategory);
                 if (domChanged) d.setColBizDomain(newDomain);
+                if (d.getId().equals(entry.getId())) continue;
                 entryRepository.save(d);
             }
         }
@@ -225,17 +522,187 @@ public class DataEntryService {
         entryRepository.deleteAllById(allIds);
     }
 
+    @Transactional
     public void batchDelete(List<Long> ids) {
-        List<Long> allIds = new ArrayList<>();
-        for (Long id : ids) {
+        List<DataEntry> roots = entryRepository.findAllById(ids);
+        if (roots.isEmpty()) return;
+        Long versionId = roots.get(0).getVersionId();
+        Map<Long, List<Long>> parentChildMap = new HashMap<>();
+        for (DataEntry e : entryRepository.findByVersionId(versionId)) {
+            Long pid = e.getParentId();
+            if (pid != null) {
+                parentChildMap.computeIfAbsent(pid, k -> new ArrayList<>()).add(e.getId());
+            }
+        }
+        Set<Long> allIds = new LinkedHashSet<>(ids);
+        Queue<Long> queue = new LinkedList<>(ids);
+        while (!queue.isEmpty()) {
+            Long pid = queue.poll();
+            List<Long> children = parentChildMap.get(pid);
+            if (children != null) {
+                for (Long cid : children) {
+                    if (allIds.add(cid)) {
+                        queue.add(cid);
+                    }
+                }
+            }
+        }
+        entryRepository.deleteAllByIdInBatch(new ArrayList<>(allIds));
+    }
+
+    @Transactional
+    public int batchUpdateCategory(Long versionId, List<Long> entryIds, Long categoryId, Long domainId, Long productId, Long parentId) {
+        ensureVersionEditable(versionId);
+
+        String catName = null;
+        String domName = null;
+        String prodName = null;
+        if (categoryId != null) {
+            BaseCategory cat = baseCategoryRepository.findById(categoryId).orElse(null);
+            if (cat != null) catName = cat.getName();
+        }
+        if (domainId != null) {
+            BaseDomain dom = baseDomainRepository.findById(domainId).orElse(null);
+            if (dom != null) domName = dom.getName();
+        }
+        if (productId != null) {
+            BaseProduct prod = baseProductRepository.findById(productId).orElse(null);
+            if (prod != null) prodName = prod.getName();
+        }
+
+        DataEntry parentEntry = null;
+        if (parentId != null) {
+            parentEntry = entryRepository.findById(parentId).orElse(null);
+        }
+
+        // 当未指定 parentId 但指定了 domainId 时，自动查找新域的 L2 分隔行
+        DataEntry newL2Separator = null;
+        if (parentEntry == null && domainId != null) {
+            List<DataEntry> l2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
+            if (!l2Entries.isEmpty()) {
+                newL2Separator = l2Entries.get(0);
+            }
+        }
+
+        // 收集旧域信息（用于迁移后清理）
+        Set<Long> oldL2SeparatorIds = new HashSet<>();
+        Map<Long, String> oldL2DomNames = new HashMap<>();
+        for (Long id : entryIds) {
+            DataEntry entry = entryRepository.findById(id).orElse(null);
+            if (entry == null || entry.getLevel() == null || entry.getLevel() < 3) continue;
+            if (entry.getParentId() != null && !oldL2SeparatorIds.contains(entry.getParentId())) {
+                DataEntry oldParent = entryRepository.findById(entry.getParentId()).orElse(null);
+                if (oldParent != null && oldParent.getLevel() == 2) {
+                    oldL2SeparatorIds.add(oldParent.getId());
+                    oldL2DomNames.put(oldParent.getId(), oldParent.getColBizDomain());
+                }
+            }
+        }
+
+        int targetLevel = 3;
+        if (parentEntry != null) {
+            targetLevel = parentEntry.getLevel() + 1;
+        }
+
+        int nextSortOrder = 0;
+        if (domainId != null) {
+            List<DataEntry> existingL3 = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 3);
+            for (DataEntry e : existingL3) {
+                if (e.getSortOrder() != null && e.getSortOrder() >= nextSortOrder) {
+                    nextSortOrder = e.getSortOrder() + 1;
+                }
+            }
+        }
+
+        int count = 0;
+        for (Long id : entryIds) {
             DataEntry entry = entryRepository.findById(id).orElse(null);
             if (entry == null) continue;
-            allIds.add(id);
-            collectDescendantIds(entry.getVersionId(), id, allIds);
+            if (entry.getLevel() == null || entry.getLevel() < 3) continue;
+
+            int originalLevel = entry.getLevel();
+
+            if (parentEntry != null) {
+                entry.setParentId(parentEntry.getId());
+                entry.setLevel(targetLevel);
+            } else if (newL2Separator != null && entry.getLevel() == 3) {
+                // 自动将 L3 条目移到新域的 L2 分隔行下
+                entry.setParentId(newL2Separator.getId());
+            }
+
+            if (catName != null) {
+                entry.setColBizCategory(catName);
+                entry.setCategoryId(categoryId);
+            }
+            if (domName != null) {
+                entry.setColBizDomain(domName);
+                entry.setDomainId(domainId);
+            }
+            if (prodName != null) {
+                entry.setProductId(productId);
+            }
+            if (domainId != null && entry.getLevel() == 3) {
+                entry.setSortOrder(nextSortOrder++);
+            }
+
+            List<DataEntry> descendants = collectDescendants(entry.getId(), entry.getVersionId());
+            int levelDelta = originalLevel - targetLevel;
+            for (DataEntry d : descendants) {
+                if (catName != null) {
+                    d.setColBizCategory(catName);
+                    d.setCategoryId(categoryId);
+                }
+                if (domName != null) {
+                    d.setColBizDomain(domName);
+                    d.setDomainId(domainId);
+                }
+                if (prodName != null) {
+                    d.setProductId(productId);
+                }
+                if (parentEntry != null) {
+                    d.setLevel(d.getLevel() - levelDelta);
+                }
+                entryRepository.save(d);
+            }
+
+            entryRepository.save(entry);
+
+            if (parentEntry != null) {
+                DataEntry p = entryRepository.findById(parentEntry.getId()).orElse(null);
+                if (p != null) {
+                    p.setIsLeaf(false);
+                    entryRepository.save(p);
+                }
+            } else if (newL2Separator != null) {
+                newL2Separator.setIsLeaf(false);
+                entryRepository.save(newL2Separator);
+            }
+
+            count++;
         }
-        for (Long id : allIds) {
-            entryRepository.deleteById(id);
+
+        // 迁移完成后：清理旧域空 L2 分隔行
+        for (Long oldL2Id : oldL2SeparatorIds) {
+            List<DataEntry> remainingChildren = entryRepository.findByVersionIdAndParentId(versionId, oldL2Id);
+            if (remainingChildren.isEmpty()) {
+                DataEntry oldL2 = entryRepository.findById(oldL2Id).orElse(null);
+                if (oldL2 != null) {
+                    oldL2.setIsLeaf(true);
+                    entryRepository.save(oldL2);
+                    // 更新旧 L1 分隔行的 isLeaf
+                    if (oldL2.getParentId() != null) {
+                        DataEntry oldL1 = entryRepository.findById(oldL2.getParentId()).orElse(null);
+                        if (oldL1 != null) {
+                            List<DataEntry> oldL1Children = entryRepository.findByVersionIdAndParentId(versionId, oldL1.getId());
+                            oldL1.setIsLeaf(oldL1Children.isEmpty());
+                            entryRepository.save(oldL1);
+                        }
+                    }
+                }
+            }
         }
+
+        return count;
     }
 
     private void collectDescendantIds(Long versionId, Long parentId, List<Long> ids) {
@@ -262,6 +729,8 @@ public class DataEntryService {
         if (dto.getColStatus() != null) entry.setColStatus(dto.getColStatus());
         if (dto.getColBizCategory() != null) entry.setColBizCategory(dto.getColBizCategory());
         if (dto.getColBizDomain() != null) entry.setColBizDomain(dto.getColBizDomain());
+        if (dto.getCategoryId() != null) entry.setCategoryId(dto.getCategoryId());
+        if (dto.getDomainId() != null) entry.setDomainId(dto.getDomainId());
         if (dto.getColVersionDivision() != null) entry.setColVersionDivision(dto.getColVersionDivision());
         if (dto.getColYuan() != null) entry.setColYuan(dto.getColYuan());
         if (dto.getColDeliveryWorkload() != null) entry.setColDeliveryWorkload(dto.getColDeliveryWorkload());
@@ -301,6 +770,27 @@ public class DataEntryService {
         if (dto.getColPrincipal() != null) entry.setColPrincipal(dto.getColPrincipal());
         if (dto.getColProductLine() != null) entry.setColProductLine(dto.getColProductLine());
         if (dto.getColAssetType() != null) entry.setColAssetType(dto.getColAssetType());
+    }
+
+    private void fillCategoryAndDomainIds(DataEntry entry) {
+        if (entry.getCategoryId() == null && entry.getColBizCategory() != null && !entry.getColBizCategory().isEmpty()) {
+            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(entry.getVersionId());
+            for (BaseCategory cat : cats) {
+                if (entry.getColBizCategory().equals(cat.getName())) {
+                    entry.setCategoryId(cat.getId());
+                    break;
+                }
+            }
+        }
+        if (entry.getDomainId() == null && entry.getColBizDomain() != null && !entry.getColBizDomain().isEmpty()) {
+            List<BaseDomain> doms = baseDomainRepository.findByVersionId(entry.getVersionId());
+            for (BaseDomain dom : doms) {
+                if (entry.getColBizDomain().equals(dom.getName())) {
+                    entry.setDomainId(dom.getId());
+                    break;
+                }
+            }
+        }
     }
 
     @Transactional
@@ -445,6 +935,865 @@ public class DataEntryService {
     }
 
     @Transactional
+    public void moveToParent(Long id, Long newParentId) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+
+        DataEntry target = entryRepository.findById(newParentId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+
+        if (!entry.getVersionId().equals(target.getVersionId())) {
+            throw new BusinessException("源节点和目标节点不在同一版本");
+        }
+
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("不能将条目移动到L1或L2节点下");
+        }
+
+        if (target.getLevel() + 1 < 4) {
+            throw new BusinessException("移动后的层级不能低于L4");
+        }
+
+        Long entryL2Ancestor = findL2Ancestor(entry);
+        Long targetL2Ancestor = findL2Ancestor(target);
+        if (entryL2Ancestor == null || targetL2Ancestor == null || !entryL2Ancestor.equals(targetL2Ancestor)) {
+            throw new BusinessException("只能在同一业务域内移动");
+        }
+
+        if (isDescendant(entry.getId(), target.getId())) {
+            throw new BusinessException("不能移动到自己的子节点下");
+        }
+
+        if (entry.getParentId() != null && entry.getParentId().equals(newParentId)) {
+            return;
+        }
+
+        Long oldParentId = entry.getParentId();
+        int oldLevel = entry.getLevel();
+        int newLevel = target.getLevel() + 1;
+        int levelDelta = newLevel - oldLevel;
+
+        entry.setParentId(newParentId);
+        entry.setLevel(newLevel);
+
+        List<DataEntry> maxSortChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), newParentId);
+        if (maxSortChildren.isEmpty()) {
+            entry.setSortOrder(0);
+        } else {
+            entry.setSortOrder(maxSortChildren.get(maxSortChildren.size() - 1).getSortOrder() + 1);
+        }
+
+        entryRepository.save(entry);
+
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry d : descendants) {
+            d.setLevel(d.getLevel() + levelDelta);
+            entryRepository.save(d);
+        }
+
+        if (oldParentId != null) {
+            entryRepository.findById(oldParentId).ifPresent(oldParent -> {
+                List<DataEntry> oldParentChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(oldParent.getVersionId(), oldParentId);
+                oldParent.setIsLeaf(oldParentChildren.isEmpty());
+                entryRepository.save(oldParent);
+            });
+        }
+
+        target.setIsLeaf(false);
+        entryRepository.save(target);
+        syncImagesProductIdForBranch(entry);
+    }
+    public void moveToSibling(Long id, Long targetId) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+
+        DataEntry target = entryRepository.findById(targetId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+
+        if (!entry.getVersionId().equals(target.getVersionId())) {
+            throw new BusinessException("源节点和目标节点不在同一版本");
+        }
+
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("目标节点层级不能低于L3");
+        }
+
+        Long newParentId;
+        if (target.getParentId() != null) {
+            newParentId = target.getParentId();
+        } else if (target.getLevel() != null && target.getLevel() == 3) {
+            newParentId = findL2Ancestor(target);
+            if (newParentId == null) {
+                throw new BusinessException("无法确定目标的父级分类");
+            }
+        } else {
+            throw new BusinessException("目标节点没有父节点");
+        }
+        Long entryL2Ancestor = findL2Ancestor(entry);
+        Long targetL2Ancestor = findL2Ancestor(target);
+        if (entryL2Ancestor == null || targetL2Ancestor == null || !entryL2Ancestor.equals(targetL2Ancestor)) {
+            throw new BusinessException("只能在同一业务域内移动");
+        }
+        if (isDescendant(entry.getId(), target.getId())) {
+            throw new BusinessException("不能移动到自己的子节点同级");
+        }
+        if (entry.getParentId() != null && entry.getParentId().equals(newParentId) && entry.getId().equals(target.getId())) {
+            return;
+        }
+
+        Long oldParentId = entry.getParentId();
+        int oldLevel = entry.getLevel();
+        int newLevel = target.getLevel();
+        int levelDelta = newLevel - oldLevel;
+
+        entry.setParentId(newParentId);
+        entry.setLevel(newLevel);
+        entry.setSortOrder(target.getSortOrder() + 1);
+        entryRepository.save(entry);
+
+        List<DataEntry> siblings = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), newParentId);
+        for (DataEntry s : siblings) {
+            if (s.getId().equals(entry.getId())) continue;
+            if (s.getSortOrder() >= target.getSortOrder() + 1) {
+                s.setSortOrder(s.getSortOrder() + 1);
+                entryRepository.save(s);
+            }
+        }
+
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry d : descendants) {
+            d.setLevel(d.getLevel() + levelDelta);
+            entryRepository.save(d);
+        }
+
+        if (oldParentId != null && !oldParentId.equals(newParentId)) {
+            entryRepository.findById(oldParentId).ifPresent(oldParent -> {
+                List<DataEntry> oldParentChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(oldParent.getVersionId(), oldParentId);
+                oldParent.setIsLeaf(oldParentChildren.isEmpty());
+                entryRepository.save(oldParent);
+            });
+        }
+
+        entryRepository.findById(newParentId).ifPresent(newParent -> {
+            newParent.setIsLeaf(false);
+            entryRepository.save(newParent);
+        });
+        syncImagesProductIdForBranch(entry);
+    }
+
+    public List<Long> copyEntriesToTarget(List<Long> sourceIds, Long targetId, String mode) {
+        return copyEntriesToTarget(sourceIds, targetId, mode, null);
+    }
+
+    @Transactional
+    public List<Long> copyEntriesToTarget(List<Long> sourceIds, Long targetId, String mode, Long customTabId) {
+        DataEntry target = entryRepository.findById(targetId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+        ensureVersionEditable(target.getVersionId());
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("目标节点层级不能低于L3");
+        }
+
+        String targetCategory = target.getColBizCategory();
+        String targetDomain = target.getColBizDomain();
+        Long targetCategoryId = target.getCategoryId();
+        Long targetDomainId = target.getDomainId();
+        List<Long> newEntryIds = new ArrayList<>();
+
+        List<Long> topLevelIds = new ArrayList<>(sourceIds);
+        topLevelIds.removeIf(id -> sourceIds.stream()
+                .filter(other -> !other.equals(id))
+                .anyMatch(other -> isDescendant(other, id)));
+
+        for (Long sourceId : topLevelIds) {
+            DataEntry source = entryRepository.findById(sourceId).orElse(null);
+            if (source == null) continue;
+            if (sourceId.equals(targetId) && "child".equals(mode)) {
+                throw new BusinessException("不能复制节点到自身下级");
+            }
+            if (source.getVersionId().equals(target.getVersionId()) && isDescendant(sourceId, targetId)) {
+                throw new BusinessException("不能复制到自身子节点下");
+            }
+
+            int newLevel;
+            Long newParentId;
+            if ("child".equals(mode)) {
+                newLevel = target.getLevel() + 1;
+                newParentId = targetId;
+            } else {
+                newLevel = target.getLevel();
+                newParentId = target.getParentId() != null ? target.getParentId() : findL2Ancestor(target);
+                if (newParentId == null) {
+                    throw new BusinessException("无法确定目标的父级");
+                }
+            }
+
+            int nextSortOrder = getNextSortOrder(target.getVersionId(), newParentId, target.getSortOrder(), mode);
+
+            Map<Long, Long> idMapping = new HashMap<>();
+            DataEntry clonedRoot = source.cloneWithoutId();
+            clonedRoot.setVersionId(target.getVersionId());
+            clonedRoot.setParentId(newParentId);
+            clonedRoot.setLevel(newLevel);
+            clonedRoot.setSortOrder(nextSortOrder);
+            clonedRoot.setColBizCategory(targetCategory);
+            clonedRoot.setColBizDomain(targetDomain);
+            clonedRoot.setCategoryId(targetCategoryId);
+            clonedRoot.setDomainId(targetDomainId);
+            clonedRoot.setIsLeaf(source.getIsLeaf());
+            clonedRoot.setApprovalStatus("待提交");
+            DataEntry savedRoot = entryRepository.save(clonedRoot);
+            idMapping.put(sourceId, savedRoot.getId());
+            newEntryIds.add(savedRoot.getId());
+
+            cloneDescendants(source.getVersionId(), sourceId, savedRoot.getId(), newLevel, idMapping,
+                    targetCategory, targetDomain, targetCategoryId, targetDomainId, target.getVersionId());
+            for (Long mappedId : idMapping.values()) {
+                if (!mappedId.equals(savedRoot.getId())) {
+                    newEntryIds.add(mappedId);
+                }
+            }
+
+            if ("sibling".equals(mode)) {
+                shiftSiblingsAfter(target.getVersionId(), newParentId, nextSortOrder, savedRoot.getId());
+            }
+
+            if ("child".equals(mode)) {
+                target.setIsLeaf(false);
+                entryRepository.save(target);
+            }
+
+            List<DataEntry> clonedDescendants = collectDescendantsList(savedRoot.getVersionId(), savedRoot.getId());
+
+            if (shouldCloneImages(source, target)) {
+                cloneEntryImages(source, savedRoot, target.getVersionId(),
+                        targetCategory, targetDomain, targetCategoryId, targetDomainId);
+                for (DataEntry d : clonedDescendants) {
+                    Long sourceDescId = idMapping.entrySet().stream()
+                            .filter(e -> e.getValue().equals(d.getId()))
+                            .map(Map.Entry::getKey).findFirst().orElse(null);
+                    if (sourceDescId != null) {
+                        DataEntry sourceDesc = entryRepository.findById(sourceDescId).orElse(null);
+                        if (sourceDesc != null) {
+                            cloneEntryImages(sourceDesc, d, target.getVersionId(),
+                                    targetCategory, targetDomain, targetCategoryId, targetDomainId);
+                        }
+                    }
+                }
+            } else {
+                syncEntryImageClassifications(savedRoot);
+                for (DataEntry d : clonedDescendants) {
+                    syncEntryImageClassifications(d);
+                }
+            }
+        }
+
+        if (customTabId != null) {
+            for (Long newId : newEntryIds) {
+                CustomTabEntry cte = new CustomTabEntry();
+                cte.setCustomTabId(customTabId);
+                cte.setEntryId(newId);
+                customTabEntryRepository.save(cte);
+            }
+        }
+
+        return newEntryIds;
+    }
+
+    private static final int MAX_CLONE_DEPTH = 20;
+
+    private void cloneDescendants(Long sourceVersionId, Long sourceParentId, Long newParentId, int parentLevel,
+                                  Map<Long, Long> idMapping,
+                                  String targetCategory, String targetDomain,
+                                  Long targetCategoryId, Long targetDomainId, Long targetVersionId) {
+        if (parentLevel >= MAX_CLONE_DEPTH) {
+            return;
+        }
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(sourceVersionId, sourceParentId);
+        for (DataEntry child : children) {
+            DataEntry cloned = child.cloneWithoutId();
+            cloned.setVersionId(targetVersionId);
+            cloned.setParentId(newParentId);
+            cloned.setLevel(parentLevel + 1);
+            cloned.setColBizCategory(targetCategory);
+            cloned.setColBizDomain(targetDomain);
+            cloned.setCategoryId(targetCategoryId);
+            cloned.setDomainId(targetDomainId);
+            cloned.setIsLeaf(child.getIsLeaf());
+            cloned.setApprovalStatus("待提交");
+            DataEntry saved = entryRepository.save(cloned);
+            idMapping.put(child.getId(), saved.getId());
+            cloneDescendants(sourceVersionId, child.getId(), saved.getId(), parentLevel + 1, idMapping,
+                    targetCategory, targetDomain, targetCategoryId, targetDomainId, targetVersionId);
+        }
+    }
+
+    private int getNextSortOrder(Long versionId, Long parentId, Integer targetSortOrder, String mode) {
+        if ("sibling".equals(mode) && targetSortOrder != null) {
+            return targetSortOrder + 1;
+        }
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        if (children.isEmpty()) return 0;
+        return children.get(children.size() - 1).getSortOrder() + 1;
+    }
+
+    private void shiftSiblingsAfter(Long versionId, Long parentId, int afterSortOrder, Long excludeId) {
+        List<DataEntry> siblings = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        for (DataEntry s : siblings) {
+            if (!s.getId().equals(excludeId) && s.getSortOrder() != null && s.getSortOrder() >= afterSortOrder) {
+                s.setSortOrder(s.getSortOrder() + 1);
+                entryRepository.save(s);
+            }
+        }
+    }
+
+    @Transactional
+    public void moveUp(Long id) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+        List<DataEntry> siblings = findSiblings(entry);
+        int idx = -1;
+        for (int i = 0; i < siblings.size(); i++) {
+            if (siblings.get(i).getId().equals(id)) { idx = i; break; }
+        }
+        if (idx <= 0) {
+            throw new BusinessException("已经是第一个，无法上移");
+        }
+        siblings.add(idx - 1, siblings.remove(idx));
+        reassignSortOrder(siblings);
+    }
+
+    @Transactional
+    public void moveDown(Long id) {
+        DataEntry entry = getById(id);
+        ensureVersionEditable(entry.getVersionId());
+        List<DataEntry> siblings = findSiblings(entry);
+        int idx = -1;
+        for (int i = 0; i < siblings.size(); i++) {
+            if (siblings.get(i).getId().equals(id)) { idx = i; break; }
+        }
+        if (idx < 0 || idx >= siblings.size() - 1) {
+            throw new BusinessException("已经是最后一个，无法下移");
+        }
+        siblings.add(idx + 1, siblings.remove(idx));
+        reassignSortOrder(siblings);
+    }
+
+    private void reassignSortOrder(List<DataEntry> siblings) {
+        for (int i = 0; i < siblings.size(); i++) {
+            siblings.get(i).setSortOrder(i);
+        }
+        entryRepository.saveAll(siblings);
+    }
+
+    private List<DataEntry> findSiblings(DataEntry entry) {
+        if (entry.getLevel() != null && entry.getLevel() >= 3) {
+            // L3+ 条目：优先基于 parentId 找同一父节点下的兄弟（与前端树结构渲染一致）
+            Long parentId = entry.getParentId();
+            if (parentId != null) {
+                return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
+            }
+            // parentId 为 null 的 L3 条目：基于 domainId fallback
+            if (entry.getDomainId() != null) {
+                List<DataEntry> siblings = entryRepository.findL3ByDomainId(entry.getVersionId(), entry.getDomainId());
+                siblings.sort(Comparator.comparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+                return siblings;
+            }
+            return entryRepository.findRootEntries(entry.getVersionId());
+        }
+        // L4+ 条目或 level < 3 的条目
+        Long parentId = entry.getParentId();
+        if (parentId != null) {
+            return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
+        }
+        // parentId 为 null 的 fallback：基于 domainId
+        if (entry.getDomainId() != null) {
+            List<DataEntry> siblings = entryRepository.findRootEntriesByDomainId(entry.getVersionId(), entry.getDomainId());
+            siblings.sort(Comparator.comparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+            return siblings;
+        }
+        return entryRepository.findRootEntries(entry.getVersionId());
+    }
+
+    @Transactional
+    public void moveEntriesToTarget(List<Long> sourceIds, Long targetId, String mode, Long customTabId) {
+        DataEntry target = entryRepository.findById(targetId)
+                .orElseThrow(() -> new BusinessException("目标节点不存在"));
+        ensureVersionEditable(target.getVersionId());
+        if (target.getLevel() == null || target.getLevel() < 3) {
+            throw new BusinessException("目标节点层级不能低于L3");
+        }
+
+        for (Long sourceId : sourceIds) {
+            if (sourceId.equals(targetId)) {
+                throw new BusinessException("不能移动到自身");
+            }
+            if (isDescendant(sourceId, targetId)) {
+                throw new BusinessException("不能移动到自身子节点下");
+            }
+        }
+
+        String targetCategory = target.getColBizCategory();
+        String targetDomain = target.getColBizDomain();
+        Long targetCategoryId = target.getCategoryId();
+        Long targetDomainId = target.getDomainId();
+        List<Long> movedEntryIds = new ArrayList<>();
+
+        List<Long> topLevelIds = new ArrayList<>(sourceIds);
+        topLevelIds.removeIf(id -> sourceIds.stream()
+                .filter(other -> !other.equals(id))
+                .anyMatch(other -> isDescendant(other, id)));
+
+        for (Long sourceId : topLevelIds) {
+            DataEntry source = entryRepository.findById(sourceId).orElse(null);
+            if (source == null) continue;
+            if (!source.getVersionId().equals(target.getVersionId())) {
+                throw new BusinessException("源节点与目标节点不在同一版本");
+            }
+
+            Long oldParentId = source.getParentId();
+            int oldLevel = source.getLevel();
+
+            int newLevel;
+            Long newParentId;
+            if ("child".equals(mode)) {
+                newLevel = target.getLevel() + 1;
+                newParentId = targetId;
+            } else {
+                newLevel = target.getLevel();
+                newParentId = target.getParentId() != null ? target.getParentId() : findL2Ancestor(target);
+                if (newParentId == null) {
+                    throw new BusinessException("无法确定目标的父级");
+                }
+            }
+
+            int levelDelta = newLevel - oldLevel;
+            source.setParentId(newParentId);
+            source.setLevel(newLevel);
+            source.setColBizCategory(targetCategory);
+            source.setColBizDomain(targetDomain);
+            source.setCategoryId(targetCategoryId);
+            source.setDomainId(targetDomainId);
+
+            if ("sibling".equals(mode)) {
+                source.setSortOrder(target.getSortOrder() + 1);
+                shiftSiblingsAfter(target.getVersionId(), newParentId, target.getSortOrder() + 1, sourceId);
+            } else {
+                int nextSort = getNextSortOrder(target.getVersionId(), newParentId, target.getSortOrder(), mode);
+                source.setSortOrder(nextSort);
+            }
+            entryRepository.save(source);
+            movedEntryIds.add(sourceId);
+
+            List<DataEntry> descendants = collectDescendantsList(source.getVersionId(), sourceId);
+            for (DataEntry d : descendants) {
+                d.setLevel(d.getLevel() + levelDelta);
+                d.setColBizCategory(targetCategory);
+                d.setColBizDomain(targetDomain);
+                d.setCategoryId(targetCategoryId);
+                d.setDomainId(targetDomainId);
+                entryRepository.save(d);
+                movedEntryIds.add(d.getId());
+            }
+
+            if (oldParentId != null) {
+                entryRepository.findById(oldParentId).ifPresent(oldParent -> {
+                    List<DataEntry> oldChildren = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(
+                            oldParent.getVersionId(), oldParentId);
+                    oldParent.setIsLeaf(oldChildren.isEmpty());
+                    entryRepository.save(oldParent);
+                });
+            }
+
+            if ("child".equals(mode)) {
+                target.setIsLeaf(false);
+                entryRepository.save(target);
+            } else {
+                entryRepository.findById(newParentId).ifPresent(p -> {
+                    p.setIsLeaf(false);
+                    entryRepository.save(p);
+                });
+            }
+
+            if (shouldCloneImages(source, target)) {
+                syncEntryImageClassifications(source);
+                for (DataEntry d : descendants) {
+                    syncEntryImageClassifications(d);
+                }
+            }
+        }
+
+        if (customTabId != null) {
+            for (Long entryId : movedEntryIds) {
+                CustomTabEntry cte = new CustomTabEntry();
+                cte.setCustomTabId(customTabId);
+                cte.setEntryId(entryId);
+                customTabEntryRepository.save(cte);
+            }
+        }
+    }
+
+    private Long findL2Ancestor(DataEntry entry) {
+        DataEntry current = entry;
+        while (current != null) {
+            if (current.getLevel() != null && current.getLevel() == 2) {
+                return current.getId();
+            }
+            if (current.getParentId() == null) {
+                // 基于 domainId 查找 L2 分隔行（而非名称）
+                if (current.getDomainId() != null) {
+                    List<DataEntry> l2ByDomainId = entryRepository.findByVersionIdAndDomainIdAndLevel(
+                            entry.getVersionId(), current.getDomainId(), 2);
+                    if (!l2ByDomainId.isEmpty()) {
+                        return l2ByDomainId.get(0).getId();
+                    }
+                }
+                return null;
+            }
+            current = entryRepository.findById(current.getParentId()).orElse(null);
+        }
+        return null;
+    }
+
+    @Value("${app.image-storage-path:./uploads/images}")
+    private String imageStoragePath;
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DataEntryService.class);
+
+    private void syncEntryImageClassifications(DataEntry entry) {
+        String cat = entry.getColBizCategory();
+        String dom = entry.getColBizDomain();
+        String prod = entry.getColProductSystem();
+        if (cat == null && dom == null && prod == null) return;
+        String desc = entry.getColFeatureDesc();
+        if (desc == null) return;
+        Pattern urlPattern = Pattern.compile("data-url=\"([^\"]+)\"");
+        Matcher m = urlPattern.matcher(desc);
+        Set<String> urls = new HashSet<>();
+        while (m.find()) {
+            urls.add(m.group(1));
+        }
+        if (urls.isEmpty()) return;
+        List<ImageResource> allImages = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(entry.getVersionId());
+        // 收集需要移动的图片（oldPath → finalPath），事务提交后统一移动文件
+        List<String> oldPaths = new ArrayList<>();
+        List<String> newPaths = new ArrayList<>();
+        List<Long> moveIds = new ArrayList<>();
+        for (ImageResource img : allImages) {
+            if (urls.contains(img.getUrl())) {
+                boolean changed = false;
+                if (cat != null && !cat.equals(img.getCategory())) { img.setCategory(cat); changed = true; }
+                if (dom != null && !dom.equals(img.getDomain())) { img.setDomain(dom); changed = true; }
+                if (prod != null && !prod.equals(img.getProduct())) { img.setProduct(prod); changed = true; }
+                if (changed) {
+                    String oldP = img.getPath(); // 改实体前记录原路径
+                    recomputeImageLocation(img);  // 仅计算新 path/url，不移动文件
+                    imageResourceRepository.save(img);
+                    if (oldP != null && !oldP.equals(img.getPath())) {
+                        oldPaths.add(oldP);
+                        newPaths.add(img.getPath());
+                        moveIds.add(img.getId());
+                    }
+                }
+            }
+        }
+        // afterCommit：事务提交后才移动物理文件，彻底消除"文件已移、DB 回滚"的不一致窗口
+        if (!oldPaths.isEmpty() && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    for (int i = 0; i < oldPaths.size(); i++) {
+                        try {
+                            Path src = Paths.get(oldPaths.get(i));
+                            Path dst = Paths.get(newPaths.get(i));
+                            if (Files.exists(src)) {
+                                if (dst.getParent() != null) Files.createDirectories(dst.getParent());
+                                Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                        } catch (Exception e) {
+                            log.error("afterCommit 图片文件移动失败 imageId={} src={} dst={}: {}", moveIds.get(i), oldPaths.get(i), newPaths.get(i), e.getMessage());
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    private void moveImageFile(ImageResource img) {
+        try {
+            String oldPath = img.getPath();
+            if (oldPath == null) return;
+            String urlPrefix = "/api/images/file/";
+            String reqPrefix = "/api/requirements/file/";
+            String baseUrl;
+            String urlPath;
+            if (img.getUrl() != null && img.getUrl().startsWith(urlPrefix)) {
+                baseUrl = imageStoragePath;
+                urlPath = img.getUrl().substring(urlPrefix.length());
+            } else if (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) {
+                baseUrl = imageStoragePath.replace("images", "requirements");
+                urlPath = img.getUrl().substring(reqPrefix.length());
+            } else {
+                return;
+            }
+            String versionDir = img.getVersionId() != null ? String.valueOf(img.getVersionId()) : "0";
+            String subPath = buildSubPath(img.getCategory(), img.getDomain(), img.getProduct());
+            Path newPath = Paths.get(baseUrl, versionDir, subPath, img.getStoredName());
+            Path oldFilePath = Paths.get(oldPath);
+            if (!Files.exists(oldFilePath) || Files.exists(newPath)) return;
+            Files.createDirectories(newPath.getParent());
+            Files.move(oldFilePath, newPath, StandardCopyOption.REPLACE_EXISTING);
+            img.setPath(newPath.toString());
+            String newUrl = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix) ? reqPrefix : urlPrefix)
+                    + versionDir + "/" + subPath + "/" + img.getStoredName();
+            img.setUrl(newUrl);
+        } catch (Exception e) {
+            log.error("移动图片文件失败（DB已改，物理文件未对齐） imageId={} path={}: {}", img.getId(), img.getPath(), e.getMessage());
+        }
+    }
+
+    /**
+     * 根据 category/domain/product/storedName 重新计算 path/url 并 set 到实体（仅计算，不移动物理文件）。
+     * 与 ImageResourceService.recomputeImageLocation 同义，用于 syncEntryImageClassifications。
+     */
+    private void recomputeImageLocation(ImageResource img) {
+        String urlPrefix = "/api/images/file/";
+        String reqPrefix = "/api/requirements/file/";
+        String baseUrl;
+        if (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) {
+            baseUrl = imageStoragePath.replace("images", "requirements");
+        } else {
+            baseUrl = imageStoragePath;
+        }
+        String versionDir = img.getVersionId() != null ? String.valueOf(img.getVersionId()) : "0";
+        String subPath = buildSubPath(img.getCategory(), img.getDomain(), img.getProduct());
+        Path newPath = Paths.get(baseUrl, versionDir, subPath, img.getStoredName());
+        img.setPath(newPath.toString());
+        String prefix = (img.getUrl() != null && img.getUrl().startsWith(reqPrefix)) ? reqPrefix : urlPrefix;
+        img.setUrl(prefix + versionDir + "/" + subPath + "/" + img.getStoredName());
+    }
+
+    private boolean shouldCloneImages(DataEntry source, DataEntry target) {
+        if (!source.getVersionId().equals(target.getVersionId())) return true;
+        Long sourceL3 = findL3AncestorId(source);
+        Long targetL3 = findL3AncestorId(target);
+        return !Objects.equals(sourceL3, targetL3);
+    }
+
+    private Long findL3AncestorId(DataEntry entry) {
+        DataEntry current = entry;
+        int guard = 0;
+        while (current != null && guard < 20) {
+            if (current.getLevel() != null && current.getLevel() == 3) return current.getId();
+            if (current.getParentId() == null) return null;
+            current = entryRepository.findById(current.getParentId()).orElse(null);
+            guard++;
+        }
+        return null;
+    }
+
+    private void syncImagesProductIdForBranch(DataEntry entry) {
+        Long l3Id = findL3AncestorId(entry);
+        if (l3Id == null) {
+            if (entry.getLevel() != null && entry.getLevel() == 3) l3Id = entry.getId();
+            else return;
+        }
+        List<DataEntry> branch = new ArrayList<>();
+        branch.add(entry);
+        branch.addAll(collectDescendantsList(entry.getVersionId(), entry.getId()));
+        for (DataEntry node : branch) {
+            String desc = node.getColFeatureDesc();
+            if (desc == null) continue;
+            Pattern idPattern = Pattern.compile("data-id=\"(\\d+)\"");
+            Matcher m = idPattern.matcher(desc);
+            while (m.find()) {
+                Long imgId = Long.valueOf(m.group(1));
+                ImageResource img = imageResourceRepository.findById(imgId).orElse(null);
+                if (img != null && !l3Id.equals(img.getProductId())) {
+                    img.setProductId(l3Id);
+                    imageResourceRepository.save(img);
+                }
+            }
+        }
+    }
+
+    private void cloneEntryImages(DataEntry sourceEntry, DataEntry clonedEntry,
+                                  Long targetVersionId,
+                                  String targetCategory, String targetDomain,
+                                  Long targetCategoryId, Long targetDomainId) {
+        String desc = sourceEntry.getColFeatureDesc();
+        if (desc == null || desc.isEmpty()) return;
+
+        String urlPrefix = "/api/images/file/" + sourceEntry.getVersionId() + "/";
+        String newUrlPrefix = "/api/images/file/" + targetVersionId + "/";
+
+        List<ImageResource> sourceImages = imageResourceRepository
+                .findByVersionIdOrderByCreatedAtDesc(sourceEntry.getVersionId());
+
+        Map<String, ImageResource> urlToImage = new HashMap<>();
+        for (ImageResource img : sourceImages) {
+            if (img.getUrl() != null) urlToImage.put(img.getUrl(), img);
+        }
+
+        Pattern urlPattern = Pattern.compile("data-url=\"([^\"]+)\"");
+        Matcher m = urlPattern.matcher(desc);
+        Map<String, String> urlMapping = new HashMap<>();
+        Map<Long, Long> imgIdMapping = new HashMap<>();
+        while (m.find()) {
+            String oldUrl = m.group(1);
+            urlMapping.put(oldUrl, null);
+        }
+
+        String[] imgFields = {
+                sourceEntry.getColControlPointImg1(),
+                sourceEntry.getColControlPointImg2(),
+                sourceEntry.getColControlPointImg3()
+        };
+        for (String field : imgFields) {
+            if (field != null && !field.isEmpty() && field.startsWith(urlPrefix)) {
+                urlMapping.put(field, null);
+            }
+        }
+
+        if (urlMapping.isEmpty()) return;
+
+        for (String oldUrl : new ArrayList<>(urlMapping.keySet())) {
+            if (!oldUrl.startsWith(urlPrefix)) continue;
+            ImageResource srcImg = urlToImage.get(oldUrl);
+            if (srcImg == null) continue;
+
+            String newCat = targetCategory != null ? targetCategory : srcImg.getCategory();
+            String newDom = targetDomain != null ? targetDomain : srcImg.getDomain();
+            Long l3Id = findL3AncestorId(clonedEntry);
+            String newProd;
+            if (l3Id != null) {
+                DataEntry l3Entry = entryRepository.findById(l3Id).orElse(null);
+                newProd = l3Entry != null ? l3Entry.getColProductSystem() : srcImg.getProduct();
+            } else {
+                newProd = srcImg.getProduct();
+            }
+
+            String newSubPath = buildSubPath(newCat, newDom, newProd);
+            String targetDir = String.valueOf(targetVersionId);
+            Path newFilePath = Paths.get(imageStoragePath, targetDir, newSubPath, srcImg.getStoredName());
+
+            try {
+                Path srcFilePath = Paths.get(srcImg.getPath());
+                if (Files.exists(srcFilePath)) {
+                    Files.createDirectories(newFilePath.getParent());
+                    Files.copy(srcFilePath, newFilePath, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (Exception e) {
+                log.warn("复制图片文件失败 src={}: {}", srcImg.getPath(), e.getMessage());
+                continue;
+            }
+
+            String newUrl = newUrlPrefix + newSubPath + "/" + srcImg.getStoredName();
+
+            ImageResource newImg = new ImageResource();
+            newImg.setFilename(srcImg.getFilename());
+            newImg.setStoredName(srcImg.getStoredName());
+            newImg.setPath(newFilePath.toString());
+            newImg.setCategory(newCat);
+            newImg.setDomain(newDom);
+            newImg.setProduct(newProd);
+            newImg.setUrl(newUrl);
+            newImg.setSize(srcImg.getSize());
+            newImg.setMimeType(srcImg.getMimeType());
+            newImg.setUploadedBy(srcImg.getUploadedBy());
+            newImg.setVersionId(targetVersionId);
+            newImg.setWidth(srcImg.getWidth());
+            newImg.setHeight(srcImg.getHeight());
+
+            if (l3Id != null) {
+                newImg.setProductId(l3Id);
+            }
+
+            imageResourceRepository.save(newImg);
+            urlMapping.put(oldUrl, newUrl);
+            imgIdMapping.put(srcImg.getId(), newImg.getId());
+        }
+
+        String newDesc = clonedEntry.getColFeatureDesc();
+        if (newDesc != null) {
+            for (Map.Entry<String, String> entry : urlMapping.entrySet()) {
+                if (entry.getValue() != null && !entry.getKey().equals(entry.getValue())) {
+                    newDesc = newDesc.replace(entry.getKey(), entry.getValue());
+                }
+            }
+            for (Map.Entry<Long, Long> idEntry : imgIdMapping.entrySet()) {
+                newDesc = newDesc.replace("data-id=\"" + idEntry.getKey() + "\"", "data-id=\"" + idEntry.getValue() + "\"");
+            }
+            clonedEntry.setColFeatureDesc(newDesc);
+        }
+
+        if (clonedEntry.getColControlPointImg1() != null && clonedEntry.getColControlPointImg1().startsWith(urlPrefix)) {
+            String mapped = urlMapping.get(sourceEntry.getColControlPointImg1());
+            if (mapped != null) clonedEntry.setColControlPointImg1(mapped);
+        }
+        if (clonedEntry.getColControlPointImg2() != null && clonedEntry.getColControlPointImg2().startsWith(urlPrefix)) {
+            String mapped = urlMapping.get(sourceEntry.getColControlPointImg2());
+            if (mapped != null) clonedEntry.setColControlPointImg2(mapped);
+        }
+        if (clonedEntry.getColControlPointImg3() != null && clonedEntry.getColControlPointImg3().startsWith(urlPrefix)) {
+            String mapped = urlMapping.get(sourceEntry.getColControlPointImg3());
+            if (mapped != null) clonedEntry.setColControlPointImg3(mapped);
+        }
+
+        entryRepository.save(clonedEntry);
+    }
+
+    private Long findL3EntryId(Long versionId, String productName) {
+        List<DataEntry> entries = entryRepository.findByVersionIdAndColBizCategoryAndColBizDomainAndColProductSystem(
+                versionId, null, null, productName);
+        for (DataEntry e : entries) {
+            if (e.getLevel() != null && e.getLevel() == 3) return e.getId();
+        }
+        return null;
+    }
+
+    private String buildSubPath(String category, String domain, String product) {
+        StringBuilder sb = new StringBuilder();
+        if (category != null && !category.isEmpty()) {
+            sb.append(sanitizePath(category));
+        }
+        if (domain != null && !domain.isEmpty()) {
+            if (sb.length() > 0) sb.append("/");
+            sb.append(sanitizePath(domain));
+        }
+        if (product != null && !product.isEmpty()) {
+            if (sb.length() > 0) sb.append("/");
+            sb.append(sanitizePath(product));
+        }
+        return sb.toString();
+    }
+
+    private String sanitizePath(String name) {
+        if (name == null) return "";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+    }
+
+    private boolean isDescendant(Long ancestorId, Long nodeId) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(
+                entryRepository.findById(ancestorId).map(DataEntry::getVersionId).orElse(null), ancestorId);
+        for (DataEntry child : children) {
+            if (child.getId().equals(nodeId)) return true;
+            if (isDescendant(child.getId(), nodeId)) return true;
+        }
+        return false;
+    }
+
+    private List<DataEntry> collectDescendantsList(Long versionId, Long parentId) {
+        List<DataEntry> result = new ArrayList<>();
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentId(versionId, parentId);
+        for (DataEntry child : children) {
+            result.add(child);
+            result.addAll(collectDescendantsList(versionId, child.getId()));
+        }
+        return result;
+    }
+
+    @Transactional
     public void levelUp(Long id) {
         DataEntry entry = getById(id);
         ensureVersionEditable(entry.getVersionId());
@@ -456,6 +1805,13 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() - 1);
         entry.setParentId(parent.getParentId());
         entryRepository.save(entry);
+        // 级联更新所有后代节点的 level
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry desc : descendants) {
+            desc.setLevel(desc.getLevel() - 1);
+            entryRepository.save(desc);
+        }
+        syncImagesProductIdForBranch(entry);
     }
 
     @Transactional
@@ -481,47 +1837,13 @@ public class DataEntryService {
         entry.setLevel(entry.getLevel() + 1);
         entry.setParentId(prevSibling.getId());
         entryRepository.save(entry);
-    }
-
-    private List<DataEntry> reorderByCustomTabSort(Long customTabId, List<DataEntry> entries) {
-        List<CustomTabEntry> tabEntries = customTabEntryRepository.findByCustomTabId(customTabId);
-        boolean hasNullSort = tabEntries.stream().anyMatch(te -> te.getSortOrder() == null);
-        if (hasNullSort) {
-            Map<Long, Integer> entrySortMap = new HashMap<>();
-            for (DataEntry e : entries) {
-                entrySortMap.put(e.getId(), e.getSortOrder() != null ? e.getSortOrder() : 0);
-            }
-            tabEntries.sort((a, b) -> {
-                boolean aHasSort = a.getSortOrder() != null;
-                boolean bHasSort = b.getSortOrder() != null;
-                if (aHasSort && bHasSort) return Integer.compare(a.getSortOrder(), b.getSortOrder());
-                if (aHasSort) return -1;
-                if (bHasSort) return 1;
-                Integer sortA = entrySortMap.getOrDefault(a.getEntryId(), 0);
-                Integer sortB = entrySortMap.getOrDefault(b.getEntryId(), 0);
-                if (!sortA.equals(sortB)) return Integer.compare(sortA, sortB);
-                return Long.compare(a.getEntryId(), b.getEntryId());
-            });
-            int order = 0;
-            for (CustomTabEntry te : tabEntries) {
-                te.setSortOrder(order++);
-                customTabEntryRepository.save(te);
-            }
+        // 级联更新所有后代节点的 level
+        List<DataEntry> descendants = collectDescendantsList(entry.getVersionId(), entry.getId());
+        for (DataEntry desc : descendants) {
+            desc.setLevel(desc.getLevel() + 1);
+            entryRepository.save(desc);
         }
-        Map<Long, Integer> sortMap = new HashMap<>();
-        for (CustomTabEntry te : tabEntries) {
-            sortMap.put(te.getEntryId(), te.getSortOrder() != null ? te.getSortOrder() : 0);
-        }
-        entries.sort((a, b) -> {
-            Integer sortA = sortMap.get(a.getId());
-            Integer sortB = sortMap.get(b.getId());
-            if (sortA == null && sortB == null) return Long.compare(a.getId(), b.getId());
-            if (sortA == null) return 1;
-            if (sortB == null) return -1;
-            if (!sortA.equals(sortB)) return Integer.compare(sortA, sortB);
-            return Long.compare(a.getId(), b.getId());
-        });
-        return entries;
+        syncImagesProductIdForBranch(entry);
     }
 
     @Transactional
@@ -548,6 +1870,34 @@ public class DataEntryService {
                 headerMap.put(header, i);
             }
 
+            if (!headerMap.containsKey("招标参数") && headerMap.containsKey("招标参数说明")) {
+                headerMap.put("招标参数", headerMap.get("招标参数说明"));
+            }
+            if (!headerMap.containsKey("招标参数说明") && headerMap.containsKey("招标参数")) {
+                headerMap.put("招标参数说明", headerMap.get("招标参数"));
+            }
+            if (!headerMap.containsKey("解决方案标记") && headerMap.containsKey("其他解决方案标记")) {
+                headerMap.put("解决方案标记", headerMap.get("其他解决方案标记"));
+            }
+            if (!headerMap.containsKey("其他解决方案标记") && headerMap.containsKey("解决方案标记")) {
+                headerMap.put("其他解决方案标记", headerMap.get("解决方案标记"));
+            }
+
+            Map<String, Long> catNameToId = new HashMap<>();
+            Map<Long, String> catIdToName = new HashMap<>();
+            for (BaseCategory cat : baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId)) {
+                catNameToId.put(cat.getName(), cat.getId());
+                catNameToId.put(cat.getName().replaceAll("(\\d+\\.)\\s+", "$1"), cat.getId());
+                catIdToName.put(cat.getId(), cat.getName());
+            }
+            Map<String, Long> domNameToId = new HashMap<>();
+            Map<Long, String> domIdToName = new HashMap<>();
+            for (BaseDomain dom : baseDomainRepository.findByVersionId(versionId)) {
+                domNameToId.put(dom.getName(), dom.getId());
+                domNameToId.put(dom.getName().replaceAll("(\\d+\\.)\\s+", "$1"), dom.getId());
+                domIdToName.put(dom.getId(), dom.getName());
+            }
+
             List<RowData> rows = new ArrayList<>();
             for (int rowIdx = 1; rowIdx <= lastRow; rowIdx++) {
                 Row row = sheet.getRow(rowIdx);
@@ -564,7 +1914,7 @@ public class DataEntryService {
             List<RowData> retryRows = new ArrayList<>();
             for (RowData rd : rows) {
                 if (rd.parentName == null) {
-                    processRow(rd, headerMap, versionId, result, nameToId);
+                    processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId, catIdToName, domIdToName);
                 } else {
                     retryRows.add(rd);
                 }
@@ -577,7 +1927,7 @@ public class DataEntryService {
             });
 
             for (RowData rd : retryRows) {
-                processRow(rd, headerMap, versionId, result, nameToId);
+                processRow(rd, headerMap, versionId, result, nameToId, catNameToId, domNameToId, catIdToName, domIdToName);
             }
         } catch (Exception e) {
             result.getErrors().add("解析Excel文件失败: " + e.getMessage());
@@ -586,7 +1936,9 @@ public class DataEntryService {
     }
 
     private void processRow(RowData rd, Map<String, Integer> headerMap, Long versionId,
-                            ExcelImportResult result, Map<String, Long> nameToId) {
+                            ExcelImportResult result, Map<String, Long> nameToId,
+                            Map<String, Long> catNameToId, Map<String, Long> domNameToId,
+                            Map<Long, String> catIdToName, Map<Long, String> domIdToName) {
         try {
             Row row = rd.row;
             String productName = rd.productName;
@@ -652,9 +2004,13 @@ public class DataEntryService {
             setStr(headerMap, row, entry, "招标参数", DataEntry::setColBidParamDesc);
             setStr(headerMap, row, entry, "功能说明", DataEntry::setColFeatureDesc);
             setStr(headerMap, row, entry, "状态", DataEntry::setColStatus);
-            entry.setColBizCategory(bizCategory);
-            entry.setColBizDomain(bizDomain);
+            Long catId = bizCategory != null ? catNameToId.get(bizCategory) : null;
+            Long domId = bizDomain != null ? domNameToId.get(bizDomain) : null;
+            entry.setColBizCategory(catId != null ? catIdToName.get(catId) : bizCategory);
+            entry.setColBizDomain(domId != null ? domIdToName.get(domId) : bizDomain);
             entry.setColProductSystem(productName);
+            entry.setCategoryId(catId);
+            entry.setDomainId(domId);
             setStr(headerMap, row, entry, "版本划分", DataEntry::setColVersionDivision);
             setStr(headerMap, row, entry, "远", DataEntry::setColYuan);
             setStr(headerMap, row, entry, "交付工作量(人月)", DataEntry::setColDeliveryWorkload);
@@ -671,9 +2027,12 @@ public class DataEntryService {
             setStr(headerMap, row, entry, "互联互通", DataEntry::setColInterconnection);
             setStr(headerMap, row, entry, "产品/系统标识", DataEntry::setColProductSysId);
             setStr(headerMap, row, entry, "模块标识", DataEntry::setColModuleId);
-            setStr(headerMap, row, entry, "其他解决方案标记", DataEntry::setColOtherSolutionTag);
+            setStr(headerMap, row, entry, "解决方案标记", DataEntry::setColOtherSolutionTag);
             setStr(headerMap, row, entry, "文档维护人员", DataEntry::setColDocMaintainer);
             setStr(headerMap, row, entry, "产品经理", DataEntry::setColProductManager);
+            if (entry.getColProductManager() == null || entry.getColProductManager().isBlank()) {
+                entry.setColProductManager("未指定");
+            }
             setStr(headerMap, row, entry, "内部版本", DataEntry::setColInternalVersion);
             setStr(headerMap, row, entry, "智能化", DataEntry::setColIntelligent);
             setStr(headerMap, row, entry, "曜", DataEntry::setColYao);
@@ -698,6 +2057,8 @@ public class DataEntryService {
             if (feat != null) {
                 entry.setColFeatureDesc(feat.replaceAll("<(https?://[^>]+)>", "[$1]"));
             }
+
+            fillCategoryAndDomainIds(entry);
 
             entryRepository.save(entry);
             nameToId.put(productName, entry.getId());
@@ -745,13 +2106,14 @@ public class DataEntryService {
         return val.isEmpty() ? null : val;
     }
 
+    private static final DataFormatter DATA_FORMATTER = new DataFormatter();
+
     private String getCellString(Row row, int colIdx) {
         if (colIdx < 0) return null;
         Cell cell = row.getCell(colIdx);
         if (cell == null) return null;
-        cell.setCellType(CellType.STRING);
-        String val = cell.getStringCellValue();
-        return val != null ? val.trim() : null;
+        String val = DATA_FORMATTER.formatCellValue(cell);
+        return val != null && !val.trim().isEmpty() ? val.trim() : null;
     }
 
     private void setStr(Map<String, Integer> hm, Row row, DataEntry e, String h, java.util.function.BiConsumer<DataEntry, String> setter) {
@@ -779,50 +2141,73 @@ public class DataEntryService {
         }
     }
 
-    public String getPreviewHtml(Long entryId, boolean isEditing, String username) {
-        DataEntry l3 = entryRepository.findById(entryId)
-                .orElseThrow(() -> new BusinessException("条目不存在"));
-        List<DataEntry> all = collectL3AndDescendants(l3);
-        Map<Long, String> rejectReasons = new HashMap<>();
-        for (DataEntry e : all) {
-            if ("驳回".equals(e.getApprovalStatus())) {
-                List<ApprovalLog> logs = approvalLogRepository.findByEntryIdOrderByCreatedAtDesc(e.getId());
-                for (ApprovalLog log : logs) {
-                    if ("reject".equals(log.getAction())) {
-                        rejectReasons.put(e.getId(), log.getComment());
-                        break;
-                    }
-                }
-            }
-        }
+    public String getPreviewHtml(Long entryId, boolean isEditing, String username, String mode) {
+        return getPreviewHtml(List.of(entryId), isEditing, username, mode);
+    }
 
-        // Determine user role
+    public String getPreviewHtml(List<Long> entryIds, boolean isEditing, String username, String mode) {
         String roleCode = "USER";
         if (username != null) {
             com.superpower.modules.system.entity.SysUser user = null;
-            try {
-                user = findUserByUsername(username);
-            } catch (Exception ignored) {}
+            try { user = findUserByUsername(username); } catch (Exception ignored) {}
             if (user != null && user.getRole() != null) roleCode = user.getRole().getCode();
         }
         String role = mapRoleCode(roleCode);
 
+        Map<Long, String> rejectReasons = new HashMap<>();
         StringBuilder nav = new StringBuilder();
         StringBuilder body = new StringBuilder();
-        Map<Long, List<DataEntry>> childrenMap = new HashMap<>();
-        for (DataEntry e : all) {
-            if (!e.getId().equals(l3.getId())) {
-                childrenMap.computeIfAbsent(e.getParentId() != null ? e.getParentId() : l3.getId(), k -> new ArrayList<>()).add(e);
+
+        Set<Long> loadedVersionDims = new HashSet<>();
+        Map<String, int[]> globalDimMap = new HashMap<>();
+
+        for (Long entryId : entryIds) {
+            DataEntry l3 = entryRepository.findById(entryId).orElse(null);
+            if (l3 == null) continue;
+            if (!loadedVersionDims.contains(l3.getVersionId())) {
+                loadImageDimensions(l3.getVersionId(), globalDimMap);
+                loadedVersionDims.add(l3.getVersionId());
+            }
+            List<DataEntry> all = collectL3AndDescendants(l3);
+            for (DataEntry e : all) {
+                if ("驳回".equals(e.getApprovalStatus())) {
+                    List<ApprovalLog> logs = approvalLogRepository.findByEntryIdOrderByCreatedAtDesc(e.getId());
+                    for (ApprovalLog log : logs) {
+                        if ("reject".equals(log.getAction())) { rejectReasons.put(e.getId(), log.getComment()); break; }
+                    }
+                }
+            }
+            Map<Long, List<DataEntry>> childrenMap = new HashMap<>();
+            for (DataEntry e : all) {
+                if (!e.getId().equals(l3.getId())) {
+                    childrenMap.computeIfAbsent(e.getParentId() != null ? e.getParentId() : l3.getId(), k -> new ArrayList<>()).add(e);
+                }
+            }
+            for (List<DataEntry> list : childrenMap.values()) {
+                list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
+            }
+            buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role, mode, globalDimMap);
+        }
+
+        return buildPreviewHtmlWrapper(nav, body);
+    }
+
+    private void loadImageDimensions(Long versionId, Map<String, int[]> dimMap) {
+        List<ImageResource> images = imageResourceRepository.findByVersionIdOrderByCreatedAtDesc(versionId);
+        for (ImageResource img : images) {
+            if (img.getUrl() != null && img.getWidth() != null && img.getHeight() != null) {
+                String key = decodeUrl(img.getUrl());
+                dimMap.put(key, new int[]{img.getWidth(), img.getHeight()});
+                dimMap.put(img.getUrl(), new int[]{img.getWidth(), img.getHeight()});
             }
         }
-        for (List<DataEntry> list : childrenMap.values()) {
-            list.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
-        }
-        buildNavAndBody(l3, childrenMap, nav, body, 0, rejectReasons, isEditing, role);
+    }
 
+    private String buildPreviewHtmlWrapper(StringBuilder nav, StringBuilder body) {
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
             + "*{margin:0;padding:0;box-sizing:border-box;}"
-            + ".layout{display:flex;height:100vh;}"
+            + "body{font-family:'SimSun','宋体',serif;font-size:10.5pt;line-height:1.5;color:#000;display:flex;flex-direction:column;height:100vh;overflow:hidden;}"
+            + ".layout{display:flex;flex:1;overflow:hidden;}"
             + ".sidebar{width:260px;flex-shrink:0;overflow-y:auto;border-right:1px solid #e2e8f0;background:#f8fafc;padding:12px 0;font-family:'Microsoft YaHei',sans-serif;}"
             + ".sidebar a{display:block;padding:6px 12px 6px 16px;color:#334155;text-decoration:none;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}"
             + ".sidebar a:hover{background:#e2e8f0;color:#1e293b;}"
@@ -833,12 +2218,15 @@ public class DataEntryService {
             + ".sidebar .lvl3{padding-left:56px;}"
             + ".sidebar .lvl4{padding-left:72px;}"
             + ".content{flex:1;overflow-y:auto;padding:36px 48px;}"
-            + "body{font-family:'SimSun','宋体',serif;font-size:10.5pt;line-height:1.5;color:#000;}"
+            + ".layout{display:flex;flex:1;overflow:hidden;}"
             + "h3{font-size:16pt;font-weight:bold;margin:12pt 0 6pt;line-height:1.5;scroll-margin-top:12px;display:flex;align-items:center;}"
             + ".p{text-indent:2em;margin:0;line-height:1.5;font-size:10.5pt;}"
             + ".img-wrap{text-align:center;margin:6pt 0;}"
             + ".img-wrap img{max-width:100%;max-height:400px;}"
             + ".img-caption{text-align:center;font-size:9pt;color:#666;margin-top:2pt;}"
+            + ".img-grid{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:6pt 0;}"
+            + ".img-grid-cell{flex:0 0 calc(33.33% - 6px);max-width:calc(33.33% - 6px);min-width:120px;text-align:center;box-sizing:border-box;}"
+            + ".img-grid-cell img{width:auto;height:300px;max-width:100%;object-fit:contain;}"
             + ".toggle{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;cursor:pointer;margin-right:2px;user-select:none;font-size:10px;background:#e2e8f0;border-radius:3px;color:#475569;font-weight:bold;}"
             + ".toggle-empty{visibility:hidden;cursor:default;}"
             + ".entry-actions{padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:#fafbfc;}"
@@ -852,7 +2240,19 @@ public class DataEntryService {
             + ".ea-btn-danger{color:#f56c6c;border-color:#fde2e2;background:#fef0f0;}"
             + ".ea-btn-danger:hover{background:#fde2e2;}"
             + "@keyframes highlightFlash{0%{background-color:#d4edda;box-shadow:0 0 12px rgba(103,194,58,0.3)}30%{background-color:#d4edda}100%{background-color:transparent;box-shadow:none}}"
-            + "</style></head><body><div class='layout'>"
+            + ".nav-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:middle;position:relative;top:-1px;}"
+            + ".legend-bar{display:flex;align-items:center;gap:12px;padding:6px 12px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;font-family:'Microsoft YaHei',sans-serif;}"
+            + ".legend-item{display:flex;align-items:center;gap:3px;}"
+            + ".legend-dot{display:inline-block;width:6px;height:6px;border-radius:50%;}"
+            + "</style></head><body>"
+            + "<div class='legend-bar'>"
+            + "<span style='font-weight:600;color:#475569;margin-right:4px;'>审批状态：</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#409eff;'></span>待提交</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#e6a23c;'></span>待审批</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#f56c6c;'></span>驳回</span>"
+            + "<span class='legend-item'><span class='legend-dot' style='background:#67c23a;'></span>通过</span>"
+            + "</div>"
+            + "<div class='layout'>"
             + "<div class='sidebar' id='sidebar'>" + nav + "</div>"
             + "<div class='content' id='content'>" + body + "</div>"
             + "</div><script>"
@@ -870,9 +2270,12 @@ public class DataEntryService {
 
     private void buildNavAndBody(DataEntry node, Map<Long, List<DataEntry>> childrenMap,
                                   StringBuilder nav, StringBuilder body, int depth,
-                                  Map<Long, String> rejectReasons, boolean isEditing, String role) {
+                                  Map<Long, String> rejectReasons, boolean isEditing, String role, String mode,
+                                  Map<String, int[]> globalDimMap) {
         String nodeId = "e" + node.getId();
         String label = node.getColProductSystem() != null ? node.getColProductSystem() : "";
+        String colStatus = node.getColStatus();
+        String nodeApprovalStatus = node.getApprovalStatus();
         List<DataEntry> children = childrenMap.getOrDefault(node.getId(), new ArrayList<>());
         children.sort(Comparator.comparingInt(d -> d.getSortOrder() != null ? d.getSortOrder() : 0));
         boolean hasChildren = !children.isEmpty();
@@ -883,6 +2286,9 @@ public class DataEntryService {
         } else {
             nav.append("<span class='toggle toggle-empty'></span>");
         }
+        if (nodeApprovalStatus != null && !nodeApprovalStatus.isEmpty() && colStatus != null && colStatus.contains("可交付") && node.getLevel() != null && node.getLevel() >= 3) {
+            nav.append("<span class='nav-dot' style='background:").append(getApprovalDotColor(nodeApprovalStatus)).append("'></span>");
+        }
         nav.append(label).append("</a>");
         body.append("<h3 id='").append(nodeId).append("' style='display:flex;align-items:center;'>")
             .append("<span>").append(label).append("</span>");
@@ -890,10 +2296,9 @@ public class DataEntryService {
         if (productManager != null && !productManager.isEmpty()) {
             body.append("<span style='font-size:10pt;color:#909399;margin-left:8px;'>（").append(productManager).append("）</span>");
         }
-        String colStatus = node.getColStatus();
         String approvalStatus = node.getApprovalStatus();
-        if (approvalStatus != null && !approvalStatus.isEmpty() && "可交付".equals(colStatus)) {
-            body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("'>").append(approvalStatus).append("</span>");
+        if (approvalStatus != null && !approvalStatus.isEmpty() && colStatus != null && colStatus.contains("可交付")) {
+            body.append("<span style='").append(getApprovalTagStyle(approvalStatus)).append("cursor:pointer;' onclick=\"parent.postMessage({action:'showLogs',entryId:").append(node.getId()).append("},'*')\">").append(approvalStatus).append("</span>");
             if ("驳回".equals(approvalStatus)) {
                 String reason = rejectReasons.get(node.getId());
                 if (reason != null && !reason.isEmpty()) {
@@ -902,32 +2307,41 @@ public class DataEntryService {
             }
         }
         body.append("</h3>");
-        String desc = node.getColFeatureDesc();
+        String desc = "bid".equals(mode) ? node.getColBidParamDesc() : node.getColFeatureDesc();
         if (desc != null && !desc.isBlank()) {
-            body.append(toPreviewParagraphs(desc));
+            body.append(toPreviewParagraphs(desc, globalDimMap));
         }
+        String apprStatus = node.getApprovalStatus();
+        boolean canEditByApproval = "admin".equals(role)
+                || apprStatus == null || apprStatus.isEmpty()
+                || "待提交".equals(apprStatus) || "驳回".equals(apprStatus);
         if (isEditing) {
             body.append("<div class='entry-actions' data-entry-id='").append(node.getId()).append("'>");
-            body.append("<div class='ea-label'>数据操作：</div>");
-            body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'edit',entryId:").append(node.getId()).append("},'*')\">编辑</a>");
-            if (node.getLevel() != null && node.getLevel() >= 3) {
-                body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'addChild',entryId:").append(node.getId()).append("},'*')\">添加</a>");
+            if (canEditByApproval) {
+                body.append("<div class='ea-label'>数据操作：</div>");
+                body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'edit',entryId:").append(node.getId()).append("},'*')\">编辑</a>");
+                if (node.getLevel() != null && node.getLevel() >= 3) {
+                    body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'addChild',entryId:").append(node.getId()).append("},'*')\">添加</a>");
+                }
+                body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'delete',entryId:").append(node.getId()).append(",entryName:'").append(label.replace("'", "\\'")).append("'},'*')\">删除</a>");
             }
-            body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'delete',entryId:").append(node.getId()).append(",entryName:'").append(label.replace("'", "\\'")).append("'},'*')\">删除</a>");
-            String apprStatus = node.getApprovalStatus();
-            boolean showApproval = isEditing && "可交付".equals(colStatus);
+            boolean showApproval = isEditing && colStatus != null && colStatus.contains("可交付");
             if (showApproval) {
                 body.append("<div class='ea-label' style='margin-left:16px;'>流程操作：</div>");
                 boolean canSubmit = (apprStatus == null || apprStatus.isEmpty() || "待提交".equals(apprStatus) || "驳回".equals(apprStatus));
+                boolean canWithdraw = "待审核".equals(apprStatus);
                 boolean canApprove = "待审核".equals(apprStatus);
                 boolean canReject = "待审核".equals(apprStatus) || "审核通过".equals(apprStatus);
                 if (("editor".equals(role) || "admin".equals(role)) && canSubmit) {
                     body.append("<a class='ea-btn ea-btn-warning' onclick=\"parent.postMessage({action:'submit',entryId:").append(node.getId()).append("},'*')\">提交</a>");
                 }
-                if (("reviewer".equals(role) || "admin".equals(role)) && canApprove) {
+                if (("editor".equals(role) || "admin".equals(role)) && canWithdraw) {
+                    body.append("<a class='ea-btn' onclick=\"parent.postMessage({action:'withdraw',entryId:").append(node.getId()).append("},'*')\">撤销</a>");
+                }
+                if ("admin".equals(role) && canApprove) {
                     body.append("<a class='ea-btn ea-btn-success' onclick=\"parent.postMessage({action:'approve',entryId:").append(node.getId()).append("},'*')\">通过</a>");
                 }
-                if (("reviewer".equals(role) || "admin".equals(role)) && canReject) {
+                if ("admin".equals(role) && canReject) {
                     body.append("<a class='ea-btn ea-btn-danger' onclick=\"parent.postMessage({action:'reject',entryId:").append(node.getId()).append("},'*')\">驳回</a>");
                 }
             }
@@ -936,34 +2350,179 @@ public class DataEntryService {
         if (hasChildren) {
             nav.append("<div>");
             for (DataEntry child : children) {
-                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role);
+                buildNavAndBody(child, childrenMap, nav, body, depth + 1, rejectReasons, isEditing, role, mode, globalDimMap);
             }
             nav.append("</div>");
         }
         nav.append("</div>");
     }
 
-    private String toPreviewParagraphs(String desc) {
-        String cleaned = cleanImageCardsToText(desc);
-        cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
-        StringBuilder sb = new StringBuilder();
-        for (String line : cleaned.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                String url = trimmed;
-                String caption = "";
-                int pipeIdx = url.indexOf('|');
-                if (pipeIdx > 0) { caption = url.substring(pipeIdx + 1); url = url.substring(0, pipeIdx); }
-                String enc = encodeUrl(url);
-                sb.append("<div class='img-wrap'><img src='").append(enc).append("' />");
-                if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption).append("</div>");
-                sb.append("</div>");
+    private Map<String, int[]> buildImageDimensionMap(List<String> batch, Map<String, int[]> globalDimMap) {
+        Map<String, int[]> dimMap = new HashMap<>();
+        for (String raw : batch) {
+            int pi = raw.indexOf('|');
+            String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+            String decoded = decodeUrl(urlPart);
+            int[] wh = globalDimMap.get(decoded);
+            if (wh != null) {
+                dimMap.put(urlPart, wh);
             } else {
-                sb.append("<p class='p'>").append(trimmed.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+                wh = globalDimMap.get(urlPart);
+                if (wh != null) {
+                    dimMap.put(urlPart, wh);
+                }
             }
         }
+        return dimMap;
+    }
+
+    private String decodeUrl(String url) {
+        try {
+            return java.net.URLDecoder.decode(url, "UTF-8");
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    private String toPreviewParagraphs(String desc, Map<String, int[]> globalDimMap) {
+        String cleaned = cleanImageCardsToText(desc);
+        cleaned = cleaned.replace("\r\n", "\n").replace('\r', '\n');
+        Matcher bracketMatcher = Pattern.compile("\\[\\s*(https?://[^\\]]+?)\\s*\\]").matcher(cleaned);
+        StringBuilder cleanBuf = new StringBuilder();
+        while (bracketMatcher.find()) {
+            String rawUrl = bracketMatcher.group(1);
+            String encoded = rawUrl.replace(" ", "%20");
+            int lastSlash = rawUrl.lastIndexOf('/');
+            String filename = lastSlash >= 0 ? rawUrl.substring(lastSlash + 1) : "";
+            try { filename = java.net.URLDecoder.decode(filename, "UTF-8"); } catch (Exception ignored) {}
+            int dotIdx = filename.lastIndexOf('.');
+            String captionName = (dotIdx > 0 && !filename.isEmpty()) ? filename.substring(0, dotIdx) : filename;
+            String replacement = captionName.isEmpty() ? encoded : encoded + "|" + captionName;
+            bracketMatcher.appendReplacement(cleanBuf, replacement);
+        }
+        bracketMatcher.appendTail(cleanBuf);
+        cleaned = cleanBuf.toString();
+        StringBuilder sb = new StringBuilder();
+        Pattern urlPattern = Pattern.compile("(?:https?://[^\\s\\[\\]|]+|/api/images/[^\\s\\[\\]|]+)");
+        Pattern urlLinePattern = Pattern.compile("^(?:https?://[^\\s\\[\\]|]+|/api/images/[^\\s\\[\\]|]+)(?:\\|.*)?$");
+
+        String[] lines = cleaned.split("\n");
+        int i = 0;
+        while (i < lines.length) {
+            String line = lines[i].trim();
+            if (line.isEmpty()) { i++; continue; }
+
+            List<String> batch = new ArrayList<>();
+            while (i < lines.length) {
+                String l = lines[i].trim();
+                if (l.isEmpty()) { i++; continue; }
+                if (urlLinePattern.matcher(l).matches()) {
+                    batch.add(l);
+                    i++;
+                } else {
+                    break;
+                }
+            }
+
+            if (!batch.isEmpty()) {
+                Map<String, int[]> dimMap = buildImageDimensionMap(batch, globalDimMap);
+                List<String> portraitGroup = new ArrayList<>();
+                for (String raw : batch) {
+                    int pi = raw.indexOf('|');
+                    String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+                    int[] wh = dimMap.getOrDefault(urlPart, new int[]{0, 0});
+                    boolean isPortrait = wh[0] > 0 && wh[1] > 0 && (double) wh[1] / wh[0] > 1.2;
+
+                    if (isPortrait) {
+                        portraitGroup.add(raw);
+                    } else {
+                        flushPortraitGroupPreview(sb, portraitGroup);
+                        portraitGroup.clear();
+                        String cap = pi > 0 ? raw.substring(pi + 1) : "";
+                        String enc = encodeUrl(urlPart);
+                        sb.append("<div class='img-wrap'>")
+                          .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                        if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                        else sb.append("<div class='img-caption'></div>");
+                        sb.append("</div>");
+                    }
+                }
+                flushPortraitGroupPreview(sb, portraitGroup);
+                continue;
+            }
+
+            Matcher um = urlPattern.matcher(line);
+            List<String> inlineUrls = new ArrayList<>();
+            while (um.find()) inlineUrls.add(um.group());
+            if (!inlineUrls.isEmpty()) {
+                int lastEnd = 0;
+                um.reset();
+                while (um.find()) {
+                    if (um.start() > lastEnd) {
+                        String textBefore = line.substring(lastEnd, um.start());
+                        if (!textBefore.isEmpty()) sb.append("<p class='p'>").append(textBefore.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+                    }
+                    String rawUrl = um.group();
+                    String enc = encodeUrl(rawUrl);
+                    String caption = "";
+                    int afterUrlStart = um.end();
+                    if (afterUrlStart < line.length() && line.charAt(afterUrlStart) == '|') {
+                        Matcher nextUrl = Pattern.compile("https?://").matcher(line);
+                        int captionEnd = line.length();
+                        if (nextUrl.find(afterUrlStart + 1)) captionEnd = nextUrl.start();
+                        caption = line.substring(afterUrlStart + 1, captionEnd);
+                        lastEnd = captionEnd;
+                    } else {
+                        lastEnd = um.end();
+                    }
+                    sb.append("<div class='img-wrap'>")
+                      .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+                    if (!caption.isEmpty()) sb.append("<div class='img-caption'>图：").append(caption.replace("<", "&lt;").replace(">", "&gt;")).append("</div>");
+                    else sb.append("<div class='img-caption'></div>");
+                    sb.append("</div>");
+                }
+                if (lastEnd < line.length()) {
+                    String textAfter = line.substring(lastEnd);
+                    if (!textAfter.isEmpty()) sb.append("<p class='p'>").append(textAfter.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+                }
+            } else {
+                sb.append("<p class='p'>").append(line.replace("<", "&lt;").replace(">", "&gt;")).append("</p>");
+            }
+            i++;
+        }
         return sb.toString();
+    }
+
+
+
+    private void flushPortraitGroupPreview(StringBuilder sb, List<String> group) {
+        if (group.isEmpty()) return;
+        if (group.size() >= 2) {
+            sb.append("<div class='img-grid'>");
+            for (String raw : group) {
+                int pi = raw.indexOf('|');
+                String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+                String cap = pi > 0 ? raw.substring(pi + 1) : "";
+                String enc = encodeUrl(urlPart);
+                sb.append("<div class='img-grid-cell'>")
+                  .append("<img src='").append(enc).append("' style='height:300px;' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';\" />");
+                if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+                else sb.append("<div class='img-caption'></div>");
+                sb.append("</div>");
+            }
+            sb.append("</div>");
+        } else {
+            String raw = group.get(0);
+            int pi = raw.indexOf('|');
+            String urlPart = pi > 0 ? raw.substring(0, pi) : raw;
+            String cap = pi > 0 ? raw.substring(pi + 1) : "";
+            String enc = encodeUrl(urlPart);
+            sb.append("<div class='img-wrap'>")
+              .append("<img src='").append(enc).append("' onerror=\"this.onerror=null;this.src='/api/images/file/error.png';this.parentElement.querySelector('.img-caption').textContent='缺失图片'\" />");
+            if (!cap.isEmpty()) sb.append("<div class='img-caption'>图：").append(cap).append("</div>");
+            else sb.append("<div class='img-caption'></div>");
+            sb.append("</div>");
+        }
     }
 
     private void appendTextLines(StringBuilder sb, String text) {
@@ -993,7 +2552,6 @@ public class DataEntryService {
             String filename = null;
             Matcher nm = namePattern.matcher(openTag);
             if (nm.find()) filename = nm.group(1);
-            if (url.startsWith("/api/images/file/")) url = "http://localhost:8080" + url;
             String tagName = openTag.startsWith("<div") ? "div" : "span";
             int depth = 1, pos = cm.end(), contentEnd = pos;
             while (pos < html.length() && depth > 0) {
@@ -1007,8 +2565,14 @@ public class DataEntryService {
                 if (nextOpen >= 0 && nextOpen < nextClose) { depth++; pos = nextOpen + 1; }
                 else { depth--; pos = nextClose + tagName.length() + 3; if (depth == 0) contentEnd = pos; }
             }
-            result.append(url);
-            if (filename != null && !filename.isEmpty()) result.append("|").append(filename);
+            String encodedUrl = encodeUrl(url).replace(" ", "%20");
+            result.append(encodedUrl);
+            if (filename != null && !filename.isEmpty()) {
+                int dotIdx = filename.lastIndexOf('.');
+                String captionName = dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+                result.append("|").append(captionName);
+            }
+            result.append("\n");
             lastEnd = contentEnd;
         }
         result.append(html, lastEnd, html.length());
@@ -1016,14 +2580,21 @@ public class DataEntryService {
     }
 
     private String encodeUrl(String url) {
+        String pathQuery;
+        String prefix = "";
         int schemeEnd = url.indexOf("://");
-        if (schemeEnd < 0) return url;
-        String scheme = url.substring(0, schemeEnd);
-        String rest = url.substring(schemeEnd + 3);
-        int pathStart = rest.indexOf('/');
-        if (pathStart < 0) return url;
-        String hostPort = rest.substring(0, pathStart);
-        String pathQuery = rest.substring(pathStart);
+        if (schemeEnd >= 0) {
+            String scheme = url.substring(0, schemeEnd);
+            String rest = url.substring(schemeEnd + 3);
+            int pathStart = rest.indexOf('/');
+            if (pathStart < 0) return url;
+            prefix = scheme + "://" + rest.substring(0, pathStart);
+            pathQuery = rest.substring(pathStart);
+        } else if (url.startsWith("/")) {
+            pathQuery = url;
+        } else {
+            return url;
+        }
         try {
             String[] segments = pathQuery.split("/", -1);
             StringBuilder sb = new StringBuilder();
@@ -1037,7 +2608,7 @@ public class DataEntryService {
                 }
                 sb.append("/").append(java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20"));
             }
-            return scheme + "://" + hostPort + sb;
+            return prefix + sb;
         } catch (Exception e) {
             return url;
         }
@@ -1060,13 +2631,22 @@ public class DataEntryService {
         return "display:inline-block;font-size:10pt;vertical-align:baseline;margin-left:8px;padding:2px 8px;border-radius:3px;background:" + color + "22;color:" + color + ";border:1px solid " + color + "44;line-height:1;position:relative;top:-1px;";
     }
 
+    private String getApprovalDotColor(String status) {
+        return switch (status) {
+            case "待提交" -> "#409eff";
+            case "待审核" -> "#e6a23c";
+            case "审核通过" -> "#67c23a";
+            case "驳回" -> "#f56c6c";
+            default -> "#909399";
+        };
+    }
+
     private SysUser findUserByUsername(String username) {
         return sysUserRepository.findByUsername(username).orElse(null);
     }
 
     private String mapRoleCode(String code) {
         if ("ADMIN".equals(code)) return "admin";
-        if ("REVIEWER".equals(code)) return "reviewer";
         return "editor";
     }
 
@@ -1115,5 +2695,206 @@ public class DataEntryService {
         }
         cm.appendTail(sb);
         return sb.toString().replaceAll("<[^>]+>", "");
+    }
+
+    private int countSegments(String prefix) {
+        if (prefix == null) return 0;
+        return prefix.split("\\.").length;
+    }
+
+    private String getParentPrefix(String prefix) {
+        if (prefix == null) return null;
+        int lastDot = prefix.lastIndexOf('.');
+        if (lastDot <= 0) return null;
+        return prefix.substring(0, lastDot);
+    }
+
+    @Transactional
+    public Map<String, Object> fixDataHierarchy(Long versionId) {
+        ensureVersionEditable(versionId);
+
+        List<DataEntry> entries = entryRepository.findByVersionId(versionId);
+        List<DataEntry> level1Entries = entries.stream().filter(e -> e.getLevel() != null && e.getLevel() == 1).toList();
+        List<DataEntry> level2Entries = entries.stream().filter(e -> e.getLevel() != null && e.getLevel() == 2).toList();
+
+        Map<String, DataEntry> l1PrefixMap = new HashMap<>();
+        for (DataEntry l1 : level1Entries) {
+            String prefix = extractNumberPrefix(l1.getColProductSystem() != null ? l1.getColProductSystem() : l1.getColBizCategory());
+            if (prefix != null && !prefix.isEmpty()) {
+                l1PrefixMap.put(prefix, l1);
+            }
+        }
+
+        Map<String, DataEntry> l2PrefixMap = new HashMap<>();
+        for (DataEntry l2 : level2Entries) {
+            String prefix = extractNumberPrefix(l2.getColProductSystem() != null ? l2.getColProductSystem() : l2.getColBizDomain());
+            if (prefix != null && !prefix.isEmpty()) {
+                l2PrefixMap.put(prefix, l2);
+            }
+        }
+
+        List<BaseCategory> categories = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+        List<BaseDomain> domains = baseDomainRepository.findByVersionId(versionId);
+        Map<String, Long> catNameToId = new HashMap<>();
+        for (BaseCategory cat : categories) catNameToId.put(cat.getName(), cat.getId());
+        Map<String, Long> domNameToId = new HashMap<>();
+        for (BaseDomain dom : domains) domNameToId.put(dom.getName(), dom.getId());
+
+        Map<Long, DataEntry> entryById = new HashMap<>();
+        for (DataEntry e : entries) entryById.put(e.getId(), e);
+
+        Map<String, List<DataEntry>> prefixToEntries = new HashMap<>();
+        for (DataEntry e : entries) {
+            if (e.getLevel() == null) continue;
+            String prefix = extractNumberPrefix(e.getColProductSystem());
+            if (prefix != null && !prefix.isEmpty()) {
+                prefixToEntries.computeIfAbsent(prefix, k -> new ArrayList<>()).add(e);
+            }
+        }
+
+        int levelFixed = 0;
+        int parentFixed = 0;
+        int domainFixed = 0;
+        int categoryFixed = 0;
+        int leafFixed = 0;
+
+        for (DataEntry entry : entries) {
+            if (entry.getLevel() == null) continue;
+
+            String name = entry.getColProductSystem();
+            String prefix = extractNumberPrefix(name);
+            if (prefix == null || prefix.isEmpty()) continue;
+
+            int segments = countSegments(prefix);
+            int correctLevel = segments;
+
+            if (!entry.getLevel().equals(correctLevel)) {
+                entry.setLevel(correctLevel);
+                levelFixed++;
+            }
+
+            String parentPrefix = getParentPrefix(prefix);
+            Long newParentId = null;
+
+            if (parentPrefix != null) {
+                if (segments == 3) {
+                    DataEntry l2 = l2PrefixMap.get(parentPrefix);
+                    if (l2 != null) newParentId = l2.getId();
+                } else if (segments == 2) {
+                    DataEntry l1 = l1PrefixMap.get(prefix);
+                    if (l1 != null) newParentId = l1.getId();
+                } else {
+                    List<DataEntry> candidates = prefixToEntries.get(parentPrefix);
+                    if (candidates != null && !candidates.isEmpty()) {
+                        newParentId = candidates.get(0).getId();
+                    }
+                }
+            }
+
+            if (newParentId != null && !newParentId.equals(entry.getParentId())) {
+                entry.setParentId(newParentId);
+                parentFixed++;
+            }
+
+            if (entry.getColBizDomain() != null && entry.getDomainId() == null) {
+                Long domId = domNameToId.get(entry.getColBizDomain());
+                if (domId != null) {
+                    entry.setDomainId(domId);
+                    domainFixed++;
+                }
+            }
+            if (entry.getColBizCategory() != null && entry.getCategoryId() == null) {
+                Long catId = catNameToId.get(entry.getColBizCategory());
+                if (catId != null) {
+                    entry.setCategoryId(catId);
+                    categoryFixed++;
+                }
+            }
+
+            entryRepository.save(entry);
+        }
+
+        List<DataEntry> allUpdated = entryRepository.findByVersionId(versionId);
+        Set<Long> parentIds = new HashSet<>();
+        for (DataEntry e : allUpdated) {
+            if (e.getParentId() != null) parentIds.add(e.getParentId());
+        }
+        for (DataEntry e : allUpdated) {
+            boolean shouldHaveChildren = parentIds.contains(e.getId());
+            boolean currentIsLeaf = e.getIsLeaf() != null && e.getIsLeaf();
+            if (shouldHaveChildren && currentIsLeaf) {
+                e.setIsLeaf(false);
+                entryRepository.save(e);
+                leafFixed++;
+            } else if (!shouldHaveChildren && !currentIsLeaf) {
+                e.setIsLeaf(true);
+                entryRepository.save(e);
+                leafFixed++;
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("totalEntries", entries.size());
+        result.put("levelFixed", levelFixed);
+        result.put("parentFixed", parentFixed);
+        result.put("domainFixed", domainFixed);
+        result.put("categoryFixed", categoryFixed);
+        result.put("leafFixed", leafFixed);
+        return result;
+    }
+
+    @Transactional
+    public void renumberEntries(Long versionId, List<RenumberItem> items) {
+        ensureVersionEditable(versionId);
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException("重编号列表不能为空");
+        }
+        for (RenumberItem item : items) {
+            DataEntry entry = entryRepository.findById(item.getEntryId())
+                    .orElseThrow(() -> new BusinessException("条目不存在: " + item.getEntryId()));
+            if (!versionId.equals(entry.getVersionId())) {
+                throw new BusinessException("条目不属于当前版本: " + item.getEntryId());
+            }
+            if (entry.getLevel() == null || entry.getLevel() < 3) {
+                throw new BusinessException("只能对产品级别(L3)及以上的条目进行编码重排序");
+            }
+
+            String l2Prefix = extractL2Prefix(entry);
+            String newPrefix = item.getNewPrefix().trim();
+            if (!newPrefix.startsWith(l2Prefix)) {
+                throw new BusinessException("新编码前缀 " + newPrefix + " 的前两段与所属L2(" + l2Prefix + ")不一致，不允许修改");
+            }
+
+            String newName = item.getNewName() != null ? item.getNewName().trim() : stripNumberPrefix(entry.getColProductSystem());
+            entry.setColProductSystem(newPrefix + " " + newName);
+            entryRepository.save(entry);
+
+            renumberChildren(entry.getId(), versionId, newPrefix);
+        }
+    }
+
+    private String extractL2Prefix(DataEntry entry) {
+        String domainName = entry.getColBizDomain();
+        if (domainName == null || domainName.isEmpty()) {
+            return "";
+        }
+        String fullPrefix = extractNumberPrefix(domainName);
+        String[] segments = fullPrefix.split("\\.");
+        if (segments.length >= 2) {
+            return segments[0] + "." + segments[1];
+        }
+        return fullPrefix;
+    }
+
+    private void renumberChildren(Long parentId, Long versionId, String parentPrefix) {
+        List<DataEntry> children = entryRepository.findByVersionIdAndParentIdOrderBySortOrder(versionId, parentId);
+        for (int i = 0; i < children.size(); i++) {
+            DataEntry child = children.get(i);
+            String newCode = parentPrefix + "." + (i + 1);
+            String oldName = stripNumberPrefix(child.getColProductSystem());
+            child.setColProductSystem(newCode + " " + oldName);
+            entryRepository.save(child);
+            renumberChildren(child.getId(), versionId, newCode);
+        }
     }
 }

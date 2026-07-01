@@ -27,6 +27,9 @@ public class DataVersion {
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    @Column(name = "rollback_count")
+    private Integer rollbackCount = 0;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
 }
