@@ -298,10 +298,8 @@
         </el-select>
       </el-form-item>
       <el-form-item label="版本划分">
-        <el-select v-model="addListForm.versionTag" placeholder="全部" clearable style="width:100%">
-          <el-option label="A-曜系列" value="A-曜系列" />
-          <el-option label="B-远系列" value="B-远系列" />
-          <el-option label="C-驰系列" value="C-驰系列" />
+        <el-select v-model="addListForm.versionTag" placeholder="全部" clearable multiple style="width:100%">
+          <el-option v-for="v in versionDivList" :key="v" :label="v" :value="v" />
         </el-select>
       </el-form-item>
     </el-form>
@@ -369,13 +367,14 @@ const showAddListDialog = ref(false)
 const addListLoading = ref(false)
  const addListSolutions = ref([])
 const addListStatusList = ref([])
+const versionDivList = ['A-曜系列', 'B-远系列', 'C-驰系列', '非标配系统']
  const addListForm = reactive({
   name: '',
   entryName: '',
   statusList: [],
   productManager: '',
   solution: '',
-  versionTag: ''
+  versionTag: []
 })
 const progressTotal = ref(0)
 const progressProcessed = ref(0)
@@ -643,7 +642,7 @@ async function onAddList() {
   addListForm.statusList = []
   addListForm.productManager = ''
   addListForm.solution = ''
-  addListForm.versionTag = ''
+  addListForm.versionTag = []
   if (selectedVersion.value) {
     try {
       const [solRes, stRes] = await Promise.all([
@@ -671,7 +670,7 @@ async function handleAddList() {
       (addListForm.statusList && addListForm.statusList.length > 0) ||
       (addListForm.productManager && addListForm.productManager.trim()) ||
       (addListForm.solution && addListForm.solution.trim()) ||
-      (addListForm.versionTag && addListForm.versionTag.trim())
+      (addListForm.versionTag && addListForm.versionTag.length > 0)
     if (hasFilter) {
       await createCustomTabWithFilter({
         name: addListForm.name.trim(),
@@ -681,7 +680,7 @@ async function handleAddList() {
         statusList: addListForm.statusList.length > 0 ? addListForm.statusList : undefined,
         productManager: addListForm.productManager || undefined,
         solution: addListForm.solution || undefined,
-        versionTag: addListForm.versionTag || undefined
+        versionTag: addListForm.versionTag.length > 0 ? addListForm.versionTag : undefined
       })
     } else {
       await createCustomTab({

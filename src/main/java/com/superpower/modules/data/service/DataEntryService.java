@@ -82,10 +82,24 @@ public class DataEntryService {
         return false;
     }
 
+    private boolean matchesVersionDivision(String colVersionDivision, List<String> versionTags) {
+        if (versionTags == null || versionTags.isEmpty()) return true;
+        if (colVersionDivision == null || colVersionDivision.isEmpty()) return false;
+        for (String tag : versionTags) {
+            if (colVersionDivision.contains(tag)) return true;
+        }
+        return false;
+    }
+
     public List<TreeNodeDTO> getTree(Long versionId, String name, List<String> statusList, String productManager,
-                                     String solution, String versionTag) {
+                                     String solution, List<String> versionTags) {
+        String singleVersionTag = (versionTags != null && versionTags.size() == 1) ? versionTags.get(0) : null;
         List<DataEntry> entries = new ArrayList<>(entryRepository.findByVersionIdAndLevelWithFilter(
-                versionId, 1, name, productManager, solution, versionTag));
+                versionId, 1, name, productManager, solution, singleVersionTag));
+        if (versionTags != null && versionTags.size() > 1) {
+            entries = entries.stream().filter(e -> matchesVersionDivision(e.getColVersionDivision(), versionTags)).toList();
+            entries = new ArrayList<>(entries);
+        }
 
         Map<Long, BaseCategory> catMap = new HashMap<>();
         Map<Long, BaseDomain> domMap = new HashMap<>();
@@ -138,22 +152,17 @@ public class DataEntryService {
     }
 
     public List<DataEntry> getChildren(Long versionId, Long parentId, String name, List<String> statusList,
-                                      String productManager, String solution, String versionTag) {
+                                      String productManager, String solution, List<String> versionTags) {
+        String singleVersionTag = (versionTags != null && versionTags.size() == 1) ? versionTags.get(0) : null;
         return entryRepository.findByVersionIdAndParentIdWithFilter(
-                versionId, parentId, name, productManager, solution, versionTag).stream()
+                versionId, parentId, name, productManager, solution, singleVersionTag).stream()
                 .filter(e -> matchesStatus(e.getColStatus(), statusList))
+                .filter(e -> versionTags == null || versionTags.isEmpty() || matchesVersionDivision(e.getColVersionDivision(), versionTags))
                 .toList();
     }
 
     public List<TreeNodeDTO> getDomainTree(Long versionId, Long domainId, Long categoryId) {
         List<DataEntry> level2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
-
-        if (level2Entries.isEmpty()) {
-            BaseDomain domain = baseDomainRepository.findById(domainId).orElse(null);
-            if (domain != null) {
-                level2Entries = entryRepository.findByVersionIdAndLevelAndColBizDomain(versionId, 2, domain.getName());
-            }
-        }
 
         if (level2Entries.isEmpty()) {
             return List.of();
@@ -203,10 +212,11 @@ public class DataEntryService {
 
     @Transactional
     public List<DataEntry> query(Long versionId, Long customTabId, String name, List<String> statusList, String productManager,
-                                 String solution, String versionDivision, String bizCategory, String bizDomain, Integer level, String intelligent) {
+                                 String solution, List<String> versionDivisions, String bizCategory, String bizDomain, Integer level, String intelligent) {
+        String singleVersionDiv = (versionDivisions != null && versionDivisions.size() == 1) ? versionDivisions.get(0) : null;
         boolean hasFilter = (name != null && !name.isEmpty()) || (statusList != null && !statusList.isEmpty())
                 || (productManager != null && !productManager.isEmpty()) || (solution != null && !solution.isEmpty())
-                || (versionDivision != null && !versionDivision.isEmpty())
+                || (versionDivisions != null && !versionDivisions.isEmpty())
                 || (bizCategory != null && !bizCategory.isEmpty()) || (bizDomain != null && !bizDomain.isEmpty());
 
         List<DataEntry> result;
@@ -218,19 +228,23 @@ public class DataEntryService {
         if (customTabId != null) {
             if (hasFilter) {
                 result = entryRepository.queryEntries(versionId, customTabId, name, productManager,
-                        solution, versionDivision, bizCategory, bizDomain);
+                        solution, singleVersionDiv, bizCategory, bizDomain);
             } else {
                 result = entryRepository.findEntriesByTab(versionId, customTabId);
             }
         } else if (hasFilter) {
             result = entryRepository.queryEntries(versionId, null, name, productManager,
-                    solution, versionDivision, bizCategory, bizDomain);
+                    solution, singleVersionDiv, bizCategory, bizDomain);
         } else if (bizCategory != null || bizDomain != null) {
             result = entryRepository.findEntriesByDomain(versionId, bizCategory, bizDomain);
         } else {
             result = entryRepository.findAllEntries(versionId);
         }
         result = new ArrayList<>(result.stream().filter(e -> matchesStatus(e.getColStatus(), statusList)).toList());
+        if (versionDivisions != null && versionDivisions.size() > 1) {
+            result = result.stream().filter(e -> matchesVersionDivision(e.getColVersionDivision(), versionDivisions)).toList();
+            result = new ArrayList<>(result);
+        }
         result = sortByCategoryOrder(result, versionId);
         // 智能化过滤：intelligent="1" 时，保留自身 colIntelligent="1" 的条目或其子树包含智能化条目的父条目
         if (intelligent != null && "1".equals(intelligent)) {
@@ -561,6 +575,30 @@ public class DataEntryService {
             parentEntry = entryRepository.findById(parentId).orElse(null);
         }
 
+        // 当未指定 parentId 但指定了 domainId 时，自动查找新域的 L2 分隔行
+        DataEntry newL2Separator = null;
+        if (parentEntry == null && domainId != null) {
+            List<DataEntry> l2Entries = entryRepository.findByVersionIdAndDomainIdAndLevel(versionId, domainId, 2);
+            if (!l2Entries.isEmpty()) {
+                newL2Separator = l2Entries.get(0);
+            }
+        }
+
+        // 收集旧域信息（用于迁移后清理）
+        Set<Long> oldL2SeparatorIds = new HashSet<>();
+        Map<Long, String> oldL2DomNames = new HashMap<>();
+        for (Long id : entryIds) {
+            DataEntry entry = entryRepository.findById(id).orElse(null);
+            if (entry == null || entry.getLevel() == null || entry.getLevel() < 3) continue;
+            if (entry.getParentId() != null && !oldL2SeparatorIds.contains(entry.getParentId())) {
+                DataEntry oldParent = entryRepository.findById(entry.getParentId()).orElse(null);
+                if (oldParent != null && oldParent.getLevel() == 2) {
+                    oldL2SeparatorIds.add(oldParent.getId());
+                    oldL2DomNames.put(oldParent.getId(), oldParent.getColBizDomain());
+                }
+            }
+        }
+
         int targetLevel = 3;
         if (parentEntry != null) {
             targetLevel = parentEntry.getLevel() + 1;
@@ -587,6 +625,9 @@ public class DataEntryService {
             if (parentEntry != null) {
                 entry.setParentId(parentEntry.getId());
                 entry.setLevel(targetLevel);
+            } else if (newL2Separator != null && entry.getLevel() == 3) {
+                // 自动将 L3 条目移到新域的 L2 分隔行下
+                entry.setParentId(newL2Separator.getId());
             }
 
             if (catName != null) {
@@ -632,10 +673,35 @@ public class DataEntryService {
                     p.setIsLeaf(false);
                     entryRepository.save(p);
                 }
+            } else if (newL2Separator != null) {
+                newL2Separator.setIsLeaf(false);
+                entryRepository.save(newL2Separator);
             }
 
             count++;
         }
+
+        // 迁移完成后：清理旧域空 L2 分隔行
+        for (Long oldL2Id : oldL2SeparatorIds) {
+            List<DataEntry> remainingChildren = entryRepository.findByVersionIdAndParentId(versionId, oldL2Id);
+            if (remainingChildren.isEmpty()) {
+                DataEntry oldL2 = entryRepository.findById(oldL2Id).orElse(null);
+                if (oldL2 != null) {
+                    oldL2.setIsLeaf(true);
+                    entryRepository.save(oldL2);
+                    // 更新旧 L1 分隔行的 isLeaf
+                    if (oldL2.getParentId() != null) {
+                        DataEntry oldL1 = entryRepository.findById(oldL2.getParentId()).orElse(null);
+                        if (oldL1 != null) {
+                            List<DataEntry> oldL1Children = entryRepository.findByVersionIdAndParentId(versionId, oldL1.getId());
+                            oldL1.setIsLeaf(oldL1Children.isEmpty());
+                            entryRepository.save(oldL1);
+                        }
+                    }
+                }
+            }
+        }
+
         return count;
     }
 
@@ -1221,30 +1287,32 @@ public class DataEntryService {
     }
 
     private List<DataEntry> findSiblings(DataEntry entry) {
-        List<DataEntry> siblings;
-        if (entry.getLevel() != null && entry.getLevel() == 3) {
-            String domain = entry.getColBizDomain();
-            if (domain != null && !domain.isEmpty()) {
-                siblings = entryRepository.findL3ByDomain(entry.getVersionId(), domain);
-            } else {
-                siblings = entryRepository.findRootEntries(entry.getVersionId());
-            }
-        } else {
+        if (entry.getLevel() != null && entry.getLevel() >= 3) {
+            // L3+ 条目：优先基于 parentId 找同一父节点下的兄弟（与前端树结构渲染一致）
             Long parentId = entry.getParentId();
             if (parentId != null) {
                 return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
             }
-            String domain = entry.getColBizDomain();
-            if (domain != null && !domain.isEmpty()) {
-                siblings = entryRepository.findRootEntriesByDomain(entry.getVersionId(), domain);
-            } else {
-                siblings = entryRepository.findRootEntries(entry.getVersionId());
+            // parentId 为 null 的 L3 条目：基于 domainId fallback
+            if (entry.getDomainId() != null) {
+                List<DataEntry> siblings = entryRepository.findL3ByDomainId(entry.getVersionId(), entry.getDomainId());
+                siblings.sort(Comparator.comparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+                return siblings;
             }
+            return entryRepository.findRootEntries(entry.getVersionId());
         }
-        siblings.sort(Comparator
-                .comparing((DataEntry e) -> e.getParentId(), Comparator.nullsLast(Long::compareTo))
-                .thenComparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
-        return siblings;
+        // L4+ 条目或 level < 3 的条目
+        Long parentId = entry.getParentId();
+        if (parentId != null) {
+            return entryRepository.findByVersionIdAndParentIdOrderBySortOrder(entry.getVersionId(), parentId);
+        }
+        // parentId 为 null 的 fallback：基于 domainId
+        if (entry.getDomainId() != null) {
+            List<DataEntry> siblings = entryRepository.findRootEntriesByDomainId(entry.getVersionId(), entry.getDomainId());
+            siblings.sort(Comparator.comparingInt(e -> e.getSortOrder() != null ? e.getSortOrder() : 0));
+            return siblings;
+        }
+        return entryRepository.findRootEntries(entry.getVersionId());
     }
 
     @Transactional
@@ -1372,12 +1440,12 @@ public class DataEntryService {
                 return current.getId();
             }
             if (current.getParentId() == null) {
-                List<DataEntry> l2Candidates = entryRepository.findByVersionIdAndLevel(
-                        entry.getVersionId(), 2);
-                String domain = current.getColBizDomain();
-                for (DataEntry l2 : l2Candidates) {
-                    if (domain != null && domain.equals(l2.getColBizDomain())) {
-                        return l2.getId();
+                // 基于 domainId 查找 L2 分隔行（而非名称）
+                if (current.getDomainId() != null) {
+                    List<DataEntry> l2ByDomainId = entryRepository.findByVersionIdAndDomainIdAndLevel(
+                            entry.getVersionId(), current.getDomainId(), 2);
+                    if (!l2ByDomainId.isEmpty()) {
+                        return l2ByDomainId.get(0).getId();
                     }
                 }
                 return null;

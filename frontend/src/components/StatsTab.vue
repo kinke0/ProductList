@@ -1,5 +1,9 @@
 <template>
   <div class="stats-tab">
+    <div v-if="statsLoading" class="stats-loading-overlay">
+      <el-icon class="is-loading" style="font-size:28px;color:#409eff;margin-bottom:8px;"><Loading /></el-icon>
+      <span style="color:#666;font-size:14px;">数据加载中...</span>
+    </div>
     <div class="stat-cards">
       <div class="stat-card">
         <div class="stat-label">产品总数</div>
@@ -51,6 +55,7 @@
 import { ref, onMounted, watch, nextTick } from 'vue'
 import { queryEntries } from '../api/data'
 import * as echarts from 'echarts'
+import { Loading } from '@element-plus/icons-vue'
 
 const props = defineProps({ versionId: [Number, String], refreshTrigger: [Number, String] })
 
@@ -61,6 +66,7 @@ const stats = ref({
   subFeatureCount: 0
 })
 
+const statsLoading = ref(false)
 const pieChart = ref(null)
 const barChart = ref(null)
 const approvalPie = ref(null)
@@ -74,6 +80,8 @@ let pmStackBarInstance = null
 
 async function loadStats() {
   if (!props.versionId) return
+  statsLoading.value = true
+  try {
   const res = await queryEntries(props.versionId, {})
   const entries = res.data || []
   const deliverable = entries.filter(e => (e.colStatus || '').includes('可交付'))
@@ -121,6 +129,9 @@ async function loadStats() {
     if (pmMap[pm][s] !== undefined) pmMap[pm][s]++
   })
   renderPmStackBar(pmMap)
+  } finally {
+    statsLoading.value = false
+  }
 }
 
 function renderCategoryPie(l3Entries) {
@@ -291,6 +302,15 @@ onMounted(loadStats)
   padding: 16px;
   overflow-y: auto;
   height: 100%;
+  position: relative;
+}
+.stats-loading-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255,255,255,0.7);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 10;
 }
 .stat-cards {
   display: flex;

@@ -308,8 +308,8 @@ async function deleteL1(row) {
       }
       await loadL1()
     } catch (e) {
-      const msg = e?.response?.data?.message || '删除失败'
-      ElMessage.warning(msg)
+      // 全局拦截器已显示错误消息，不再重复弹出
+      await loadL1()
     }
   }).catch(() => {})
 }
@@ -351,8 +351,9 @@ async function deleteL2(row) {
     await loadL1()
     await loadL2(selectedL1.value.id)
   } catch (e) {
-    const msg = e?.response?.data?.message || '删除失败'
-    ElMessage.warning(msg)
+    // 全局拦截器已显示错误消息，不再重复弹出
+    await loadL1()
+    await loadL2(selectedL1.value?.id)
   }
 }
 

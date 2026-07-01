@@ -506,9 +506,6 @@ public class ImageResourceService {
                     }
 
                     List<DataEntry> level3Entries = dataEntryRepository.findByVersionIdAndDomainIdAndLevel(versionId, dom.getId(), 3);
-                    if (level3Entries.isEmpty()) {
-                        level3Entries = dataEntryRepository.findByVersionIdAndColBizDomainAndLevel(versionId, domName, 3);
-                    }
                     for (DataEntry e : level3Entries) {
                         String prod = e.getColProductSystem();
                         if (prod != null && !prod.trim().isEmpty()) {
@@ -874,8 +871,28 @@ public class ImageResourceService {
 
     private String resolveL3Product(String product, String category, String domain, Long versionId) {
         if (product == null || product.isEmpty() || versionId == null) return product;
-        List<DataEntry> l3Entries = dataEntryRepository.findByVersionIdAndLevelAndColBizCategoryAndColBizDomain(
-                versionId, 3, category, domain);
+        // 基于 categoryId + domainId 查找 L3 条目（而非名称匹配）
+        Long catId = null;
+        Long domId = null;
+        if (category != null) {
+            List<BaseCategory> cats = baseCategoryRepository.findByVersionIdOrderBySortOrderAsc(versionId);
+            for (BaseCategory c : cats) {
+                if (category.equals(c.getName())) { catId = c.getId(); break; }
+            }
+        }
+        if (domain != null) {
+            List<BaseDomain> doms = baseDomainRepository.findByVersionId(versionId);
+            for (BaseDomain d : doms) {
+                if (domain.equals(d.getName())) { domId = d.getId(); break; }
+            }
+        }
+        List<DataEntry> l3Entries;
+        if (catId != null && domId != null) {
+            l3Entries = dataEntryRepository.findByVersionIdAndCategoryIdAndDomainIdAndLevel(versionId, catId, domId, 3);
+        } else {
+            // fallback：如果无法通过 ID 查找，仍用名称（容错）
+            l3Entries = dataEntryRepository.findByVersionIdAndLevelAndColBizCategoryAndColBizDomain(versionId, 3, category, domain);
+        }
         for (DataEntry e : l3Entries) {
             if (product.equals(e.getColProductSystem())) return product;
         }

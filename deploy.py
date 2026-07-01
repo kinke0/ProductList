@@ -55,7 +55,6 @@ DEFAULT_PORT = 80
 # 本地编译产物路径
 DEFAULT_BACKEND_JAR_GLOB = "target/*.jar"          # mvn package 输出
 DEFAULT_FRONTEND_DIST = "frontend/dist"            # npm run build 输出
-DEFAULT_DB_FILE = "superpower.db"
 DEFAULT_UPLOADS_DIR = "uploads"
 DEFAULT_DOCS_DIR = "generated-docs"
 
@@ -84,11 +83,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--init", action="store_true",
                    help="首次部署：构建运行环境镜像 + 上传全部制品 + 启动容器")
     p.add_argument("--update-data", action="store_true",
-                   help="只更新数据文件 (db/uploads/docs)，不更新 jar/dist")
-    p.add_argument("--data-items", default="all", choices=["all", "db", "uploads", "docs"],
+                   help="只更新数据文件 (uploads/docs)，不更新 jar/dist")
+    p.add_argument("--data-items", default="all", choices=["all", "uploads", "docs"],
                    help="--update-data 时指定更新的数据项 (默认: all)")
     p.add_argument("--version", action="store_true", help="只更新版本号文件 VERSION.md")
-    p.add_argument("--db", action="store_true", help="只更新数据库文件")
     p.add_argument("--uploads", action="store_true", help="只更新附件目录")
     p.add_argument("--docs", action="store_true", help="只更新文档目录")
     p.add_argument("--menu", action="store_true",
@@ -279,10 +277,7 @@ def do_init(args: argparse.Namespace, repo_root: Path):
         r.upload_file(repo_root / "VERSION.md", f"{remote}/VERSION.md")
         r.upload_dir(dist, f"{remote}/dist")
 
-        # 数据文件
-        db = repo_root / DEFAULT_DB_FILE
-        if db.exists():
-            r.upload_file(db, f"{data_dir}/superpower.db")
+        # 数据文件 (不再上传 SQLite 数据库文件，数据库由 PostgreSQL 容器管理)
         for d in [DEFAULT_UPLOADS_DIR, DEFAULT_DOCS_DIR]:
             src = repo_root / d
             if src.exists() and any(src.iterdir()):
@@ -365,14 +360,13 @@ def do_update_data(args: argparse.Namespace, repo_root: Path):
     # 确定需要更新的项目
     items = []
     if args.data_items == "all":
-        items = ["db", "uploads", "docs"]
+        items = ["uploads", "docs"]
     else:
         items = [args.data_items]
 
     # 如果有命令行 flag，增加对应项 (CLI 模式)
     if not args.menu:
         cli_items = []
-        if getattr(args, "db", False): cli_items.append("db")
         if getattr(args, "uploads", False): cli_items.append("uploads")
         if getattr(args, "docs", False): cli_items.append("docs")
         if cli_items:
@@ -382,20 +376,6 @@ def do_update_data(args: argparse.Namespace, repo_root: Path):
         r.run(f"mkdir -p {data_dir}/uploads {data_dir}/docs")
 
         updated = False
-
-        # 数据库
-        if "db" in items:
-            db = repo_root / DEFAULT_DB_FILE
-            if db.exists():
-                print(f"[远程] 上传数据库...")
-                # 远程备份
-                r.run(
-                    f"[ -f {data_dir}/superpower.db ] && "
-                    f"cp {data_dir}/superpower.db {data_dir}/superpower.db.bak.$(date +%Y%m%d%H%M%S) "
-                    f"|| true"
-                )
-                r.upload_file(db, f"{data_dir}/superpower.db")
-                updated = True
 
         # uploads
         if "uploads" in items:
@@ -436,10 +416,13 @@ def recreate_container(r: Remote, args: argparse.Namespace):
     run_cmd_str = (
         f"docker run -d --name {args.container} "
         f"--restart unless-stopped -p {args.port}:80 "
+        f"--link productlist-pg:productlist-pg "
+        f"-e SPRING_PROFILES_ACTIVE=prod "
+        f"-e SPRING_DATASOURCE_URL=jdbc:postgresql://productlist-pg:5432/productlist "
+        f"-e PG_PASSWORD=productlist123 "
         f"-v {remote}/app.jar:/app/app.jar "
         f"-v {remote}/VERSION.md:/app/VERSION.md "
         f"-v {remote}/dist:/usr/share/nginx/html "
-        f"-v {data_dir}/superpower.db:/app/superpower.db "
         f"-v {data_dir}/uploads:/app/uploads "
         f"-v {data_dir}/docs:/app/generated-docs "
         f"{args.image}"
@@ -486,16 +469,15 @@ def build_menu_args(args: argparse.Namespace) -> argparse.Namespace:
             ("1", "首次部署（构建镜像 + 上传全部制品 + 启动容器）"),
             ("2", "日常更新（上传 jar + dist 并重启容器）"),
             ("3", "更新版本号文件 (VERSION.md)"),
-            ("4", "更新数据库 (db)"),
-            ("5", "更新附件 (uploads)"),
-            ("6", "更新文档 (docs)"),
-            ("7", "更新所有数据 (db/uploads/docs)"),
-            ("8", "退出"),
+            ("4", "更新附件 (uploads)"),
+            ("5", "更新文档 (docs)"),
+            ("6", "更新所有数据 (uploads/docs)"),
+            ("7", "退出"),
         ],
         default="2",
     )
 
-    if action == "8":
+    if action == "7":
         raise SystemExit(0)
 
     if action == "1":
@@ -511,16 +493,12 @@ def build_menu_args(args: argparse.Namespace) -> argparse.Namespace:
     elif action == "4":
         args.init = False
         args.update_data = True
-        args.data_items = "db"
+        args.data_items = "uploads"
     elif action == "5":
         args.init = False
         args.update_data = True
-        args.data_items = "uploads"
-    elif action == "6":
-        args.init = False
-        args.update_data = True
         args.data_items = "docs"
-    elif action == "7":
+    elif action == "6":
         args.init = False
         args.update_data = True
         args.data_items = "all"
@@ -573,7 +551,7 @@ def main():
 
     if args.menu:
         args = build_menu_args(args)
-    elif args.version or args.db or args.uploads or args.docs:
+    elif args.version or args.uploads or args.docs:
         if args.version:
             args.update_version = True
         else:

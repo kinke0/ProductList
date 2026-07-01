@@ -9,10 +9,19 @@
 - [docker/maven-settings-sandbox.xml](file://docker/maven-settings-sandbox.xml)
 - [pom.xml](file://pom.xml)
 - [src/main/resources/application.yml](file://src/main/resources/application.yml)
+- [src/main/resources/application-prod.yml](file://src/main/resources/application-prod.yml)
 - [frontend/package.json](file://frontend/package.json)
 - [frontend/vite.config.js](file://frontend/vite.config.js)
 - [deploy.py](file://deploy.py)
 </cite>
+
+## 更新摘要
+**所做更改**
+- 更新了Dockerfile架构说明，反映新的运行时镜像设计理念
+- 新增了与PostgreSQL数据库集成的容器化架构说明
+- 增强了部署脚本功能描述，支持多种部署模式
+- 更新了卷挂载策略和容器网络配置
+- 完善了健康检查和故障排除指南
 
 ## 目录
 1. [简介](#简介)
@@ -27,7 +36,9 @@
 10. [附录](#附录)
 
 ## 简介
-本文件面向产品清单管理系统的Docker容器化部署，提供从镜像构建到运行时配置的完整说明。系统采用“运行时镜像 + 卷挂载”的架构：运行时镜像仅包含JRE与Nginx等运行环境，业务代码（Spring Boot JAR）、静态资源（前端dist）、数据库文件与上传目录均通过卷挂载注入，实现零停机热更新与最小化镜像体积。
+本文件面向产品清单管理系统的Docker容器化部署，提供从镜像构建到运行时配置的完整说明。系统采用"运行时镜像 + 卷挂载"的架构：运行时镜像仅包含JRE与Nginx等运行环境，业务代码（Spring Boot JAR）、静态资源（前端dist）、数据库文件与上传目录均通过卷挂载注入，实现零停机热更新与最小化镜像体积。
+
+**更新** 系统现已升级为支持PostgreSQL数据库的容器化架构，通过Docker网络实现应用与数据库的解耦部署。
 
 ## 项目结构
 与容器化部署直接相关的目录与文件：
@@ -37,6 +48,7 @@
 - docker/maven-settings*.xml：Maven镜像配置，用于构建阶段加速依赖下载
 - pom.xml：后端构建配置，配合Spring Boot插件生成可执行JAR
 - src/main/resources/application.yml：后端运行配置（端口、数据库、日志等）
+- src/main/resources/application-prod.yml：生产环境数据库配置
 - frontend/*：前端构建配置，产出静态资源供Nginx托管
 - deploy.py：部署脚本，负责本地构建、制品上传与容器启动
 
@@ -46,7 +58,7 @@ subgraph "容器运行时"
 JRE["Eclipse Temurin 17 JRE"]
 NGINX["Nginx"]
 APP["Spring Boot 应用<br/>监听 8080"]
-DB["SQLite 数据库文件"]
+POSTGRES["PostgreSQL 数据库"]
 UPLOADS["上传目录"]
 DOCS["生成文档目录"]
 end
@@ -57,69 +69,69 @@ DATA["数据目录 data/"]
 end
 DIST --> NGINX
 JAR --> APP
-DATA --> DB
 DATA --> UPLOADS
 DATA --> DOCS
 NGINX --> APP
-APP --> DB
+APP --> POSTGRES
 ```
 
-图表来源
-- [Dockerfile:1-38](file://Dockerfile#L1-L38)
+**图表来源**
+- [Dockerfile:1-37](file://Dockerfile#L1-L37)
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+- [src/main/resources/application.yml:18-26](file://src/main/resources/application.yml#L18-L26)
 
-章节来源
-- [Dockerfile:1-38](file://Dockerfile#L1-L38)
+**章节来源**
+- [Dockerfile:1-37](file://Dockerfile#L1-L37)
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+- [src/main/resources/application.yml:18-26](file://src/main/resources/application.yml#L18-L26)
 
 ## 核心组件
 - 运行时镜像（基于Eclipse Temurin 17 JRE）：提供Java运行环境与Nginx，不包含业务代码
 - Nginx反向代理：统一对外端口80，将/api/等路径转发至后端8080，静态资源由/usr/share/nginx/html提供
 - 入口脚本（entrypoint.sh）：启动Java应用与Nginx，统一管理进程生命周期与信号处理
-- 卷挂载策略：后端JAR、前端dist、数据库文件、上传与生成文档目录均通过宿主机目录挂载
+- 卷挂载策略：后端JAR、前端dist、上传与生成文档目录通过宿主机目录挂载
 - 健康检查：通过curl探测Nginx内部对后端/actuator/health的代理访问
+- 数据库集成：通过Docker网络连接PostgreSQL数据库容器
 
-章节来源
-- [Dockerfile:1-38](file://Dockerfile#L1-L38)
+**章节来源**
+- [Dockerfile:1-37](file://Dockerfile#L1-L37)
 - [docker/entrypoint.sh:1-22](file://docker/entrypoint.sh#L1-L22)
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
 
 ## 架构总览
-容器启动流程概览：入口脚本启动Java应用与Nginx，Nginx监听80端口并将/api/等请求转发至127.0.0.1:8080（Spring Boot）。数据库与文件存储通过卷挂载注入，实现持久化与热更新。
+容器启动流程概览：入口脚本启动Java应用与Nginx，Nginx监听80端口并将/api/等请求转发至127.0.0.1:8080（Spring Boot）。数据库通过Docker网络连接到productlist-pg容器，文件存储通过卷挂载注入，实现持久化与热更新。
 
 ```mermaid
 sequenceDiagram
 participant U as "客户端"
 participant N as "Nginx(80)"
 participant S as "Spring Boot(8080)"
-participant D as "SQLite 数据库"
+participant PG as "PostgreSQL(productlist-pg)"
 U->>N : "HTTP 请求"
 N->>S : "反向代理 /api/*"
-S->>D : "查询/写入 数据"
+S->>PG : "查询/写入 数据"
 S-->>N : "响应"
 N-->>U : "返回结果"
 ```
 
-图表来源
+**图表来源**
 - [docker/proethos2:18-34](file://docker/proethos2#L18-L34)
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+- [src/main/resources/application.yml:18-26](file://src/main/resources/application.yml#L18-L26)
 
 ## 详细组件分析
 
 ### Dockerfile构建过程
 - 基础镜像选择：使用linux/amd64平台的eclipse-temurin:17-jre，确保跨平台兼容性与JDK 17运行时
-- 系统依赖安装：安装bash、ca-certificates、curl、nginx；替换apt源为国内镜像以提升下载速度
+- 系统依赖安装：安装bash、ca-certificates、curl、nginx；替换apt源为清华镜像以提升下载速度
 - Nginx配置：删除默认站点，复制自定义站点配置并建立软链接启用
 - 入口脚本：复制并赋予执行权限，创建缓存与运行目录
-- 卷挂载约定：明确声明JAR、dist、数据库、上传与生成文档目录的挂载位置
+- 卷挂载约定：明确声明JAR、dist、上传与生成文档目录的挂载位置
 - 环境变量：设置Spring Profile为prod，默认JAVA_OPTS为空
 - 端口与健康检查：暴露80端口，配置健康检查探针
 - 入口点：指定entrypoint.sh为容器入口
 
-章节来源
-- [Dockerfile:1-38](file://Dockerfile#L1-L38)
+**章节来源**
+- [Dockerfile:1-37](file://Dockerfile#L1-L37)
 
 ### 入口脚本（entrypoint.sh）作用与启动流程
 - 环境准备：读取JAVA_OPTS与SPRING_PROFILES_ACTIVE，设置默认值
@@ -139,10 +151,10 @@ Cleanup --> Exit(["容器退出"])
 WaitAny --> |否| WaitAny
 ```
 
-图表来源
+**图表来源**
 - [docker/entrypoint.sh:1-22](file://docker/entrypoint.sh#L1-L22)
 
-章节来源
+**章节来源**
 - [docker/entrypoint.sh:1-22](file://docker/entrypoint.sh#L1-L22)
 
 ### Nginx配置（docker/proethos2）
@@ -152,7 +164,7 @@ WaitAny --> |否| WaitAny
 - API代理：/api/、/actuator/、/swagger-ui/、/v3/api-docs/、/webjars/等路径转发至127.0.0.1:8080
 - 静态回退：/路由使用try_files回退到index.html，支持前端单页路由
 
-章节来源
+**章节来源**
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
 
 ### Maven设置文件（docker/maven-settings*.xml）
@@ -160,7 +172,7 @@ WaitAny --> |否| WaitAny
 - 沙盒镜像设置：优先阿里云公共镜像，保留内网Nexus作为补充仓库，适合内外网混合场景
 - 配置要点：通过profiles与activeProfiles激活默认仓库，避免拦截所有依赖请求
 
-章节来源
+**章节来源**
 - [docker/maven-settings.xml:1-12](file://docker/maven-settings.xml#L1-L12)
 - [docker/maven-settings-sandbox.xml:1-46](file://docker/maven-settings-sandbox.xml#L1-L46)
 
@@ -170,36 +182,47 @@ WaitAny --> |否| WaitAny
 - 日志级别：应用与安全模块DEBUG
 - 文件上传限制：最大50MB
 - 时区：Asia/Shanghai
-- 数据源：SQLite，URL使用相对路径，连接池参数优化
-- JPA：方言自定义，DDL自动更新，SQL格式化
+- 数据源：PostgreSQL，URL使用容器网络地址productlist-pg:5432，连接池参数优化
+- JPA：方言为PostgreSQLDialect，DDL自动更新，SQL格式化
 - JWT：密钥与过期时间
 - 文档存储路径：./generated-docs
 
-章节来源
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+**章节来源**
+- [src/main/resources/application.yml:1-42](file://src/main/resources/application.yml#L1-L42)
+
+### 生产环境配置（application-prod.yml）
+- 数据库连接：通过环境变量PG_PASSWORD配置密码
+- 网络配置：使用Docker网络productlist-pg:5432访问数据库
+- 安全配置：生产环境专用的数据库凭据管理
+
+**章节来源**
+- [src/main/resources/application-prod.yml:1-7](file://src/main/resources/application-prod.yml#L1-L7)
 
 ### 前端构建配置（frontend）
 - 构建脚本：dev、build、preview
 - 开发服务器：Vite默认端口5173，配置/api代理至后端8080
 - 依赖：Vue 3、Element Plus、Axios等
 
-章节来源
+**章节来源**
 - [frontend/package.json:1-28](file://frontend/package.json#L1-L28)
-- [frontend/vite.config.js:1-20](file://frontend/vite.config.js#L1-L20)
+- [frontend/vite.config.js:1-21](file://frontend/vite.config.js#L1-L21)
 
 ### 部署脚本（deploy.py）
 - 首次部署：本地编译前后端 → 上传制品（JAR+dist+数据）→ 远程加载镜像并启动容器
 - 日常更新：本地编译 → 仅上传JAR+dist → 重启容器
-- 数据更新：仅上传数据库与上传/文档目录
+- 数据更新：仅上传上传/文档目录
 - 远程验证：通过curl探测容器内服务可用性
+- 多模式支持：交互式菜单、版本更新、数据更新等多种部署模式
 
-章节来源
-- [deploy.py:1-315](file://deploy.py#L1-L315)
+**更新** 部署脚本现已支持PostgreSQL数据库容器的自动连接和配置管理。
+
+**章节来源**
+- [deploy.py:1-577](file://deploy.py#L1-L577)
 
 ## 依赖关系分析
 - Dockerfile依赖entrypoint.sh与Nginx配置文件
 - Nginx配置依赖后端8080端口可达
-- 后端依赖SQLite数据库文件与上传/文档目录
+- 后端依赖PostgreSQL数据库容器productlist-pg
 - 前端构建产物需挂载至Nginx根目录
 
 ```mermaid
@@ -207,19 +230,19 @@ graph LR
 DF["Dockerfile"] --> EP["entrypoint.sh"]
 DF --> NGXCFG["Nginx 配置"]
 NGXCFG --> APP["Spring Boot 应用(8080)"]
-APP --> DB["SQLite 数据库"]
+APP --> PG["PostgreSQL(productlist-pg)"]
 FE["前端构建产物(dist)"] --> NGXCFG
 ```
 
-图表来源
-- [Dockerfile:1-38](file://Dockerfile#L1-L38)
+**图表来源**
+- [Dockerfile:1-37](file://Dockerfile#L1-L37)
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+- [src/main/resources/application.yml:18-26](file://src/main/resources/application.yml#L18-L26)
 
-章节来源
-- [Dockerfile:1-38](file://Dockerfile#L1-L38)
+**章节来源**
+- [Dockerfile:1-37](file://Dockerfile#L1-L37)
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+- [src/main/resources/application.yml:18-26](file://src/main/resources/application.yml#L18-L26)
 
 ## 性能考虑
 - 镜像层优化：在Dockerfile中合并apt操作与清理缓存，减少层数与镜像体积
@@ -227,6 +250,7 @@ FE["前端构建产物(dist)"] --> NGXCFG
 - 连接池与超时：后端连接池最大连接数与超时设置，Tomcat连接超时较长以适应长任务
 - 上传限制：Nginx与后端上传大小限制，避免过大文件导致内存压力
 - 日志级别：生产环境建议调整为INFO或WARN，降低I/O开销
+- 数据库连接：PostgreSQL连接池配置优化，支持高并发访问
 
 ## 故障排除指南
 - 容器无法启动
@@ -236,20 +260,21 @@ FE["前端构建产物(dist)"] --> NGXCFG
 - 服务不可达
   - 确认Nginx配置中/api/等路径已正确代理至8080
   - 检查容器健康检查是否通过（/health）
-- 数据库异常
-  - 确认数据库文件已挂载且路径正确
-  - 检查JPA方言与DDL策略配置
+- 数据库连接失败
+  - 确认PostgreSQL容器已启动且网络连通
+  - 检查数据库URL、用户名、密码配置
+  - 验证Docker网络配置
 - 上传失败
   - 检查Nginx client_max_body_size与后端multipart大小限制
   - 确认上传目录挂载权限
 
-章节来源
+**章节来源**
 - [docker/entrypoint.sh:1-22](file://docker/entrypoint.sh#L1-L22)
 - [docker/proethos2:1-75](file://docker/proethos2#L1-L75)
-- [src/main/resources/application.yml:1-40](file://src/main/resources/application.yml#L1-L40)
+- [src/main/resources/application.yml:18-26](file://src/main/resources/application.yml#L18-L26)
 
 ## 结论
-该容器化方案通过“运行时镜像 + 卷挂载”实现了最小化镜像与业务解耦，结合Nginx反向代理与健康检查，提供了稳定的运行环境。配合部署脚本，可实现快速构建、上传与重启，满足日常运维需求。
+该容器化方案通过"运行时镜像 + 卷挂载"实现了最小化镜像与业务解耦，结合Nginx反向代理与健康检查，提供了稳定的运行环境。配合部署脚本，可实现快速构建、上传与重启，满足日常运维需求。新架构支持PostgreSQL数据库的容器化部署，通过Docker网络实现应用与数据库的解耦，进一步提升了系统的可扩展性和维护性。
 
 ## 附录
 
@@ -259,10 +284,14 @@ FE["前端构建产物(dist)"] --> NGXCFG
 - 启动容器（示例）
   - docker run -d \
     --name product-list-app \
-    --network host \
+    --restart unless-stopped \
+    -p 80:80 \
+    --link productlist-pg:productlist-pg \
+    -e SPRING_PROFILES_ACTIVE=prod \
+    -e SPRING_DATASOURCE_URL=jdbc:postgresql://productlist-pg:5432/productlist \
+    -e PG_PASSWORD=productlist123 \
     -v /opt/productlist/app.jar:/app/app.jar:ro \
     -v /opt/productlist/dist:/usr/share/nginx/html:ro \
-    -v /opt/productlist/data/superpower.db:/app/superpower.db \
     -v /opt/productlist/data/uploads:/app/uploads \
     -v /opt/productlist/data/docs:/app/generated-docs \
     product-list-runtime
@@ -271,24 +300,27 @@ FE["前端构建产物(dist)"] --> NGXCFG
   - --network host：使用主机网络简化Nginx与后端通信
   - -v ...:/app/app.jar:ro：只读挂载JAR
   - -v ...:/usr/share/nginx/html:ro：只读挂载前端dist
-  - -v ...:/app/superpower.db：数据库文件挂载
   - -v ...:/app/uploads：上传目录挂载
   - -v ...:/app/generated-docs：生成文档目录挂载
+  - --link productlist-pg:productlist-pg：连接数据库容器
 
-章节来源
-- [Dockerfile:25-30](file://Dockerfile#L25-L30)
-- [deploy.py:294-297](file://deploy.py#L294-L297)
+**章节来源**
+- [Dockerfile:34-37](file://Dockerfile#L34-L37)
+- [deploy.py:407-431](file://deploy.py#L407-L431)
 
 ### 环境变量与Maven配置
 - 环境变量
   - SPRING_PROFILES_ACTIVE：默认prod
   - JAVA_OPTS：默认空，可在运行时传入JVM参数
+  - SPRING_DATASOURCE_URL：PostgreSQL数据库连接URL
+  - PG_PASSWORD：数据库密码（可从环境变量获取）
 - Maven设置
   - 生产环境：docker/maven-settings.xml（全局镜像）
   - 沙盒环境：docker/maven-settings-sandbox.xml（优先阿里云，保留内网Nexus）
 
-章节来源
-- [Dockerfile:32-33](file://Dockerfile#L32-L33)
+**章节来源**
+- [Dockerfile:31-32](file://Dockerfile#L31-L32)
+- [src/main/resources/application-prod.yml:3-6](file://src/main/resources/application-prod.yml#L3-L6)
 - [docker/maven-settings.xml:1-12](file://docker/maven-settings.xml#L1-L12)
 - [docker/maven-settings-sandbox.xml:1-46](file://docker/maven-settings-sandbox.xml#L1-L46)
 
@@ -297,6 +329,20 @@ FE["前端构建产物(dist)"] --> NGXCFG
 - 资源限制：可通过docker run的--memory、--cpus等参数进行限制
 - 日志输出：后端日志级别已在配置中设置，可通过docker logs查看
 
-章节来源
-- [Dockerfile:36](file://Dockerfile#L36)
+**章节来源**
+- [Dockerfile:35](file://Dockerfile#L35)
 - [src/main/resources/application.yml:6-9](file://src/main/resources/application.yml#L6-L9)
+
+### 部署模式详解
+- 首次部署（--init）：构建运行时镜像 + 上传全部制品 + 启动容器
+- 日常更新：本地编译 → 上传JAR+dist → 重启容器
+- 数据更新（--update-data）：仅上传上传/文档目录
+- 版本更新（--version）：仅更新VERSION.md文件
+- 交互式菜单：提供图形化部署选项选择
+
+**章节来源**
+- [deploy.py:82-95](file://deploy.py#L82-L95)
+- [deploy.py:227-305](file://deploy.py#L227-L305)
+- [deploy.py:308-341](file://deploy.py#L308-L341)
+- [deploy.py:355-404](file://deploy.py#L355-L404)
+- [deploy.py:343-353](file://deploy.py#L343-L353)

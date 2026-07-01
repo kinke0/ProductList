@@ -62,7 +62,7 @@ public class DataEntryController {
             @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) String productManager,
             @RequestParam(required = false) String solution,
-            @RequestParam(required = false) String versionTag) {
+            @RequestParam(required = false) List<String> versionTag) {
         return Result.success(dataEntryService.getTree(versionId, name, status, productManager, solution, versionTag));
     }
 
@@ -74,7 +74,7 @@ public class DataEntryController {
             @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) String productManager,
             @RequestParam(required = false) String solution,
-            @RequestParam(required = false) String versionTag) {
+            @RequestParam(required = false) List<String> versionTag) {
         return Result.success(dataEntryService.getChildren(versionId, parentId, name, status, productManager, solution, versionTag));
     }
 
@@ -120,7 +120,7 @@ public class DataEntryController {
             @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) String productManager,
             @RequestParam(required = false) String solution,
-            @RequestParam(required = false) String versionTag,
+            @RequestParam(required = false) List<String> versionTag,
             @RequestParam(required = false) String bizCategory,
             @RequestParam(required = false) String bizDomain,
             @RequestParam(required = false) Integer level,

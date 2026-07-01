@@ -31,15 +31,21 @@ public class CustomTabService {
     @Transactional
     public CustomTab createWithFilter(String name, Long versionId, Long userId,
                                        String entryName, List<String> statusList, String productManager,
-                                       String solution, String versionTag) {
+                                       String solution, List<String> versionTags) {
         CustomTab tab = create(name, versionId, userId);
+        String singleVersionTag = (versionTags != null && versionTags.size() == 1) ? versionTags.get(0) : null;
         List<DataEntry> entries = dataEntryRepository.queryEntries(
                 versionId, null,
                 (entryName != null && !entryName.isEmpty()) ? entryName : null,
                 (productManager != null && !productManager.isEmpty()) ? productManager : null,
                 (solution != null && !solution.isEmpty()) ? solution : null,
-                (versionTag != null && !versionTag.isEmpty()) ? versionTag : null,
+                singleVersionTag,
                 null, null);
+        if (versionTags != null && versionTags.size() > 1) {
+            entries = entries.stream()
+                    .filter(e -> e.getColVersionDivision() != null && versionTags.stream().anyMatch(t -> e.getColVersionDivision().contains(t)))
+                    .toList();
+        }
         if (statusList != null && !statusList.isEmpty()) {
             entries = entries.stream()
                     .filter(e -> e.getColStatus() != null && statusList.stream().anyMatch(s -> e.getColStatus().contains(s)))

@@ -3,6 +3,48 @@
 ## 功能变更说明
 
 ### 产品清单
+- 数据库从 SQLite 迁移到 PostgreSQL
+- 修复批量驳回操作：允许驳回'待提交'和'待审核'状态的可交付产品
+- 清单查询过滤功能中，版本划分改为多选
+- 创建清单弹窗中，版本划分下拉框增加非标配系统选项，改为多选
+- 修复版本划分过滤未生效的bug：后端参数名从versionTags改回versionTag，与前端保持一致
+- 修复切换清单时导航树选中项与清单数据不一致的bug：改用queryVersion版本号机制自动丢弃旧请求结果，加载期间点击导航树直接发起新查询，旧查询结果自动被忽略
+- 修复统计视图页签数据加载时无遮罩的bug：StatsTab添加statsLoading状态和加载遮罩UI
+- 调整搜索栏控件宽度（名称140px、状态150px、产品经理100px、解决方案110px、版本划分150px），避免查询/重置按钮被挤到下一行
+- 新增批量智能化标注功能：其他批量操作菜单中新增"智能化标注"选项，支持标记/取消智能化，默认仅对手动勾选的条目生效（不含级联子节点）
+- 修复编辑/添加L4级及以下条目时L1/L2下拉框不加载的bug：initEditForm移除异步loadCategoryTree调用，各入口函数（addChildRow/openNewDialog/addProductFromSeparator/editRow/viewRow）改为显式await resolveCategoryIds+loadCategoryTree，解决时序问题
+- 修复批量变更业务域后删除旧域提示"存在子级条目"的bug：batchUpdateCategory自动将L3条目parentId更新为新域L2分隔行id，迁移后清理旧域空L2分隔行的isLeaf状态
+- 业务分类/域与清单数据行的关联逻辑从名称匹配改为ID匹配：deleteDomain/deleteCategory/updateDomain/updateCategory/findL1EntryId均改为基于categoryId/domainId查找，findL2Ancestor/findSiblings改为基于domainId查找，去掉getDomainTree/batchUpdateCategory/ImageResourceService中的名称fallback逻辑
+- 修复L3条目上下移提示"已经是第一个/最后一个"的bug：findSiblings对L3+条目改为基于parentId查找同一父节点下的兄弟，与前端树结构渲染一致
+- 修复清单上下移排序操作成功时无提示的bug：onCtxMoveUp/onCtxMoveDown添加ElMessage.success提示
+- 新增 Playwright E2E 全量功能测试框架：数据清单12个、自定义清单3个、全景图2个共17个测试场景
+- 新增 Playwright E2E 业务流程测试41个场景（CRUD 6个、右键菜单 8个、批量操作 6个、版本划分 5个、搜索筛选 5个、高级功能 11个）
+- 修复 E2E 测试框架：MessageBox确认按钮改用CSS类选择器(.el-button--primary)替代getByRole(name)匹配、审批按钮定位改用CSS :not(.invisible)替代.not()方法、版本切换对话框点击行即切换（无确认按钮）、编码重排序输入定位改用.el-input__inner替代.el-input div包装器
+
+### 需求管理
+#### 需求清单
+- 新增 E2E 测试8个场景（页面加载、搜索、Radio切换、表格、对话框）
+#### 需求图片
+- 新增 E2E 测试2个场景（标题、画廊视图）
+
+### 系统管理
+
+#### 用户管理
+- 新增 E2E 测试7个场景（页面、新增、编辑、操作日志）
+
+#### 权限套餐管理
+- 新增 E2E 测试4个场景（页面、新增、表格、对话框）
+
+#### 版本管理
+- 数据库从 SQLite 迁移到 PostgreSQL：替换 JDBC 驱动、删除 SQLite 专属配置类（SqliteConfig/SqliteDialect）、新增 PostgreSQL 容器配置、更新部署脚本移除 SQLite 文件上传逻辑
+- 新增 E2E 测试5个场景（页面、创建、表格、版本数据、状态栏）
+
+#### 基础数据维护
+- 修复删除L2域时同时弹出"删除成功"和"删除失败"两个提示的bug：全局axios拦截器已显示错误消息，deleteL1/deleteL2 catch块移除重复的ElMessage.warning
+- 新增 E2E 测试6个场景（业务分类2个 + 解决方案2个 + 功能状态2个）
+
+#### 图床管理
+- 新增 E2E 测试2个场景（标题、内容区域可见）
 
 ---
 

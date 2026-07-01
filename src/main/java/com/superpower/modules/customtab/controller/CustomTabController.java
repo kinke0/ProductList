@@ -56,9 +56,9 @@ public class CustomTabController {
         List<String> statusList = body.get("statusList") != null ? (List<String>) body.get("statusList") : List.of();
         String productManager = (String) body.getOrDefault("productManager", "");
         String solution = (String) body.getOrDefault("solution", "");
-        String versionTag = (String) body.getOrDefault("versionTag", "");
+        List<String> versionTags = body.get("versionTag") instanceof List ? (List<String>) body.get("versionTag") : (body.get("versionTag") != null && !body.get("versionTag").toString().isEmpty() ? List.of(body.get("versionTag").toString()) : List.of());
         CustomTab tab = customTabService.createWithFilter(name, versionId, userId,
-                entryName, statusList, productManager, solution, versionTag);
+                entryName, statusList, productManager, solution, versionTags);
         return Result.success(tab);
     }
 

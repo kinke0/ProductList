@@ -3,23 +3,23 @@
     <div class="query-bar">
       <el-form :model="queryForm" inline size="small">
         <el-form-item label="名称">
-          <el-input v-model="queryForm.name" placeholder="产品/系统名称" clearable style="width: 160px" @keyup.enter="handleQuery" />
+          <el-input v-model="queryForm.name" placeholder="产品/系统名称" clearable style="width: 140px" @keyup.enter="handleQuery" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="queryForm.status" placeholder="全部" clearable multiple style="width: 180px">
+          <el-select v-model="queryForm.status" placeholder="全部" clearable multiple style="width: 150px">
             <el-option v-for="s in statusList" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
         <el-form-item label="产品经理">
-          <el-input v-model="queryForm.productManager" placeholder="产品经理" clearable style="width: 120px" @keyup.enter="handleQuery" />
+          <el-input v-model="queryForm.productManager" placeholder="产品经理" clearable style="width: 100px" @keyup.enter="handleQuery" />
         </el-form-item>
         <el-form-item label="解决方案">
-          <el-select v-model="queryForm.solution" placeholder="全部" clearable style="width: 130px">
+          <el-select v-model="queryForm.solution" placeholder="全部" clearable style="width: 110px">
             <el-option v-for="s in solutions" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
         <el-form-item label="版本">
-          <el-select v-model="queryForm.versionDiv" placeholder="全部" clearable style="width: 110px">
+          <el-select v-model="queryForm.versionDiv" placeholder="全部" clearable multiple style="width: 150px">
             <el-option v-for="v in versionDivList" :key="v" :label="v" :value="v" />
           </el-select>
         </el-form-item>
@@ -60,6 +60,7 @@
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
                   <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
                   <el-dropdown-item command="version">版本划分</el-dropdown-item>
+                  <el-dropdown-item command="intelligent">智能化标注</el-dropdown-item>
                   <el-dropdown-item command="delete" divided>批量移除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -92,6 +93,7 @@
                   <el-dropdown-item command="manager">指定产品经理</el-dropdown-item>
                   <el-dropdown-item command="category">修改业务分类/业务域</el-dropdown-item>
                   <el-dropdown-item command="version">版本划分</el-dropdown-item>
+                  <el-dropdown-item command="intelligent">智能化标注</el-dropdown-item>
                   <el-dropdown-item command="delete" divided>批量删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -509,6 +511,22 @@
           <el-button type="primary" @click="confirmBatchVersion">确定</el-button>
         </template>
       </el-dialog>
+      <el-dialog v-model="showBatchIntelligentDialog" title="批量智能化标注" width="420px">
+        <div style="display:flex;flex-direction:column;gap:14px;padding:10px 0;">
+          <el-radio-group v-model="batchIntelligentAction">
+            <el-radio value="mark">标记智能化</el-radio>
+            <el-radio value="unmark">取消智能化标记</el-radio>
+          </el-radio-group>
+          <el-radio-group v-model="batchIntelligentScope">
+            <el-radio value="self">仅手动勾选的条目（不含级联子节点）</el-radio>
+            <el-radio value="all">所有选中条目（含级联子节点）</el-radio>
+          </el-radio-group>
+        </div>
+        <template #footer>
+          <el-button @click="showBatchIntelligentDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmBatchIntelligent">确定</el-button>
+        </template>
+      </el-dialog>
       <ImagePicker v-model="showImagePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :default-product-id="imagePickerProductId" :version-id="props.versionId" @select="insertImage" />
         <ImagePicker v-model="showReplacePicker" :default-category="editForm.colBizCategory" :default-domain="editForm.colBizDomain" :default-product="imagePickerProduct" :default-product-id="imagePickerProductId" :version-id="props.versionId" @select="replaceImageCard" />
 <el-dialog v-model="imgPreviewVisible" title="查看原图" width="auto" top="2vh" append-to-body :style="{ maxWidth: '90vw' }">
@@ -633,6 +651,7 @@ const emit = defineEmits(['insertToList', 'removeFromList', 'generateDoc', 'open
 const authStore = useAuthStore()
 const tableData = ref([])
 const dataLoading = ref(false)
+let queryVersion = 0
 const totalEntryCount = ref(0)
 const productCount = ref(0)
 const showEditDialog = ref(false)
@@ -661,6 +680,9 @@ const batchVerNonStd = ref(false)
 const batchMinYao = ref(false)
 const batchMinYuan = ref(false)
 const batchMinChi = ref(false)
+const showBatchIntelligentDialog = ref(false)
+const batchIntelligentAction = ref('mark')
+const batchIntelligentScope = ref('self')
 const selectedIds = ref([])
 const inserting = ref(false)
 const clipboard = reactive({ mode: null, entryIds: [] })
@@ -682,6 +704,7 @@ const editorRef = ref(null)
 onMounted(() => {
 })
 
+  const manualSelectedIds = ref(new Set())
   const manuallySelectedIds = computed(() => new Set(selectedIds.value))
 const pendingImageUpdates = ref([])
 const parentRow = ref(null)
@@ -1111,6 +1134,7 @@ async function addProductFromSeparator(row) {
   editForm.colBizCategory = row.colBizCategory || ''
   editForm.colBizDomain = row.colBizDomain || ''
   await resolveCategoryIds()
+  await loadCategoryTree()
   syncVersionFromForm()
   activeEditorTab.value = 'feature'
   showEditDialog.value = true
@@ -1704,7 +1728,8 @@ async function batchReject() {
     for (const id of selectedIds.value) {
       const row = findRowById(id, tableData.value)
       const s = row?.approvalStatus || '待提交'
-      if (s === '待审核') { validIds.push(id) }
+      const validRejectStatus = ['待审核', '待提交']
+      if (validRejectStatus.includes(s)) { validIds.push(id) }
       else { invalidRows.push({ name: row?.colProductSystem || row?.label || `ID:${id}`, status: s }) }
     }
     if (invalidRows.length > 0) {
@@ -1757,6 +1782,10 @@ async function batchReject() {
     batchVerYao.value = false; batchVerYuan.value = false; batchVerChi.value = false; batchVerNonStd.value = false
     batchMinYao.value = false; batchMinYuan.value = false; batchMinChi.value = false
     showBatchVersionDialog.value = true
+  } else if (cmd === 'intelligent') {
+    batchIntelligentAction.value = 'mark'
+    batchIntelligentScope.value = 'self'
+    showBatchIntelligentDialog.value = true
   } else if (cmd === 'delete') {
     if (props.customTabId) {
       onRemoveClick()
@@ -1905,6 +1934,31 @@ async function confirmBatchVersion() {
   } finally { batchLoading.value = false }
 }
 
+async function confirmBatchIntelligent() {
+  const intelligentValue = batchIntelligentAction.value === 'mark' ? '1' : ''
+  const actionLabel = batchIntelligentAction.value === 'mark' ? '标记智能化' : '取消智能化标记'
+  const targetIds = batchIntelligentScope.value === 'self' ? [...manualSelectedIds.value] : [...selectedIds.value]
+  if (targetIds.length === 0) {
+    ElMessage.warning('操作范围内没有条目'); return
+  }
+  showBatchIntelligentDialog.value = false
+  batchLoading.value = true
+  try {
+    let successCount = 0
+    for (const id of targetIds) {
+      try {
+        const row = findRowById(id, tableData.value)
+        if (row) {
+          await updateEntry(id, { ...row, colIntelligent: intelligentValue })
+          successCount++
+        }
+      } catch (e) { console.error(`${actionLabel}失败 id=${id}:`, e) }
+    }
+    ElMessage.success(`成功${actionLabel} ${successCount} 条`)
+    handleQuery(true)
+  } finally { batchLoading.value = false }
+}
+
 async function loadBatchCategoryTree() {
   if (!props.versionId) return
   try {
@@ -2047,7 +2101,7 @@ const queryForm = reactive({
   status: [],
   productManager: '',
   solution: '',
-  versionDiv: '',
+  versionDiv: [],
   intelligent: false
 })
 
@@ -2093,7 +2147,7 @@ const productLabel = computed(() => {
 
 const initialFormState = () => ({
   colProductSystem: '', colAppRole: '', colBidParamDesc: '', colFeatureDesc: '',
-  colStatus: '', colBizCategory: '', colBizDomain: '', colVersionDivision: '',
+  colStatus: '', colBizCategory: '', colBizDomain: '', categoryId: null, domainId: null, colVersionDivision: '',
   colProductManager: '', colOtherSolutionTag: '', colCopyright: '', colProductLine: '', colAssetType: '', colRemark: '',
   colYao: '', colYuan: '', colChi: '', colSystemType: '', colIntelligent: ''
 })
@@ -2116,7 +2170,6 @@ function fillCategoryAndDomain() {
 function initEditForm() {
   Object.assign(editForm, initialFormState())
   fillCategoryAndDomain()
-  loadCategoryTree()
 }
 
 async function loadCategoryTree() {
@@ -2179,14 +2232,18 @@ function onL2Change(val) {
   function toggleSelect(row) {
     const isSelected = selectedIds.value.includes(row.id)
     const newSet = new Set(selectedIds.value)
+    const manualSet = new Set(manualSelectedIds.value)
     if (isSelected) {
       newSet.delete(row.id)
       for (const id of collectDescendantIds(row)) newSet.delete(id)
+      manualSet.delete(row.id)
     } else {
       newSet.add(row.id)
       for (const id of collectDescendantIds(row)) newSet.add(id)
+      manualSet.add(row.id)
     }
     selectedIds.value = [...newSet]
+    manualSelectedIds.value = manualSet
   }
 
   const nodeMap = computed(() => {
@@ -2214,10 +2271,12 @@ function onL2Change(val) {
 
   function toggleSelectAll(checked) {
     const visibleIds = new Set(nonSepRows.value.map(r => r.id))
+    const manualSet = new Set(manualSelectedIds.value)
     if (checked) {
       const allIds = new Set(selectedIds.value)
       for (const r of nonSepRows.value) {
         allIds.add(r.id)
+        manualSet.add(r.id)
         for (const id of collectDescendantIds(r)) allIds.add(id)
       }
       selectedIds.value = [...allIds]
@@ -2225,11 +2284,13 @@ function onL2Change(val) {
       const toRemove = new Set()
       for (const id of visibleIds) {
         toRemove.add(id)
+        manualSet.delete(id)
         const row = nodeMap.value.get(id)
         if (row) for (const did of collectDescendantIds(row)) toRemove.add(did)
       }
       selectedIds.value = selectedIds.value.filter(id => !toRemove.has(id))
     }
+    manualSelectedIds.value = manualSet
   }
 
 function getDescendantCount(node) {
@@ -2433,6 +2494,7 @@ async function onCtxMoveUp() {
   if (!row) { closeContextMenu(); return }
   try {
     await moveUp(row.id)
+    ElMessage.success('上移成功')
     selectedIds.value = []
     handleQuery(true)
   } catch (e) {
@@ -2446,6 +2508,7 @@ async function onCtxMoveDown() {
   if (!row) { closeContextMenu(); return }
   try {
     await moveDown(row.id)
+    ElMessage.success('下移成功')
     selectedIds.value = []
     handleQuery(true)
   } catch (e) {
@@ -2621,6 +2684,7 @@ async function handleQuery(preserveExpand = false) {
    if (!preserveExpand) {
      selectedIds.value = []
    }
+   const currentVersion = ++queryVersion
    dataLoading.value = true
    try {
      const res = await queryEntries(props.versionId, {
@@ -2629,11 +2693,12 @@ async function handleQuery(preserveExpand = false) {
         status: queryForm.status.length > 0 ? queryForm.status : undefined,
        productManager: queryForm.productManager || undefined,
        solution: queryForm.solution || undefined,
-       versionTag: queryForm.versionDiv || undefined,
+       versionTag: queryForm.versionDiv.length > 0 ? queryForm.versionDiv : undefined,
        intelligent: queryForm.intelligent ? '1' : undefined,
        bizCategory: props.selectedNode?.id !== 'all' ? (props.selectedNode?.categoryLabel || undefined) : undefined,
        bizDomain: props.selectedNode?.id !== 'all' ? (props.selectedNode?.domainLabel || undefined) : undefined
      })
+     if (currentVersion !== queryVersion) return
         const entries = res.data || []
           totalEntryCount.value = entries.length
           productCount.value = entries.filter(e => e.level === 3).length
@@ -2654,13 +2719,16 @@ async function handleQuery(preserveExpand = false) {
       }
       rebuildDisplayData()
   } catch (e) {
+    if (currentVersion !== queryVersion) return
     console.error('查询数据失败:', e)
     tableData.value = []
     displayData.value = []
     totalEntryCount.value = 0
     productCount.value = 0
    } finally {
-     dataLoading.value = false
+     if (currentVersion === queryVersion) {
+       dataLoading.value = false
+     }
    }
 }
 
@@ -2669,7 +2737,7 @@ function resetQuery() {
   queryForm.status = []
   queryForm.productManager = ''
   queryForm.solution = ''
-  queryForm.versionDiv = ''
+  queryForm.versionDiv = []
   handleQuery()
 }
 
@@ -2709,8 +2777,9 @@ function buildTree(entries) {
         assignFormData(res.data)
       }
     } catch (e) { /* fallback to row data */ }
+    await resolveCategoryIds()
+    await loadCategoryTree()
     syncVersionFromForm()
-    loadCategoryTree()
     lastRejectReason.value = ''
     lastRejectOperator.value = ''
     activeEditorTab.value = 'feature'
@@ -2730,8 +2799,9 @@ function buildTree(entries) {
         assignFormData(res.data)
       }
     } catch (e) { /* fallback to row data */ }
+    await resolveCategoryIds()
+    await loadCategoryTree()
     syncVersionFromForm()
-    loadCategoryTree()
     lastRejectReason.value = ''
     activeEditorTab.value = 'feature'
   showEditDialog.value = true
@@ -2741,7 +2811,7 @@ function buildTree(entries) {
     emit('openPreview', row.id)
   }
 
-function addChildRow(row) {
+async function addChildRow(row) {
   isNew.value = true
   editingId.value = null
   parentRow.value = row
@@ -2752,16 +2822,19 @@ function addChildRow(row) {
   editForm.domainId = row.domainId || editForm.domainId
   editForm.colProductManager = row.colProductManager || ''
   editForm.colVersionDivision = row.colVersionDivision || ''
+  await resolveCategoryIds()
+  await loadCategoryTree()
   syncVersionFromForm()
   activeEditorTab.value = 'feature'
   showEditDialog.value = true
 }
 
-function openNewDialog() {
+async function openNewDialog() {
   isNew.value = true
   editingId.value = null
   parentRow.value = null
   initEditForm()
+  await loadCategoryTree()
   syncVersionFromForm()
   activeEditorTab.value = 'feature'
   showEditDialog.value = true

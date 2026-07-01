@@ -31,9 +31,6 @@ public class MaintenanceService {
     private final ReqItemRepository reqItemRepository;
     private final DataSource dataSource;
 
-    @Value("${spring.datasource.url}")
-    private String datasourceUrl;
-
     @Value("${app.image-storage-path:./uploads/images}")
     private String storagePath;
 
@@ -155,45 +152,11 @@ public class MaintenanceService {
         migrationStatus.setTotalCount(total);
     }
 
-    private Path getDbFilePath() {
-        String path = datasourceUrl.replaceFirst("^jdbc:sqlite:", "");
-        int paramIdx = path.indexOf('?');
-        if (paramIdx >= 0) {
-            path = path.substring(0, paramIdx);
-        }
-        Path dbPath = Paths.get(path);
-        if (!dbPath.isAbsolute()) {
-            dbPath = Paths.get(System.getProperty("user.dir")).resolve(path).normalize();
-        }
-        return dbPath;
-    }
-
     private void stepBackupDatabase(ImageMigrationStatus.StepResult sr) {
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
-        Path source = getDbFilePath();
-        Path target = source.resolveSibling(source.getFileName() + ".bak." + timestamp);
-
-        if (!Files.exists(source)) {
-            sr.setStatus("FAILED");
-            sr.setMessage("数据库文件不存在: " + source.toAbsolutePath());
-            return;
-        }
-
-        try {
-            try (Connection conn = dataSource.getConnection();
-                 Statement stmt = conn.createStatement()) {
-                log.info("开始备份数据库: {}", target.toAbsolutePath());
-                stmt.execute("backup to '" + target.toAbsolutePath() + "'");
-                log.info("备份完成，开始VACUUM压缩主库");
-                stmt.execute("VACUUM");
-                log.info("VACUUM完成");
-            }
-            sr.setSuccessCount(1);
-            sr.setMessage("备份到 " + target.getFileName());
-            sr.setStatus("COMPLETED");
-        } catch (Exception e) {
-            throw new RuntimeException("数据库备份失败: " + e.getMessage());
-        }
+        // PostgreSQL 备份由 pg_dump 完成，此处仅标记完成
+        sr.setSuccessCount(1);
+        sr.setMessage("数据库备份跳过（PostgreSQL 使用 pg_dump 备份）");
+        sr.setStatus("COMPLETED");
     }
 
     private void stepCopyFiles(ImageMigrationStatus.StepResult sr) {

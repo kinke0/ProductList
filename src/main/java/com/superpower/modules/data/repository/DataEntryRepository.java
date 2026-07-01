@@ -127,6 +127,14 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
 
     List<DataEntry> findByVersionIdAndDomainIdAndLevel(Long versionId, Long domainId, Integer level);
 
+    List<DataEntry> findByVersionIdAndCategoryIdAndLevel(Long versionId, Long categoryId, Integer level);
+
+    List<DataEntry> findByVersionIdAndCategoryIdAndDomainIdAndLevel(Long versionId, Long categoryId, Long domainId, Integer level);
+
+    List<DataEntry> findByVersionIdAndCategoryId(Long versionId, Long categoryId);
+
+    List<DataEntry> findByVersionIdAndDomainId(Long versionId, Long domainId);
+
     List<DataEntry> findByVersionIdAndColBizDomainAndLevel(Long versionId, String colBizDomain, Integer level);
 
     List<DataEntry> findByVersionIdAndLevelAndColBizCategoryAndColBizDomain(Long versionId, Integer level, String colBizCategory, String colBizDomain);
@@ -148,4 +156,10 @@ public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
 
     @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.level = 3 AND e.colBizDomain = :domain ORDER BY e.sortOrder")
     List<DataEntry> findL3ByDomain(@Param("versionId") Long versionId, @Param("domain") String domain);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.level = 3 AND e.domainId = :domainId ORDER BY e.sortOrder")
+    List<DataEntry> findL3ByDomainId(@Param("versionId") Long versionId, @Param("domainId") Long domainId);
+
+    @Query("SELECT e FROM DataEntry e WHERE e.versionId = :versionId AND e.parentId IS NULL AND e.domainId = :domainId ORDER BY e.sortOrder")
+    List<DataEntry> findRootEntriesByDomainId(@Param("versionId") Long versionId, @Param("domainId") Long domainId);
 }

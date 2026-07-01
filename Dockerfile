@@ -25,7 +25,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 # 以下通过运行时卷挂载注入:
 #   /app/app.jar             <- host: $REMOTE_DIR/app.jar
 #   /usr/share/nginx/html    <- host: $REMOTE_DIR/dist/
-#   /app/superpower.db       <- host: $REMOTE_DIR/data/superpower.db
 #   /app/uploads             <- host: $REMOTE_DIR/data/uploads/
 #   /app/generated-docs      <- host: $REMOTE_DIR/data/docs/
 

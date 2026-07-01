@@ -140,7 +140,7 @@ public class CategoryService {
         String oldName = cat.getName();
         cat.setName(name);
         categoryRepository.save(cat);
-        List<DataEntry> entries = dataEntryRepository.findByVersionIdAndColBizCategory(cat.getVersionId(), oldName);
+        List<DataEntry> entries = dataEntryRepository.findByVersionIdAndCategoryId(cat.getVersionId(), cat.getId());
         for (DataEntry e : entries) {
             e.setColBizCategory(name);
             if (name.equals(e.getColProductSystem()) || oldName.equals(e.getColProductSystem())) {
@@ -158,7 +158,8 @@ public class CategoryService {
         if (domainCount > 0) {
             throw new BusinessException("该分类下存在业务域，不可删除");
         }
-        dataEntryRepository.findByVersionIdAndLevelAndColBizCategory(cat.getVersionId(), 1, cat.getName())
+        // 删除该分类的 L1 分隔行（基于 categoryId，而非名称）
+        dataEntryRepository.findByVersionIdAndCategoryIdAndLevel(cat.getVersionId(), cat.getId(), 1)
             .forEach(dataEntryRepository::delete);
         categoryRepository.delete(cat);
     }
@@ -182,7 +183,7 @@ public class CategoryService {
         entry.setCategoryId(categoryId);
         entry.setDomainId(saved.getId());
         entry.setIsLeaf(true);
-        Long l1EntryId = findL1EntryId(versionId, cat.getName());
+        Long l1EntryId = findL1EntryIdByVersionIdAndCategoryId(versionId, categoryId);
         if (l1EntryId != null) {
             entry.setParentId(l1EntryId);
             DataEntry parent = dataEntryRepository.findById(l1EntryId).orElse(null);
@@ -206,7 +207,7 @@ public class CategoryService {
         String oldName = dom.getName();
         dom.setName(name);
         domainRepository.save(dom);
-        List<DataEntry> entries = dataEntryRepository.findByVersionIdAndColBizDomain(dom.getVersionId(), oldName);
+        List<DataEntry> entries = dataEntryRepository.findByVersionIdAndDomainId(dom.getVersionId(), dom.getId());
         for (DataEntry e : entries) {
             e.setColBizDomain(name);
             if (oldName.equals(e.getColProductSystem())) {
@@ -220,7 +221,7 @@ public class CategoryService {
     @Transactional
     public void deleteDomain(Long id) {
         BaseDomain dom = getDomainById(id);
-        List<DataEntry> l2Entries = dataEntryRepository.findByVersionIdAndLevelAndColBizDomain(dom.getVersionId(), 2, dom.getName());
+        List<DataEntry> l2Entries = dataEntryRepository.findByVersionIdAndDomainIdAndLevel(dom.getVersionId(), dom.getId(), 2);
         for (DataEntry e : l2Entries) {
             if (dataEntryRepository.findByVersionIdAndParentId(dom.getVersionId(), e.getId()).size() > 0) {
                 throw new BusinessException("业务域\"" + dom.getName() + "\"下存在子级条目，不可删除");
@@ -230,12 +231,10 @@ public class CategoryService {
         domainRepository.delete(dom);
     }
 
-    private Long findL1EntryId(Long versionId, String categoryName) {
-        List<DataEntry> l1Entries = dataEntryRepository.findByVersionIdAndLevel(versionId, 1);
-        for (DataEntry e : l1Entries) {
-            if (categoryName.equals(e.getColBizCategory()) || categoryName.equals(e.getColProductSystem())) {
-                return e.getId();
-            }
+    private Long findL1EntryIdByVersionIdAndCategoryId(Long versionId, Long categoryId) {
+        List<DataEntry> l1Entries = dataEntryRepository.findByVersionIdAndCategoryIdAndLevel(versionId, categoryId, 1);
+        if (!l1Entries.isEmpty()) {
+            return l1Entries.get(0).getId();
         }
         return null;
     }
